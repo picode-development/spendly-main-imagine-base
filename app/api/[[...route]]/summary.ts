@@ -3,7 +3,7 @@ import { accounts, categories, transactions } from "@/db/schema";
 import { calculatePercentageChange, fillMissingDays } from "@/lib/utils";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { zValidator } from "@hono/zod-validator";
-import { parse, addDays, subDays } from "date-fns";
+import { parse, addDays } from "date-fns";
 import { and, desc, eq, gte, lt, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -34,67 +34,44 @@ const app = new Hono()
       const baseConditions = [
         accountId ? eq(transactions.accountId, accountId) : undefined,
         eq(accounts.userId, auth.userId),
-      ].filter(Boolean);
-
-      // Default to last 30 days if no dates provided
-      const today = new Date();
-      let fromDate = from ? parse(from, "yyyy-MM-dd", new Date()) : subDays(today, 30);
-      let toDate = to ? parse(to, "yyyy-MM-dd", new Date()) : today;
-
-      // Current period date range
-      const currentDateConditions = [
-        gte(transactions.date, fromDate),
-        lt(transactions.date, addDays(toDate, 1)),
       ];
 
-      // Calculate previous period with same duration (e.g. previous 30 days before the fromDate)
-      const getDaysInPeriod = (start: Date, end: Date) => {
-        return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      };
+      const dateConditions =
+        !showAllDates && from && to
+          ? [
+              gte(transactions.date, parse(from, "yyyy-MM-dd", new Date())),
+              lt(transactions.date, addDays(parse(to, "yyyy-MM-dd", new Date()), 1)),
+            ]
+          : [];
 
-      const daysInCurrentPeriod = getDaysInPeriod(fromDate, toDate);
-      const previousFromDate = subDays(fromDate, daysInCurrentPeriod);
-      const previousToDate = subDays(fromDate, 1);
-
-      const previousDateConditions = [
-        gte(transactions.date, previousFromDate),
-        lt(transactions.date, addDays(previousToDate, 1)),
-      ];
-
-      const fetchData = async (dateConditions: any[] = []) => {
-        const result = await db
+      const fetchData = async (additionalConditions: any[] = []) => {
+        return await db
           .select({
-            income: sql`COALESCE(SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END), 0)`.mapWith(Number),
-            expenses: sql`COALESCE(SUM(CASE WHEN ${transactions.amount} < 0 THEN ${transactions.amount} ELSE 0 END), 0)`.mapWith(Number),
-            remaining: sql`COALESCE(SUM(${transactions.amount}), 0)`.mapWith(Number),
+            income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
+            expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
+            remaining: sum(transactions.amount).mapWith(Number),
           })
           .from(transactions)
           .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-          .where(and(...[...baseConditions, ...dateConditions]));
-        
-        return result[0] || { income: 0, expenses: 0, remaining: 0 };
+          .where(and(...[...baseConditions, ...dateConditions, ...additionalConditions]));
       };
 
-      // Fetch data for current period
-      const currentPeriod = await fetchData(currentDateConditions);
+      const [currentPeriod] = await fetchData();
 
-      // Fetch data for previous period (only if not showing all dates)
-      const previousPeriod = showAllDates
-        ? { income: 0, expenses: 0, remaining: 0 }
-        : await fetchData(previousDateConditions);
+      const [lastPeriod] = showAllDates
+        ? [{ income: 0, expenses: 0, remaining: 0 }]
+        : await fetchData();
 
-      // Calculate percentage changes
       const incomeChange = showAllDates
         ? 0
-        : calculatePercentageChange(currentPeriod.income, previousPeriod.income);
+        : calculatePercentageChange(currentPeriod.income, lastPeriod.income);
       const expensesChange = showAllDates
         ? 0
-        : calculatePercentageChange(currentPeriod.expenses, previousPeriod.expenses);
+        : calculatePercentageChange(currentPeriod.expenses, lastPeriod.expenses);
       const remainingChange = showAllDates
         ? 0
-        : calculatePercentageChange(currentPeriod.remaining, previousPeriod.remaining);
+        : calculatePercentageChange(currentPeriod.remaining, lastPeriod.remaining);
 
-      // Fetch top expense categories
       const category = await db
         .select({
           name: categories.name,
@@ -106,7 +83,7 @@ const app = new Hono()
         .where(
           and(
             ...baseConditions,
-            ...currentDateConditions,
+            ...dateConditions,
             lt(transactions.amount, 0)
           )
         )
@@ -120,7 +97,6 @@ const app = new Hono()
         finalCategories.push({ name: "Other", value: otherSum });
       }
 
-      // Fetch daily data
       const activeDays = await db
         .select({
           date: transactions.date,
@@ -129,7 +105,7 @@ const app = new Hono()
         })
         .from(transactions)
         .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-        .where(and(...[...baseConditions, ...currentDateConditions]))
+        .where(and(...[...baseConditions, ...dateConditions]))
         .groupBy(transactions.date)
         .orderBy(transactions.date);
 
@@ -147,8 +123,8 @@ const app = new Hono()
               ? activeDays
               : fillMissingDays(
                   activeDays,
-                  fromDate,
-                  toDate
+                  parse(from, "yyyy-MM-dd", new Date()),
+                  parse(to, "yyyy-MM-dd", new Date())
                 ),
           showAllDates,
         },
