@@ -5,11 +5,13 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useMedia } from "react-use";
-import { Home, List, MessageCircle } from "lucide-react";
+import { Home, List, MessageCircle, Bot, Mic, X, ChevronDown } from "lucide-react";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
 import { UserButton } from "@clerk/nextjs";
 import { MoreDropdown } from "./more-dropdown";
 import { AddNewDropdown } from "./add-new-dropdown-phone-plus";
+import ChatBot from "./chat-assistant";
+import VoiceAssistant from "./voice-assistant";
 
 export const Navigation = () => {
   const pathname = usePathname();
@@ -17,7 +19,10 @@ export const Navigation = () => {
   const isMobile = useMedia("(max-width: 1024px)", false);
   const newTransaction = useNewTransaction();
   const [isScrolled, setIsScrolled] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAssistantModalOpen, setIsAssistantModalOpen] = useState(false);
+  const [assistantSelection, setAssistantSelection] = useState<'voice' | 'text'>('text');
+  const [openType, setOpenType] = useState<'chat' | 'voice' | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
 
   const isActive = (href: string) => pathname === href;
 
@@ -28,6 +33,29 @@ export const Navigation = () => {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  const closeAssistant = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setOpenType(null);
+      setIsClosing(false);
+    }, 300);
+  };
+
+  const handleAssistantOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      closeAssistant();
+    }
+  };
+
+  const handleAssistantLaunch = () => {
+    if (assistantSelection === 'text') {
+      setOpenType('chat');
+    } else {
+      setOpenType('voice');
+    }
+    setIsAssistantModalOpen(false);
+  };
 
   if (isMobile) {
     return (
@@ -90,10 +118,10 @@ export const Navigation = () => {
               <MoreDropdown />
             </div>
 
-            {/* Assistant with Animated Modal */}
+            {/* Assistant with Select Modal */}
             <div className="relative flex flex-col items-center justify-end gap-1">
               <button
-                onClick={() => setIsModalOpen(true)}
+                onClick={() => setIsAssistantModalOpen(true)}
                 className="flex flex-col items-center text-gray-500 dark:text-gray-400"
               >
                 <MessageCircle className="size-6" />
@@ -103,26 +131,132 @@ export const Navigation = () => {
           </div>
         </nav>
 
-        {/* Modal with Animation */}
-        {isModalOpen && (
+        {/* Assistant Selection Modal */}
+        {isAssistantModalOpen && (
           <div
-            className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center"
-            onClick={() => setIsModalOpen(false)}
+            className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setIsAssistantModalOpen(false)}
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-gray-900 p-6 rounded-lg shadow-lg w-[85%] max-w-sm text-center transform transition-all duration-300 ease-out scale-95 opacity-0 animate-enter"
+              className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-sm transform transition-all duration-300 ease-out animate-enter overflow-hidden"
             >
-              <h2 className="text-lg font-semibold mb-2 text-gray-900 dark:text-white">Coming Soon</h2>
-              <p className="text-gray-600 dark:text-gray-300 mb-4">
-                Chat feature is under development.
-              </p>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
-              >
-                Close
-              </button>
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-slate-700">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Choose Assistant</h2>
+                <button
+                  onClick={() => setIsAssistantModalOpen(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white p-1 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-4 space-y-4">
+                <p className="text-gray-600 dark:text-gray-300 text-sm">
+                  Select how you'd like to interact with your assistant:
+                </p>
+
+                {/* Select Dropdown */}
+                <div className="relative">
+                  <select
+                    value={assistantSelection}
+                    onChange={(e) => setAssistantSelection(e.target.value as 'voice' | 'text')}
+                    className="w-full appearance-none bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white border border-gray-300 dark:border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                  >
+                    <option value="text">💬 Text Chat</option>
+                    <option value="voice">🎤 Voice Assistant</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 dark:text-gray-400 pointer-events-none" />
+                </div>
+
+                {/* Preview */}
+                <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
+                  {assistantSelection === 'text' ? (
+                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                      <Bot className="w-4 h-4 text-white" />
+                    </div>
+                  ) : (
+                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                      <Mic className="w-4 h-4 text-white" />
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">
+                      {assistantSelection === 'text' ? 'Text Assistant' : 'Voice Assistant'}
+                    </p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {assistantSelection === 'text' 
+                        ? 'Chat via text messages' 
+                        : 'Talk with voice commands'
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-slate-700">
+                <button
+                  onClick={() => setIsAssistantModalOpen(false)}
+                  className="flex-1 px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssistantLaunch}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
+                >
+                  {assistantSelection === 'text' ? <Bot className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  Launch
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Assistant Modal */}
+        {(openType === 'chat' || openType === 'voice') && (
+          <div
+            onClick={handleAssistantOverlayClick}
+            className={`fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-3 sm:p-4 md:p-6 lg:p-8 
+              ${isClosing
+                ? 'animate-out fade-out slide-out-to-bottom duration-300'
+                : 'animate-in fade-in slide-in-from-bottom duration-300'
+              }`}
+          >
+            <div
+              className={`rounded-2xl w-full max-w-6xl h-full max-h-[90vh] sm:max-h-[85vh] flex flex-col relative
+                ${isClosing
+                  ? 'animate-out zoom-out-95 fade-out duration-300'
+                  : 'animate-in zoom-in-95 fade-in duration-300'
+                }
+                ${openType === 'voice'
+                  ? 'bg-transparent backdrop-blur-none border-none shadow-none'
+                  : 'bg-white/95 dark:bg-zinc-900/95 backdrop-blur-sm border border-white/20 dark:border-zinc-700/50 shadow-2xl'
+                }`}
+            >
+              {/* Close Button (inside the popup) */}
+              <div className="absolute top-3 right-3 sm:top-4 sm:right-4 z-10">
+                <button
+                  onClick={closeAssistant}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white bg-white/80 dark:bg-zinc-800/80 backdrop-blur-sm rounded-full p-2 shadow-lg hover:shadow-xl transition-all duration-200 border border-gray-200/50 dark:border-zinc-600/50"
+                >
+                  <X className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-hidden rounded-2xl">
+                {openType === 'chat' ? (
+                  <div className="h-full">
+                    <ChatBot />
+                  </div>
+                ) : (
+                  <VoiceAssistant />
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -132,16 +266,16 @@ export const Navigation = () => {
           @keyframes enter {
             0% {
               opacity: 0;
-              transform: scale(0.95);
+              transform: scale(0.95) translateY(20px);
             }
             100% {
               opacity: 1;
-              transform: scale(1);
+              transform: scale(1) translateY(0);
             }
           }
 
           .animate-enter {
-            animation: enter 0.2s ease-out forwards;
+            animation: enter 0.3s ease-out forwards;
           }
         `}</style>
       </>
