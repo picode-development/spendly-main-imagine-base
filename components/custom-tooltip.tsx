@@ -4,8 +4,8 @@ import { Separator } from "@/components/ui/separator";
 import { useTheme } from "next-themes";
 
 export const CustomTooltip = ({ active, payload }: any) => {
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
+    const { resolvedTheme } = useTheme();
+    const isDark = resolvedTheme === "dark";
     
     if (!active) return null;
 
