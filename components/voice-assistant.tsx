@@ -1,18 +1,17 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 
 const VoiceAssistant = () => {
   const containerRef = useRef(null);
-  const intervalRef = useRef(null);
+  const intervalRef = useRef<NodeJS.Timeout | number | null>(null);
   
-  // Add all your embed agent IDs here - easy to maintain!
-  // Just copy the agent-id from your ElevenLabs embed codes
-  const embedCodes = [
+  // Wrap embedCodes in useMemo to prevent unnecessary re-renders
+  const embedCodes = useMemo(() => [
     "agent_01jx7x8bstetcsx349p70ps2fn", // Your current working embed
     // Add new agent IDs here - just the ID part from your embed codes
     // "agent_YOUR_NEW_ID_HERE",
     // "agent_ANOTHER_ID_HERE",
     // ... add millions more as needed
-  ];
+  ], []);
 
   // Function to get a random embed code
   const getRandomEmbedCode = useCallback(() => {
@@ -56,12 +55,12 @@ const VoiceAssistant = () => {
         clearInterval(intervalRef.current);
       }
     };
-  }, [shuffleEmbed]);
+  }, [shuffleEmbed]); // Include shuffleEmbed in dependency array
 
   // Shuffle on component mount (every render)
   useEffect(() => {
     shuffleEmbed();
-  }, []); // Empty dependency array means this runs once on mount
+  }, [shuffleEmbed]); // Include shuffleEmbed in dependency array
 
   return (
     <div ref={containerRef} className="w-full h-full">
