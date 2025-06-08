@@ -64,6 +64,7 @@ const VoiceAssistant = () => {
 
   return (
     <div ref={containerRef} className="w-full h-full">
+      {/* @ts-ignore */}
       <elevenlabs-convai 
         key={currentEmbedCode} // This forces re-render when embed changes
         agent-id={currentEmbedCode}
