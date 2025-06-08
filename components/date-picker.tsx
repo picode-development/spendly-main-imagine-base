@@ -30,15 +30,15 @@ export const DatePicker = ({
                     disabled={disabled}
                     variant="outline"
                     className={cn(
-                        "w-full justify-start font-normal text-left",
+                        "w-full justify-start font-normal text-left dark:bg-[#020618]",
                         !value && "text-muted-foreground"
                     )}
-                    >
+                >
                     <CalendarIcon className="size-4 mr-2" />
                     {value ? format(value, "PPP") : <span>Pick a date</span>}
                 </Button>
             </PopoverTrigger>
-            <PopoverContent >
+            <PopoverContent>
                 <Calendar 
                     mode="single"
                     selected={value}
