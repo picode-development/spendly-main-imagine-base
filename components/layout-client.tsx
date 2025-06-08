@@ -7,6 +7,7 @@ import { QueryProvider } from "@/providers/query.provider";
 import { SheetProvider } from "@/providers/sheet-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { FullPageLoader } from "./FullPageLoader";
+import Assistant from "./assistant";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -28,6 +29,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <SheetProvider />
       <Toaster />
       {children}
+      {!isAuthPage && <Assistant />} {/* Only show trigger on non-auth pages */}
     </QueryProvider>
   );
 
