@@ -215,11 +215,11 @@ const VoiceAssistant = () => {
 
   return (
     <div className="relative w-full h-full">
-      {/* Floating Manual Shuffle Button - Top Right */}
+      {/* Floating Manual Shuffle Button - Top Left */}
       {embedCodes.length > 1 && (
         <button
           onClick={handleManualShuffle}
-          className="absolute top-4 right-4 z-20 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-110 hover:shadow-xl"
+          className="absolute top-4 left-4 z-20 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-110 hover:shadow-xl"
           title="Shuffle Agent"
         >
           <svg 
