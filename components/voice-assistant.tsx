@@ -6,7 +6,7 @@ const VoiceAssistant = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetContainerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<number | null>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
+  const widgetInstanceRef = useRef<HTMLElement | null>(null);
   
   // Wrap embedCodes in useMemo to prevent unnecessary re-renders
   const embedCodes = useMemo(() => [
@@ -21,13 +21,13 @@ const VoiceAssistant = () => {
   // State to track current embed code - initialize with first embed code
   const [currentEmbedCode, setCurrentEmbedCode] = useState(embedCodes[0]);
   const [isScriptLoaded, setIsScriptLoaded] = useState(false);
-  const [isVisible, setIsVisible] = useState(false);
   const [failedAgents, setFailedAgents] = useState<Set<string>>(new Set());
+  const [lastShuffleTime, setLastShuffleTime] = useState(Date.now());
 
   // Determine current theme state
   const getCurrentTheme = () => {
     if (theme === 'system') {
-      return resolvedTheme || 'dark'; // fallback to dark if resolvedTheme is undefined
+      return resolvedTheme || 'dark';
     }
     return theme;
   };
@@ -46,19 +46,25 @@ const VoiceAssistant = () => {
     return workingEmbeds[randomIndex];
   }, [embedCodes, failedAgents]);
 
-  // Function to shuffle to a new embed code
+  // Function to shuffle to a new embed code without destroying the widget
   const shuffleEmbed = useCallback(() => {
     const workingEmbeds = embedCodes.filter(code => !failedAgents.has(code));
-    if (workingEmbeds.length <= 1) return; // Don't shuffle if only one working embed
+    if (workingEmbeds.length <= 1) return;
     
     let newEmbedCode;
     do {
       newEmbedCode = getRandomEmbedCode();
     } while (newEmbedCode === currentEmbedCode);
     
+    // Update the agent-id attribute instead of recreating the element
+    if (widgetInstanceRef.current) {
+      widgetInstanceRef.current.setAttribute('agent-id', newEmbedCode);
+      console.log(`Updated agent to: ${newEmbedCode}`);
+    }
+    
     setCurrentEmbedCode(newEmbedCode);
-    console.log(`Shuffled to new embed: ${newEmbedCode} (visible: ${isVisible})`);
-  }, [currentEmbedCode, getRandomEmbedCode, embedCodes, failedAgents, isVisible]);
+    setLastShuffleTime(Date.now());
+  }, [currentEmbedCode, getRandomEmbedCode, embedCodes, failedAgents]);
 
   // Function to handle agent failures
   const handleAgentError = useCallback((agentId: string) => {
@@ -69,6 +75,9 @@ const VoiceAssistant = () => {
     const workingEmbeds = embedCodes.filter(code => !failedAgents.has(code) && code !== agentId);
     if (workingEmbeds.length > 0) {
       const fallbackAgent = workingEmbeds[0];
+      if (widgetInstanceRef.current) {
+        widgetInstanceRef.current.setAttribute('agent-id', fallbackAgent);
+      }
       setCurrentEmbedCode(fallbackAgent);
       console.log(`Switched to fallback agent: ${fallbackAgent}`);
     }
@@ -81,76 +90,76 @@ const VoiceAssistant = () => {
 
   // Function to force widget containment
   const forceWidgetContainment = useCallback(() => {
-    if (!widgetContainerRef.current) return;
+    if (!widgetInstanceRef.current) return;
     
-    // Find all ElevenLabs widgets on the page
-    const allWidgets = document.querySelectorAll('elevenlabs-convai');
+    const widget = widgetInstanceRef.current;
     
-    allWidgets.forEach((widget) => {
-      const widgetElement = widget as HTMLElement;
-      
-      // Check if this widget is our contained one
-      if (widget.getAttribute('data-contained') === 'true') {
-        // This is our widget - style it properly
-        widgetElement.style.position = 'relative';
-        widgetElement.style.width = '100%';
-        widgetElement.style.height = '100%';
-        widgetElement.style.maxWidth = '100%';
-        widgetElement.style.maxHeight = '100%';
-        widgetElement.style.overflow = 'hidden';
-        widgetElement.style.contain = 'layout style paint';
-        widgetElement.style.display = 'block';
-        
-        // Style child elements
-        const children = widgetElement.querySelectorAll('*');
-        children.forEach((child) => {
-          const childElement = child as HTMLElement;
-          childElement.style.position = 'relative';
-          childElement.style.maxWidth = '100%';
-          childElement.style.maxHeight = '100%';
-        });
-      } else {
-        // This is an escaped widget - hide it
-        widgetElement.style.display = 'none';
-      }
-    });
+    // Apply containment styles
+    widget.style.cssText = `
+      position: relative !important;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      overflow: hidden !important;
+      display: block !important;
+      contain: layout style paint !important;
+      isolation: isolate !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: auto !important;
+      bottom: auto !important;
+      transform: none !important;
+      z-index: 1 !important;
+    `;
+    
+    // Also apply to all child elements
+    const applyToChildren = (element: Element) => {
+      Array.from(element.children).forEach(child => {
+        const childElement = child as HTMLElement;
+        childElement.style.position = 'relative';
+        childElement.style.maxWidth = '100%';
+        childElement.style.maxHeight = '100%';
+        childElement.style.top = 'auto';
+        childElement.style.left = 'auto';
+        childElement.style.right = 'auto';
+        childElement.style.bottom = 'auto';
+        childElement.style.transform = 'none';
+        applyToChildren(child);
+      });
+    };
+    
+    applyToChildren(widget);
   }, []);
 
-  // Set up Intersection Observer for visibility detection
-  useEffect(() => {
-    if (!containerRef.current || !isScriptLoaded) return;
+  // Create widget only once
+  const createWidget = useCallback(() => {
+    if (!widgetContainerRef.current || !isScriptLoaded || widgetInstanceRef.current) return;
 
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const wasVisible = isVisible;
-          const nowVisible = entry.isIntersecting;
-          
-          setIsVisible(nowVisible);
-          
-          // Shuffle when becoming visible (but not on initial load)
-          if (!wasVisible && nowVisible && embedCodes.length > 1) {
-            console.log('Widget became visible - shuffling embed');
-            shuffleEmbed();
-          }
-        });
-      },
-      {
-        threshold: 0.1, // Trigger when 10% of the element is visible
-        rootMargin: '10px' // Add some margin for better detection
-      }
-    );
-
-    if (containerRef.current) {
-      observerRef.current.observe(containerRef.current);
-    }
-
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, [isScriptLoaded, shuffleEmbed, embedCodes.length, isVisible]);
+    // Create DOM element directly to avoid React re-rendering issues
+    const widgetElement = document.createElement('elevenlabs-convai');
+    widgetElement.setAttribute('agent-id', currentEmbedCode);
+    
+    widgetContainerRef.current.appendChild(widgetElement);
+    widgetInstanceRef.current = widgetElement;
+    
+    // Apply containment after a short delay to let the widget initialize
+    setTimeout(() => {
+      forceWidgetContainment();
+      // Set up mutation observer to maintain containment
+      const observer = new MutationObserver(() => {
+        forceWidgetContainment();
+      });
+      observer.observe(widgetElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class']
+      });
+    }, 1000);
+    
+    console.log(`Widget created with agent: ${currentEmbedCode}`);
+  }, [isScriptLoaded, currentEmbedCode, forceWidgetContainment]);
 
   useEffect(() => {
     // Load the ElevenLabs script
@@ -164,8 +173,6 @@ const VoiceAssistant = () => {
       script.onload = () => {
         setIsScriptLoaded(true);
         console.log('ElevenLabs script loaded successfully');
-        // Force containment after script loads
-        setTimeout(forceWidgetContainment, 1000);
       };
       
       script.onerror = () => {
@@ -175,20 +182,24 @@ const VoiceAssistant = () => {
       document.body.appendChild(script);
     } else {
       setIsScriptLoaded(true);
-      setTimeout(forceWidgetContainment, 1000);
     }
-  }, [forceWidgetContainment]);
+  }, []);
 
-  // Force containment when embed code changes
+  // Create widget when script is loaded
   useEffect(() => {
     if (isScriptLoaded) {
-      setTimeout(forceWidgetContainment, 1000);
+      setTimeout(createWidget, 500); // Small delay to ensure script is fully initialized
     }
-  }, [currentEmbedCode, isScriptLoaded, forceWidgetContainment]);
+  }, [isScriptLoaded, createWidget]);
 
+  // Set up 6-minute interval for shuffling
   useEffect(() => {
-    // Only set up interval if we have multiple embeds and script is loaded
-    if (embedCodes.length > 1 && isScriptLoaded) {
+    if (embedCodes.length > 1 && isScriptLoaded && widgetInstanceRef.current) {
+      // Clear any existing interval
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
       // Set up 6-minute interval for shuffling
       intervalRef.current = window.setInterval(() => {
         console.log('6-minute timer triggered - shuffling embed');
@@ -198,7 +209,7 @@ const VoiceAssistant = () => {
       console.log('Shuffle interval set up for 6 minutes');
     }
 
-    // Cleanup interval on unmount or when dependencies change
+    // Cleanup interval on unmount
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -224,6 +235,16 @@ const VoiceAssistant = () => {
     window.addEventListener('error', handleError);
     return () => window.removeEventListener('error', handleError);
   }, [currentEmbedCode, handleAgentError]);
+
+  // Cleanup widget on unmount
+  useEffect(() => {
+    return () => {
+      if (widgetInstanceRef.current && widgetContainerRef.current) {
+        widgetContainerRef.current.removeChild(widgetInstanceRef.current);
+        widgetInstanceRef.current = null;
+      }
+    };
+  }, []);
 
   // Theme-based styling
   const getContainerClasses = () => {
@@ -281,10 +302,12 @@ const VoiceAssistant = () => {
         className={getContainerClasses()}
         style={{
           contain: 'layout style paint',
-          isolation: 'isolate'
+          isolation: 'isolate',
+          position: 'relative',
+          zIndex: 0
         }}
       >
-        {/* Widget Container with Forced Constraints */}
+        {/* Widget Container */}
         <div 
           ref={widgetContainerRef}
           className="w-full h-full relative"
@@ -292,37 +315,22 @@ const VoiceAssistant = () => {
             position: 'relative',
             overflow: 'hidden',
             contain: 'layout style paint',
-            isolation: 'isolate'
+            isolation: 'isolate',
+            zIndex: 1
           }}
-        >
-          {React.createElement('elevenlabs-convai', {
-            key: currentEmbedCode, // Force re-render when embed changes
-            'agent-id': currentEmbedCode,
-            'data-contained': 'true', // Mark as contained
-            onError: () => handleAgentError(currentEmbedCode), // Handle widget-level errors
-            style: {
-              width: '100%',
-              height: '100%',
-              maxWidth: '100%',
-              maxHeight: '100%',
-              position: 'relative',
-              overflow: 'hidden',
-              contain: 'layout style paint'
-            }
-          })}
-        </div>
-        
-        {/* Overlay to catch any escaped elements */}
+        />
+        {/* Containment overlay to catch any escaped elements */}
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{
-            zIndex: 1,
-            background: 'transparent'
+            zIndex: 10,
+            background: 'transparent',
+            overflow: 'hidden'
           }}
         />
       </div>
       
-      {/* Global CSS to force widget containment */}
+      {/* Enhanced CSS to force widget containment */}
       <style dangerouslySetInnerHTML={{
         __html: `
           elevenlabs-convai {
@@ -332,20 +340,21 @@ const VoiceAssistant = () => {
             max-width: 100% !important;
             max-height: 100% !important;
             overflow: hidden !important;
-            contain: layout style paint !important;
             display: block !important;
+            contain: layout style paint !important;
+            isolation: isolate !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: auto !important;
+            bottom: auto !important;
+            transform: none !important;
+            z-index: 1 !important;
           }
           
           elevenlabs-convai * {
+            position: relative !important;
             max-width: 100% !important;
             max-height: 100% !important;
-            position: relative !important;
-          }
-          
-          elevenlabs-convai iframe,
-          elevenlabs-convai div,
-          elevenlabs-convai canvas {
-            position: relative !important;
             top: auto !important;
             left: auto !important;
             right: auto !important;
@@ -353,9 +362,36 @@ const VoiceAssistant = () => {
             transform: none !important;
           }
           
-          /* Hide any elements that try to escape */
-          body > elevenlabs-convai:not([data-contained="true"]) {
+          elevenlabs-convai iframe,
+          elevenlabs-convai div,
+          elevenlabs-convai canvas,
+          elevenlabs-convai svg {
+            position: relative !important;
+            top: auto !important;
+            left: auto !important;
+            right: auto !important;
+            bottom: auto !important;
+            transform: none !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+          }
+          
+          /* Prevent any absolute/fixed positioning within the widget */
+          elevenlabs-convai [style*="position: absolute"],
+          elevenlabs-convai [style*="position: fixed"] {
+            position: relative !important;
+          }
+          
+          /* Hide any elements that escape to body */
+          body > elevenlabs-convai,
+          body > div[style*="position: absolute"],
+          body > div[style*="position: fixed"] {
             display: none !important;
+          }
+          
+          /* Ensure widget stays within bounds */
+          elevenlabs-convai {
+            clip-path: inset(0) !important;
           }
         `
       }} />
