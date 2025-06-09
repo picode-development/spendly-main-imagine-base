@@ -1,26 +1,36 @@
 import { useQuery } from "@tanstack/react-query";
 import { client } from "@/lib/hono";
 import { useSearchParams } from "next/navigation";
-import { convertAmountFromMiliunits } from "@/lib/utils";
-
-client.api.accounts.$get
+import { convertAmountFromMiliunits, getDefaultDateRange } from "@/lib/utils";
+import { format } from "date-fns";
 
 export const useGetSummary = () => {
     const params = useSearchParams();
-    const from = params.get("from") || "";
-    const to = params.get("to") || "";
-    const accountId = params.get("accountId") || "";
+    const from = params.get("from") || undefined;
+    const to = params.get("to") || undefined;
+    const accountId = params.get("accountId") || undefined;
 
     const query = useQuery({
-        // TODO: Check if the params is needed in the key.
         queryKey: ["summary", { from, to, accountId }],
         queryFn: async () => {
+            // Build query object
+            const queryParams: Record<string, string> = {};
+            
+            // If no date params in URL, use default dates for API call
+            if (!from || !to) {
+                const { defaultFrom, defaultTo } = getDefaultDateRange();
+                queryParams.from = format(defaultFrom, "yyyy-MM-dd");
+                queryParams.to = format(defaultTo, "yyyy-MM-dd");
+            } else {
+                // Use the adjusted dates from URL params
+                queryParams.from = from;
+                queryParams.to = to;
+            }
+            
+            if (accountId) queryParams.accountId = accountId;
+
             const response = await client.api.summary.$get({
-                query: {
-                    from,
-                    to,
-                    accountId,
-                },
+                query: queryParams,
             });
 
             if (!response.ok) {
