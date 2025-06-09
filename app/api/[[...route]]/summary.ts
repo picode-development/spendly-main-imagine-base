@@ -3,7 +3,7 @@ import { accounts, categories, transactions } from "@/db/schema";
 import { calculatePercentageChange, fillMissingDays } from "@/lib/utils";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { zValidator } from "@hono/zod-validator";
-import { parse, addDays } from "date-fns";
+import { parse, addDays, subDays, differenceInDays } from "date-fns";
 import { and, desc, eq, gte, lt, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -34,18 +34,24 @@ const app = new Hono()
       const baseConditions = [
         accountId ? eq(transactions.accountId, accountId) : undefined,
         eq(accounts.userId, auth.userId),
-      ];
+      ].filter(Boolean);
 
-      const dateConditions =
-        !showAllDates && from && to
-          ? [
-              gte(transactions.date, parse(from, "yyyy-MM-dd", new Date())),
-              lt(transactions.date, addDays(parse(to, "yyyy-MM-dd", new Date()), 1)),
-            ]
-          : [];
+      // Parse current period dates
+      const currentFromDate = from ? parse(from, "yyyy-MM-dd", new Date()) : null;
+      const currentToDate = to ? parse(to, "yyyy-MM-dd", new Date()) : null;
 
-      const fetchData = async (additionalConditions: any[] = []) => {
-        return await db
+      const fetchData = async (fromDate?: Date | null, toDate?: Date | null) => {
+        const conditions = [...baseConditions];
+        
+        // Always apply date filtering if dates are provided, regardless of showAllDates
+        if (fromDate && toDate) {
+          conditions.push(
+            gte(transactions.date, fromDate),
+            lt(transactions.date, addDays(toDate, 1))
+          );
+        }
+
+        const result = await db
           .select({
             income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
             expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
@@ -53,14 +59,26 @@ const app = new Hono()
           })
           .from(transactions)
           .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-          .where(and(...[...baseConditions, ...dateConditions, ...additionalConditions]));
+          .where(and(...conditions.filter(Boolean)));
+
+        // Return default values if no data found
+        return result.length > 0 ? result : [{ income: 0, expenses: 0, remaining: 0 }];
       };
 
-      const [currentPeriod] = await fetchData();
+      // Fetch current period data
+      const [currentPeriod] = await fetchData(currentFromDate, currentToDate);
 
-      const [lastPeriod] = showAllDates
-        ? [{ income: 0, expenses: 0, remaining: 0 }]
-        : await fetchData();
+      // Calculate previous period dates for comparison
+      let lastPeriod = { income: 0, expenses: 0, remaining: 0 };
+      
+      if (!showAllDates && currentFromDate && currentToDate) {
+        const periodLength = differenceInDays(currentToDate, currentFromDate);
+        const previousFromDate = subDays(currentFromDate, periodLength + 1);
+        const previousToDate = subDays(currentFromDate, 1);
+        
+        const [previousPeriodData] = await fetchData(previousFromDate, previousToDate);
+        lastPeriod = previousPeriodData;
+      }
 
       const incomeChange = showAllDates
         ? 0
@@ -72,6 +90,15 @@ const app = new Hono()
         ? 0
         : calculatePercentageChange(currentPeriod.remaining, lastPeriod.remaining);
 
+      // Build date conditions for categories and days queries
+      const dateConditions = [];
+      if (currentFromDate && currentToDate) {
+        dateConditions.push(
+          gte(transactions.date, currentFromDate),
+          lt(transactions.date, addDays(currentToDate, 1))
+        );
+      }
+
       const category = await db
         .select({
           name: categories.name,
@@ -82,7 +109,7 @@ const app = new Hono()
         .innerJoin(categories, eq(transactions.categoryId, categories.id))
         .where(
           and(
-            ...baseConditions,
+            ...baseConditions.filter(Boolean),
             ...dateConditions,
             lt(transactions.amount, 0)
           )
@@ -105,7 +132,7 @@ const app = new Hono()
         })
         .from(transactions)
         .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-        .where(and(...[...baseConditions, ...dateConditions]))
+        .where(and(...baseConditions.filter(Boolean), ...dateConditions))
         .groupBy(transactions.date)
         .orderBy(transactions.date);
 
@@ -119,12 +146,12 @@ const app = new Hono()
           expensesChange,
           categories: finalCategories,
           days:
-            showAllDates || !from || !to
+            showAllDates || !currentFromDate || !currentToDate
               ? activeDays
               : fillMissingDays(
                   activeDays,
-                  parse(from, "yyyy-MM-dd", new Date()),
-                  parse(to, "yyyy-MM-dd", new Date())
+                  currentFromDate,
+                  currentToDate
                 ),
           showAllDates,
         },
