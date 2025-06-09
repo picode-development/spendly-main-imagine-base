@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useMedia } from "react-use";
+import { useTheme } from "next-themes";
 import { Home, List, MessageCircle, Bot, Mic, X, ChevronDown } from "lucide-react";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
 import { UserButton } from "@clerk/nextjs";
@@ -16,6 +17,8 @@ import VoiceAssistant from "./voice-assistant";
 export const Navigation = () => {
   const pathname = usePathname();
   const router = useRouter();
+  const { theme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const isMobile = useMedia("(max-width: 1024px)", false);
   const newTransaction = useNewTransaction();
   const [isScrolled, setIsScrolled] = useState(false);
@@ -25,6 +28,11 @@ export const Navigation = () => {
   const [isClosing, setIsClosing] = useState(false);
 
   const isActive = (href: string) => pathname === href;
+
+  // Handle theme mounting
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -57,6 +65,14 @@ export const Navigation = () => {
     setIsAssistantModalOpen(false);
   };
 
+  // Don't render until mounted to prevent hydration mismatch
+  if (!mounted) {
+    return null;
+  }
+
+  // Get the logo based on current theme
+  const logoSrc = resolvedTheme === 'dark' ? "/White-Larger-Logo.svg" : "/White-Larger-Logo.svg";
+
   if (isMobile) {
     return (
       <>
@@ -64,13 +80,13 @@ export const Navigation = () => {
         <div
           className={`fixed top-0 inset-x-0 z-50 px-6 py-4 flex items-center justify-between transition-colors duration-300 backdrop-blur-md ${
             isScrolled
-              ? "bg-blue-600/90 shadow-md dark:bg-[rgba(10,25,50,0.85)] dark:backdrop-blur-md dark:shadow-lg"
+              ? "bg-blue-600/90 shadow-md dark:bg-slate-900/90"
               : "bg-transparent"
-          } dark:text-white`}
+          }`}
         >
           <Link href="/" className="flex items-center gap-2">
             <Image
-              src="/White-Larger-Logo.svg"
+              src={logoSrc}
               alt="Spendly Logo"
               height={28}
               width={28}
@@ -82,13 +98,15 @@ export const Navigation = () => {
         </div>
 
         {/* Mobile Bottom Navigation */}
-        <nav className="fixed bottom-0 inset-x-0 z-50 bg-white dark:bg-[#121826] px-4 py-2 border-t border-gray-200 dark:border-gray-700 transition-colors duration-300">
+        <nav className="fixed bottom-0 inset-x-0 z-50 bg-white dark:bg-slate-900 px-4 py-2 border-t border-gray-200 dark:border-slate-700 transition-colors duration-300">
           <div className="relative grid grid-cols-5 items-end text-xs">
             <div className="flex flex-col items-center gap-1">
               <button
                 onClick={() => router.push("/")}
-                className={`flex flex-col items-center ${
-                  pathname === "/" ? "text-black font-semibold dark:text-white" : "text-gray-500 dark:text-gray-400"
+                className={`flex flex-col items-center transition-colors ${
+                  pathname === "/" 
+                    ? "text-blue-600 dark:text-blue-400 font-semibold" 
+                    : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 <Home className="size-6" />
@@ -99,8 +117,10 @@ export const Navigation = () => {
             <div className="flex flex-col items-center gap-1">
               <button
                 onClick={() => router.push("/transactions")}
-                className={`flex flex-col items-center ${
-                  pathname === "/transactions" ? "text-black font-semibold dark:text-white" : "text-gray-500 dark:text-gray-400"
+                className={`flex flex-col items-center transition-colors ${
+                  pathname === "/transactions" 
+                    ? "text-blue-600 dark:text-blue-400 font-semibold" 
+                    : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 <List className="size-6" />
@@ -122,7 +142,7 @@ export const Navigation = () => {
             <div className="relative flex flex-col items-center justify-end gap-1">
               <button
                 onClick={() => setIsAssistantModalOpen(true)}
-                className="flex flex-col items-center text-gray-500 dark:text-gray-400"
+                className="flex flex-col items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
               >
                 <MessageCircle className="size-6" />
               </button>
@@ -139,7 +159,7 @@ export const Navigation = () => {
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-sm transform transition-all duration-300 ease-out animate-enter overflow-hidden"
+              className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-sm transform transition-all duration-300 ease-out animate-enter overflow-hidden border border-gray-200 dark:border-slate-700"
             >
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-slate-700">
@@ -172,13 +192,13 @@ export const Navigation = () => {
                 </div>
 
                 {/* Preview */}
-                <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
+                <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-slate-700 rounded-lg border border-gray-200 dark:border-slate-600">
                   {assistantSelection === 'text' ? (
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                    <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                   ) : (
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                    <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center">
                       <Mic className="w-4 h-4 text-white" />
                     </div>
                   )}
@@ -200,13 +220,13 @@ export const Navigation = () => {
               <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-slate-700">
                 <button
                   onClick={() => setIsAssistantModalOpen(false)}
-                  className="flex-1 px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors font-medium"
+                  className="flex-1 px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors font-medium border border-gray-300 dark:border-slate-600"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAssistantLaunch}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg transition-colors font-medium flex items-center justify-center gap-2"
                 >
                   {assistantSelection === 'text' ? <Bot className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                   Launch
@@ -234,14 +254,14 @@ export const Navigation = () => {
                 }
                 ${openType === 'voice'
                   ? 'bg-transparent backdrop-blur-none border-none shadow-none'
-                  : 'bg-white/95 dark:bg-zinc-900/95 backdrop-blur-sm border border-white/20 dark:border-zinc-700/50 shadow-2xl'
+                  : 'bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border border-white/20 dark:border-slate-700/50 shadow-2xl'
                 }`}
             >
               {/* Close Button (inside the popup) */}
               <div className="absolute top-3 right-3 sm:top-4 sm:right-4 z-10">
                 <button
                   onClick={closeAssistant}
-                  className="text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white bg-white/80 dark:bg-zinc-800/80 backdrop-blur-sm rounded-full p-2 shadow-lg hover:shadow-xl transition-all duration-200 border border-gray-200/50 dark:border-zinc-600/50"
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-full p-2 shadow-lg hover:shadow-xl transition-all duration-200 border border-gray-200/50 dark:border-slate-600/50"
                 >
                   <X className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
@@ -282,7 +302,7 @@ export const Navigation = () => {
     );
   }
 
-  // Desktop nav (unchanged)
+  // Desktop nav with proper theme support
   return (
     <nav className="hidden lg:flex items-center gap-x-2 px-4">
       {[
@@ -297,22 +317,15 @@ export const Navigation = () => {
           <button
             key={route.href}
             onClick={() => router.push(route.href)}
-            className={`relative text-sm px-4 py-2 rounded-md font-medium transition-colors duration-200
-          ${
-            active
-              ? "text-white bg-white/10 shadow-[0_0_4px_rgba(255,255,255,0.2)]"
-              : "text-white/80 hover:text-white hover:bg-white/5 hover:shadow-[0_0_3px_rgba(255,255,255,0.1)]"
-          }
-          dark:${
-            active
-              ? "text-white bg-[rgba(20,40,80,0.6)] shadow-[0_0_6px_rgba(0,112,244,0.6)]"
-              : "text-white/70 hover:text-white hover:bg-[rgba(20,40,80,0.4)] hover:shadow-[0_0_5px_rgba(0,112,244,0.4)]"
-          }
-        `}
+            className={`relative text-sm px-4 py-2 rounded-md font-medium transition-all duration-200 ${
+              active
+                ? "text-white bg-white/10 shadow-[0_0_4px_rgba(255,255,255,0.2)] dark:bg-blue-900/40 dark:shadow-[0_0_6px_rgba(59,130,246,0.4)]"
+                : "text-white/80 hover:text-white hover:bg-white/5 hover:shadow-[0_0_3px_rgba(255,255,255,0.1)] dark:text-white/70 dark:hover:text-white dark:hover:bg-white/10"
+            }`}
           >
             {route.label}
             {active && (
-              <span className="absolute left-1/2 -bottom-0.5 w-2/3 h-0.5 bg-white/50 rounded-full -translate-x-1/2 transition-all duration-300" />
+              <span className="absolute left-1/2 -bottom-0.5 w-2/3 h-0.5 bg-white/50 dark:bg-blue-400/70 rounded-full -translate-x-1/2 transition-all duration-300" />
             )}
           </button>
         );
