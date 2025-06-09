@@ -105,7 +105,7 @@ export const Navigation = () => {
                 onClick={() => router.push("/")}
                 className={`flex flex-col items-center transition-colors ${
                   pathname === "/" 
-                    ? "text-blue-600 dark:text-blue-400 font-semibold" 
+                    ? "text-gray-900 dark:text-blue-400 font-semibold" 
                     : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
@@ -119,7 +119,7 @@ export const Navigation = () => {
                 onClick={() => router.push("/transactions")}
                 className={`flex flex-col items-center transition-colors ${
                   pathname === "/transactions" 
-                    ? "text-blue-600 dark:text-blue-400 font-semibold" 
+                    ? "text-gray-900 dark:text-blue-400 font-semibold" 
                     : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
