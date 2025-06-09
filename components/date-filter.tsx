@@ -28,27 +28,51 @@ export const DateFilter = () => {
   const from = params.get("from") || "";
   const to = params.get("to") || "";
 
-  const defaultTo = new Date();
+  // Create consistent default dates
+  const today = new Date();
+  const defaultTo = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const defaultFrom = subDays(defaultTo, 30);
 
+  // Check if we have manual date parameters
+  const hasDateParams = from && to;
+
   const paramState = {
-    from: from ? new Date(from) : defaultFrom,
-    to: to ? new Date(to) : defaultTo,
+    from: hasDateParams ? new Date(from) : defaultFrom,
+    to: hasDateParams ? new Date(to) : defaultTo,
   };
 
   const [date, setDate] = useState<DateRange | undefined>(paramState);
   const isMobile = useIsMobile();
 
-  const pushToUrl = (dateRange: DateRange | undefined) => {
+  const pushToUrl = (dateRange: DateRange | undefined, isManual: boolean = false) => {
+    // Only add date params to URL if they were manually selected
+    if (!isManual) {
+      // For default dates, only keep accountId in URL
+      const query = accountId ? { accountId } : {};
+      
+      const url = qs.stringifyUrl(
+        {
+          url: pathname,
+          query,
+        },
+        { skipEmptyString: true, skipNull: true }
+      );
+
+      router.push(url);
+      return;
+    }
+
+    // For manual selection, include dates in URL with full day coverage
+    const fromDate = dateRange?.from || defaultFrom;
+    const toDate = dateRange?.to || defaultTo;
+
+    // Subtract 1 day from 'from' and add 1 day to 'to' for full day coverage
+    const adjustedFrom = subDays(fromDate, 1);
+    const adjustedTo = addDays(toDate, 1);
+
     const query = {
-      from: format(
-        dateRange?.from ? subDays(dateRange.from, 1) : subDays(defaultFrom, 1),
-        "yyyy-MM-dd"
-      ),
-      to: format(
-        dateRange?.to ? addDays(dateRange.to, 1) : addDays(defaultTo, 1),
-        "yyyy-MM-dd"
-      ),
+      from: format(adjustedFrom, "yyyy-MM-dd"),
+      to: format(adjustedTo, "yyyy-MM-dd"),
       accountId,
     };
 
@@ -64,8 +88,14 @@ export const DateFilter = () => {
   };
 
   const onReset = () => {
-    setDate(undefined);
-    pushToUrl(undefined);
+    setDate({ from: defaultFrom, to: defaultTo });
+    // Reset removes date params from URL
+    pushToUrl({ from: defaultFrom, to: defaultTo }, false);
+  };
+
+  const onApply = () => {
+    // Apply adds date params to URL
+    pushToUrl(date, true);
   };
 
   return (
@@ -99,7 +129,7 @@ export const DateFilter = () => {
           <PopoverClose asChild>
             <Button
               onClick={onReset}
-              disabled={!date?.from || !date?.to}
+              disabled={false}
               className="w-full sm:w-auto"
               variant="outline"
             >
@@ -108,7 +138,7 @@ export const DateFilter = () => {
           </PopoverClose>
           <PopoverClose asChild>
             <Button
-              onClick={() => pushToUrl(date)}
+              onClick={onApply}
               disabled={!date?.from || !date?.to}
               className="w-full sm:w-auto"
             >
