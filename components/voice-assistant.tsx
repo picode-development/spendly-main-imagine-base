@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTheme } from "next-themes";
 
 const VoiceAssistant = () => {
+  const { theme, resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetContainerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<number | null>(null);
@@ -21,6 +23,16 @@ const VoiceAssistant = () => {
   const [isScriptLoaded, setIsScriptLoaded] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [failedAgents, setFailedAgents] = useState<Set<string>>(new Set());
+
+  // Determine current theme state
+  const getCurrentTheme = () => {
+    if (theme === 'system') {
+      return resolvedTheme || 'dark'; // fallback to dark if resolvedTheme is undefined
+    }
+    return theme;
+  };
+
+  const currentTheme = getCurrentTheme();
 
   // Function to get a random embed code (excluding failed ones)
   const getRandomEmbedCode = useCallback(() => {
@@ -213,13 +225,38 @@ const VoiceAssistant = () => {
     return () => window.removeEventListener('error', handleError);
   }, [currentEmbedCode, handleAgentError]);
 
+  // Theme-based styling
+  const getContainerClasses = () => {
+    switch (currentTheme) {
+      case 'light':
+        return "w-full h-full bg-gradient-to-br from-slate-50 via-white to-blue-50 rounded-2xl shadow-2xl border border-slate-200/60 overflow-hidden relative";
+      case 'dark':
+        return "w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-900 rounded-2xl shadow-2xl border border-slate-700/50 overflow-hidden relative";
+      case 'system':
+      default:
+        return "w-full h-full bg-gradient-to-br from-slate-100 via-slate-50 to-indigo-100 rounded-2xl shadow-2xl border border-slate-300/50 overflow-hidden relative";
+    }
+  };
+
+  const getButtonClasses = () => {
+    switch (currentTheme) {
+      case 'light':
+        return "absolute top-4 left-4 z-20 bg-blue-500 hover:bg-blue-600 text-white rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-110 hover:shadow-xl";
+      case 'dark':
+        return "absolute top-4 left-4 z-20 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-110 hover:shadow-xl";
+      case 'system':
+      default:
+        return "absolute top-4 left-4 z-20 bg-slate-600 hover:bg-slate-700 text-white rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-110 hover:shadow-xl";
+    }
+  };
+
   return (
     <div className="relative w-full h-full">
       {/* Floating Manual Shuffle Button - Top Left */}
       {embedCodes.length > 1 && (
         <button
           onClick={handleManualShuffle}
-          className="absolute top-4 left-4 z-20 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-110 hover:shadow-xl"
+          className={getButtonClasses()}
           title="Shuffle Agent"
         >
           <svg 
@@ -238,10 +275,10 @@ const VoiceAssistant = () => {
         </button>
       )}
 
-      {/* Voice Assistant Container with Dark Theme and Forced Containment */}
+      {/* Voice Assistant Container with Theme-based Styling */}
       <div 
         ref={containerRef} 
-        className="w-full h-full bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-900 rounded-2xl shadow-2xl border border-slate-700/50 overflow-hidden relative"
+        className={getContainerClasses()}
         style={{
           contain: 'layout style paint',
           isolation: 'isolate'
