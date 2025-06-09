@@ -68,14 +68,21 @@ export function fillMissingDays(
   return transactionsByDay;
 };
 
+// Create consistent default dates function
+export function getDefaultDateRange() {
+  const today = new Date();
+  const defaultTo = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const defaultFrom = subDays(defaultTo, 30);
+  return { defaultFrom, defaultTo };
+}
+
 type Period = {
   from: string | Date | undefined;
   to: string | Date | undefined;
 };
 
 export function formatDateRange (period?: Period) {
-  const defaultTo = new Date();
-  const defaultFrom = subDays(defaultTo, 30);
+  const { defaultFrom, defaultTo } = getDefaultDateRange();
 
   if (!period?.from) {
     return `${format(defaultFrom, "LLL dd")} - ${format(defaultTo, "LLL dd, y")}`;
