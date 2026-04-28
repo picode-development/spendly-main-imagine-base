@@ -1,0 +1,4 @@
+1. Added images feature in transactions to store receipts.
+2. Added Categories filter.
+3. Made UX better for filters avoiding clearing of one when modifing others.
+4. Improved UI of Date & All dates filters UI to be in one row.
