@@ -137,7 +137,7 @@ export const ImageUpload = ({ value, onChange, disabled }: Props) => {
         <>
             <div className="space-y-2">
                 {value ? (
-                    <div className="relative w-full rounded-md overflow-hidden border border-white/10 group">
+                    <div className="relative w-full rounded-md overflow-hidden border border-border group">
                         <img
                             src={value}
                             alt="Receipt"
@@ -198,20 +198,16 @@ export const ImageUpload = ({ value, onChange, disabled }: Props) => {
                 />
             </div>
 
-            {/* Gallery Lightbox — matches form dark theme */}
+            {/* Gallery Lightbox — adapts to the active light/dark theme */}
             {isLightboxOpen && value && (
-                <div className="fixed inset-y-0 right-0 w-full sm:w-[449px] z-[9999] flex flex-col"
-                    style={{ background: "#0d1122" }}
-                >
+                <div className="fixed inset-y-0 right-0 w-full sm:w-[449px] z-[9999] flex flex-col bg-white dark:bg-[#0d1122]">
                     {/* Header — matches sheet header style */}
-                    <div className="flex items-center justify-between px-5 py-4 shrink-0"
-                        style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}
-                    >
-                        <span className="text-sm font-medium text-white/90">Receipt</span>
+                    <div className="flex items-center justify-between px-5 py-4 shrink-0 border-b border-black/10 dark:border-white/10">
+                        <span className="text-sm font-medium text-gray-900 dark:text-white/90">Receipt</span>
                         <button
                             type="button"
                             onClick={closeLightbox}
-                            className="flex items-center justify-center size-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                            className="flex items-center justify-center size-7 rounded-full text-gray-400 hover:text-gray-900 hover:bg-black/5 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
                         >
                             <X className="size-4" />
                         </button>
@@ -247,45 +243,39 @@ export const ImageUpload = ({ value, onChange, disabled }: Props) => {
                     </div>
 
                     {/* Bottom controls — pill style matching your UI */}
-                    <div className="flex items-center justify-center gap-1 px-4 py-4 shrink-0"
-                        style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
-                    >
+                    <div className="flex items-center justify-center gap-1 px-4 py-4 shrink-0 border-t border-black/10 dark:border-white/10">
                         {/* Controls group */}
-                        <div className="flex items-center gap-1 rounded-full px-3 py-2"
-                            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
-                        >
+                        <div className="flex items-center gap-1 rounded-full px-3 py-2 bg-black/5 border border-black/10 dark:bg-white/[0.06] dark:border-white/10">
                             <button
                                 type="button"
                                 onClick={() => zoom(0.75)}
-                                className="flex items-center justify-center size-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                                className="flex items-center justify-center size-8 rounded-full text-gray-500 hover:text-gray-900 hover:bg-black/5 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
                             >
                                 <ZoomOut className="size-4" />
                             </button>
 
-                            <span className="text-white/50 text-xs min-w-[42px] text-center tabular-nums">
+                            <span className="text-gray-500 dark:text-white/50 text-xs min-w-[42px] text-center tabular-nums">
                                 {Math.round(scale * 100)}%
                             </span>
 
                             <button
                                 type="button"
                                 onClick={() => zoom(1.33)}
-                                className="flex items-center justify-center size-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                                className="flex items-center justify-center size-8 rounded-full text-gray-500 hover:text-gray-900 hover:bg-black/5 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
                             >
                                 <ZoomIn className="size-4" />
                             </button>
                         </div>
 
                         {/* Divider */}
-                        <div className="w-px h-5 mx-2" style={{ background: "rgba(255,255,255,0.1)" }} />
+                        <div className="w-px h-5 mx-2 bg-black/10 dark:bg-white/10" />
 
                         {/* Fit & Reset group */}
-                        <div className="flex items-center gap-1 rounded-full px-3 py-2"
-                            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
-                        >
+                        <div className="flex items-center gap-1 rounded-full px-3 py-2 bg-black/5 border border-black/10 dark:bg-white/[0.06] dark:border-white/10">
                             <button
                                 type="button"
                                 onClick={() => { setScale(2); setTranslate({ x: 0, y: 0 }); lastTranslate.current = { x: 0, y: 0 }; }}
-                                className="flex items-center justify-center size-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                                className="flex items-center justify-center size-8 rounded-full text-gray-500 hover:text-gray-900 hover:bg-black/5 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
                                 title="Zoom to 2×"
                             >
                                 <Maximize2 className="size-4" />
@@ -293,7 +283,7 @@ export const ImageUpload = ({ value, onChange, disabled }: Props) => {
                             <button
                                 type="button"
                                 onClick={resetView}
-                                className="flex items-center justify-center size-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                                className="flex items-center justify-center size-8 rounded-full text-gray-500 hover:text-gray-900 hover:bg-black/5 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
                                 title="Reset"
                             >
                                 <RotateCcw className="size-4" />

@@ -8,6 +8,7 @@ import { SheetProvider } from "@/providers/sheet-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { FullPageLoader } from "./FullPageLoader";
 import Assistant from "./assistant";
+import { AppLockGate } from "@/components/app-lock-gate";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -28,8 +29,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     <QueryProvider>
       <SheetProvider />
       <Toaster />
-      {children}
-      {!isAuthPage && <Assistant />} {/* Only show trigger on non-auth pages */}
+      <AppLockGate>
+        {children}
+        {!isAuthPage && <Assistant />} {/* Only show trigger on non-auth pages */}
+      </AppLockGate>
     </QueryProvider>
   );
 
