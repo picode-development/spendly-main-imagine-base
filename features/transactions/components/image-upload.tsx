@@ -2,6 +2,7 @@
 
 import { useRef, useState, useCallback } from "react";
 import { ImageIcon, Loader2, X, ZoomIn, ZoomOut, Maximize2, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -91,7 +92,7 @@ export const ImageUpload = ({ value, onChange, disabled }: Props) => {
 
     const uploadToImgBB = async (file: File) => {
         const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY;
-        if (!apiKey) throw new Error("ImgBB API key not configured");
+        if (!apiKey) throw new Error("Image upload isn't configured. Contact support.");
         const formData = new FormData();
         formData.append("image", file);
         const res = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
@@ -104,13 +105,18 @@ export const ImageUpload = ({ value, onChange, disabled }: Props) => {
     };
 
     const handleFile = async (file: File) => {
-        if (!file.type.startsWith("image/")) return;
+        if (!file.type.startsWith("image/")) {
+            toast.error("Please choose an image file.");
+            return;
+        }
         setIsUploading(true);
         try {
             const url = await uploadToImgBB(file);
             onChange(url);
+            toast.success("Image uploaded");
         } catch (e) {
             console.error("Image upload error:", e);
+            toast.error(e instanceof Error ? e.message : "Image upload failed. Please try again.");
         } finally {
             setIsUploading(false);
         }
