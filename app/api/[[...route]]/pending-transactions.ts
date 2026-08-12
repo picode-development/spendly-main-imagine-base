@@ -1,12 +1,18 @@
 import { z } from "zod";
 import { db } from "@/db/drizzle";
-import { pendingTransactions } from "@/db/schema";
-import { parseTransactionSms } from "@/lib/sms-parser";
+import { pendingTransactions, smsRules } from "@/db/schema";
+import { parseTransactionSms, SmsRule } from "@/lib/sms-parser";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { zValidator } from "@hono/zod-validator";
+
+const getUserRules = async (userId: string): Promise<SmsRule[]> =>
+    db
+        .select()
+        .from(smsRules)
+        .where(eq(smsRules.userId, userId)) as Promise<SmsRule[]>;
 
 const app = new Hono()
     .get(
@@ -53,7 +59,7 @@ const app = new Hono()
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
-            const parsed = parseTransactionSms(message);
+            const parsed = parseTransactionSms(message, await getUserRules(inboxUserId));
 
             // OTPs, balance alerts, promos — acknowledged but not stored
             if (!parsed.isTransaction) {
@@ -90,7 +96,7 @@ const app = new Hono()
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
-            const parsed = parseTransactionSms(message);
+            const parsed = parseTransactionSms(message, await getUserRules(auth.userId));
 
             const [data] = await db.insert(pendingTransactions).values({
                 id: createId(),

@@ -15,6 +15,18 @@ export type ParsedSms = {
     isTransaction: boolean;
 };
 
+/**
+ * A user-taught format (Settings → SMS formats). When `matchText` appears in a
+ * message, the rule's direction and payee extraction override the built-in
+ * heuristics; everything else still comes from the generic parser.
+ */
+export type SmsRule = {
+    matchText: string;
+    direction: "auto" | "income" | "expense";
+    payeePrefix?: string | null;
+    payeeSuffix?: string | null;
+};
+
 const AMOUNT_RE = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i;
 // SBI-style "debited by 150.0" / "credited with 2000" — no currency prefix
 const AMOUNT_FALLBACK_RE = /\b(?:debited|credited)\s+(?:by|with|for)\s+([\d,]+(?:\.\d{1,2})?)\b/i;
@@ -54,33 +66,64 @@ const ACCOUNT_RE = /\b(?:a\/c|acct|account|ac)\s*(?:no\.?)?\s*[x*.]*\s*(\d{3,6})
 
 // "on 12-08-26", "on 12/08/2026", "on 12-Aug-26", "on date 12Aug26"
 const DATE_RE = /\bon\s+(?:date\s+)?(\d{1,2})[-\/]?([a-z]{3}|\d{1,2})[-\/]?(\d{2,4})\b/i;
+// BoB-style trailing timestamp: "(10-08-2026 15:42:18)"
+const DATE_FALLBACK_RE = /\((\d{1,2})-(\d{1,2})-(\d{4})\s+\d{1,2}:\d{2}/;
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-export function parseTransactionSms(message: string): ParsedSms {
+export function parseTransactionSms(message: string, rules: SmsRule[] = []): ParsedSms {
     const text = message.trim();
+
+    const rule = rules.find(
+        (r) => r.matchText && text.toLowerCase().includes(r.matchText.toLowerCase()),
+    ) ?? null;
 
     const amountMatch = text.match(AMOUNT_RE) ?? text.match(AMOUNT_FALLBACK_RE);
     const isDebit = DEBIT_RE.test(text);
     const isCredit = CREDIT_RE.test(text);
 
-    // A transaction message needs at least an amount and a direction
-    const isTransaction = !!amountMatch && (isDebit || isCredit);
-
-    let amount: number | null = null;
+    let magnitude: number | null = null;
     if (amountMatch) {
         const value = parseFloat(amountMatch[1].replace(/,/g, ""));
-        if (!isNaN(value) && value > 0) {
-            const miliunits = Math.round(value * 1000);
+        if (!isNaN(value) && value > 0) magnitude = Math.round(value * 1000);
+    }
+
+    // A transaction message needs an amount and a direction — from the message
+    // itself or from a matching user rule
+    const ruleDirection = rule && rule.direction !== "auto" ? rule.direction : null;
+    const isTransaction = magnitude !== null && (isDebit || isCredit || !!ruleDirection);
+
+    let amount: number | null = null;
+    if (magnitude !== null) {
+        if (ruleDirection) {
+            amount = ruleDirection === "expense" ? -magnitude : magnitude;
+        } else if (isDebit) {
             // Debit wins when both words appear ("debited ... credited to ...")
-            amount = isDebit ? -miliunits : isCredit ? miliunits : null;
+            amount = -magnitude;
+        } else if (isCredit) {
+            amount = magnitude;
         }
     }
 
     let payee: string | null = null;
 
+    // A user-taught payee position beats every built-in heuristic
+    if (rule?.payeePrefix) {
+        const idx = text.toLowerCase().indexOf(rule.payeePrefix.toLowerCase());
+        if (idx >= 0) {
+            const rest = text.slice(idx + rule.payeePrefix.length);
+            let end = rule.payeeSuffix
+                ? rest.toLowerCase().indexOf(rule.payeeSuffix.toLowerCase())
+                : -1;
+            if (end < 0) end = rest.search(/[.,;\n]/);
+            if (end < 0) end = rest.length;
+            const candidate = rest.slice(0, Math.min(end, 60)).trim().replace(/\s{2,}/g, " ");
+            if (candidate.length >= 2) payee = candidate;
+        }
+    }
+
     // Card spends have the most specific format — try that first
-    if (/\bcard\b/i.test(text)) {
+    if (!payee && /\bcard\b/i.test(text)) {
         const cardMatch = text.match(CARD_PAYEE_RE);
         if (cardMatch && !isBadPayee(cardMatch[1].trim())) {
             payee = cardMatch[1].trim().replace(/\s{2,}/g, " ");
@@ -112,7 +155,7 @@ export function parseTransactionSms(message: string): ParsedSms {
     const accountHint = accountMatch ? `a/c ..${accountMatch[1]}` : null;
 
     let date: Date | null = null;
-    const dateMatch = text.match(DATE_RE);
+    const dateMatch = text.match(DATE_RE) ?? text.match(DATE_FALLBACK_RE);
     if (dateMatch) {
         const day = parseInt(dateMatch[1], 10);
         const monthRaw = dateMatch[2].toLowerCase();

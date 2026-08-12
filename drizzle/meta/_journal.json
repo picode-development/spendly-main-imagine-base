@@ -50,6 +50,13 @@
       "when": 1786559012036,
       "tag": "0006_swift_changeling",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1786563388222,
+      "tag": "0007_clumsy_apocalypse",
+      "breakpoints": true
     }
   ]
 }

@@ -96,3 +96,18 @@ export const pendingTransactions = pgTable("pending_transactions", {
 export const InsertPendingTransactionSchema = createInsertSchema(pendingTransactions, {
     date: z.coerce.date(),
 });
+
+// User-taught SMS formats (Settings → SMS formats). Applied by the parser
+// before its built-in heuristics — see lib/sms-parser.ts SmsRule.
+export const smsRules = pgTable("sms_rules", {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    matchText: text("match_text").notNull(),      // literal that identifies the format
+    direction: text("direction").notNull().default("auto"), // auto | income | expense
+    payeePrefix: text("payee_prefix"),            // words right before the payee
+    payeeSuffix: text("payee_suffix"),            // optional words right after
+    sample: text("sample"),                       // the message it was taught from
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const InsertSmsRuleSchema = createInsertSchema(smsRules);
