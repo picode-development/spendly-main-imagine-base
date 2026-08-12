@@ -23,7 +23,8 @@ export const PendingTransactionsPopup = () => {
         return (
             <Button
                 onClick={() => setCollapsed(false)}
-                className="fixed bottom-4 left-4 z-50 h-9 rounded-full shadow-lg"
+                // bottom-20 on mobile clears the fixed bottom navigation bar
+                className="fixed bottom-20 lg:bottom-4 left-4 z-[60] h-9 rounded-full shadow-lg"
             >
                 <BellRing className="size-4 mr-2" />
                 {pending.length} detected
@@ -46,7 +47,7 @@ export const PendingTransactionsPopup = () => {
     };
 
     return (
-        <div className="fixed bottom-4 left-4 z-50 w-[calc(100vw-2rem)] max-w-sm rounded-lg border bg-card text-card-foreground shadow-lg">
+        <div className="fixed bottom-20 lg:bottom-4 left-4 z-[60] w-[calc(100vw-2rem)] max-w-sm rounded-lg border bg-card text-card-foreground shadow-lg">
             <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
                 <div className="flex items-center gap-2">
                     <BellRing className="size-4 text-primary" />
