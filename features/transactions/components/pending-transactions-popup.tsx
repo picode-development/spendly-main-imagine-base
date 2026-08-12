@@ -10,6 +10,12 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
+import { useOpenTransaction } from "@/features/transactions/hooks/use-open-transaction";
+import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
+import { useNewAccount } from "@/features/accounts/hooks/use-new-account";
+import { useOpenAccount } from "@/features/accounts/hooks/use-open-account";
+import { useNewCategory } from "@/features/categories/hooks/use-new-category";
+import { useOpenCategory } from "@/features/categories/hooks/use-open-category";
 
 export const PendingTransactionsPopup = () => {
     const [collapsed, setCollapsed] = useState(false);
@@ -17,6 +23,18 @@ export const PendingTransactionsPopup = () => {
     const deletePending = useDeletePendingTransaction();
     const newTransaction = useNewTransaction();
 
+    // Step aside while any sheet is open — the popup must never cover a form
+    const anySheetOpen = [
+        newTransaction.isOpen,
+        useOpenTransaction((s) => s.isOpen),
+        useNewTransfer((s) => s.isOpen),
+        useNewAccount((s) => s.isOpen),
+        useOpenAccount((s) => s.isOpen),
+        useNewCategory((s) => s.isOpen),
+        useOpenCategory((s) => s.isOpen),
+    ].some(Boolean);
+
+    if (anySheetOpen) return null;
     if (!pending || pending.length === 0) return null;
 
     if (collapsed) {
