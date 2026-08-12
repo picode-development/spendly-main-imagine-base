@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { format as formatDate } from "date-fns";
 import { MessageSquarePlus, Plus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn, formatCurrency } from "@/lib/utils";
-import { parseTransactionSms, SmsRule } from "@/lib/sms-parser";
+import { parseTransactionSms, extractAnchor, FieldAnchor, SmsRule } from "@/lib/sms-parser";
 import { useGetSmsRules, useCreateSmsRule, useDeleteSmsRule } from "@/features/transactions/api/use-sms-rules";
 
 type Token = { text: string; start: number; end: number; isWord: boolean };
@@ -29,8 +30,47 @@ const tokenize = (text: string): Token[] => {
     return tokens;
 };
 
-// Teach Spendly your bank's SMS wording: paste a sample, tap the words that
-// are the name, done. Prefix/suffix anchors are derived automatically.
+const FIELDS = [
+    { key: "payee", label: "Name", selectedClass: "bg-primary text-primary-foreground" },
+    { key: "amount", label: "Amount", selectedClass: "bg-blue-500 text-white" },
+    { key: "account", label: "Account", selectedClass: "bg-amber-500 text-white" },
+    { key: "date", label: "Date", selectedClass: "bg-violet-500 text-white" },
+] as const;
+
+type FieldKey = (typeof FIELDS)[number]["key"];
+type Range = [number, number];
+type Selections = Partial<Record<FieldKey, Range>>;
+
+// Derive a "before/after" anchor from a tapped word range, widening the
+// prefix until extraction reproduces exactly the tapped text
+const deriveAnchor = (sample: string, tokens: Token[], range: Range): FieldAnchor | null => {
+    const [start, end] = range;
+    const selStart = tokens[start].start;
+    const target = sample.slice(selStart, tokens[end].end).trim();
+    if (!target) return null;
+
+    const nextWord = tokens.slice(end + 1).find((t) => t.isWord);
+    const suffix = nextWord ? nextWord.text : null;
+
+    const precedingWords = tokens.slice(0, start).filter((t) => t.isWord);
+    for (let k = 1; k <= Math.min(3, precedingWords.length); k++) {
+        const anchorToken = precedingWords[precedingWords.length - k];
+        const candidate: FieldAnchor = {
+            prefix: sample.slice(anchorToken.start, selStart),
+            suffix,
+        };
+        if (extractAnchor(sample, candidate) === target) return candidate;
+    }
+    if (precedingWords.length === 0) return null; // value at message start — unanchorable
+    return {
+        prefix: sample.slice(precedingWords[precedingWords.length - 1].start, selStart),
+        suffix,
+    };
+};
+
+// Teach Spendly your bank's SMS wording: paste a sample, pick a field, tap
+// the words that hold its value — whatever sits between the surrounding
+// words is captured on every future message of this format.
 export const SmsFormatSettings = () => {
     const { data: rules } = useGetSmsRules();
     const createRule = useCreateSmsRule();
@@ -39,12 +79,12 @@ export const SmsFormatSettings = () => {
     const [isAdding, setIsAdding] = useState(false);
     const [sample, setSample] = useState("");
     const [matchText, setMatchText] = useState("");
-    const [selection, setSelection] = useState<[number, number] | null>(null);
+    const [activeField, setActiveField] = useState<FieldKey>("payee");
+    const [selections, setSelections] = useState<Selections>({});
     const [direction, setDirection] = useState<"income" | "expense" | null>(null);
 
     const tokens = useMemo(() => tokenize(sample), [sample]);
 
-    // What the built-in parser already understands, before any teaching
     const baseParse = useMemo(
         () => (sample.trim() ? parseTransactionSms(sample) : null),
         [sample],
@@ -53,70 +93,45 @@ export const SmsFormatSettings = () => {
 
     const onSampleChange = (value: string) => {
         setSample(value);
-        setSelection(null);
+        setSelections({});
+        setDirection(null);
         const signature = value.match(/-\s*([A-Za-z][A-Za-z ]{2,30})\s*$/);
         setMatchText(signature ? signature[1].trim() : value.trim().split(/\s+/).slice(0, 4).join(" "));
     };
 
     const onTapWord = (index: number) => {
-        if (!selection) {
-            setSelection([index, index]);
-            return;
-        }
-        const [start, end] = selection;
-        if (index >= start && index <= end) {
-            setSelection(null);
-            return;
-        }
-        setSelection([Math.min(start, index), Math.max(end, index)]);
+        setSelections((prev) => {
+            const current = prev[activeField];
+            if (!current) return { ...prev, [activeField]: [index, index] as Range };
+            const [start, end] = current;
+            if (index >= start && index <= end) {
+                const next = { ...prev };
+                delete next[activeField];
+                return next;
+            }
+            return { ...prev, [activeField]: [Math.min(start, index), Math.max(end, index)] as Range };
+        });
     };
 
-    const selectionText = useMemo(() => {
-        if (!selection) return null;
-        return sample.slice(tokens[selection[0]].start, tokens[selection[1]].end).trim();
-    }, [selection, tokens, sample]);
-
-    // Derive prefix/suffix anchors from the tapped words, trying longer
-    // prefixes until the parser reproduces the exact selection
-    const derived = useMemo((): Pick<SmsRule, "payeePrefix" | "payeeSuffix"> => {
-        if (!selection || !selectionText) return { payeePrefix: null, payeeSuffix: null };
-        const [start, end] = selection;
-        const selStart = tokens[start].start;
-
-        const nextWord = tokens.slice(end + 1).find((t) => t.isWord);
-        const payeeSuffix = nextWord ? nextWord.text : null;
-
-        const precedingWords = tokens.slice(0, start).filter((t) => t.isWord);
-        for (let k = 1; k <= Math.min(3, precedingWords.length); k++) {
-            const anchor = precedingWords[precedingWords.length - k];
-            const payeePrefix = sample.slice(anchor.start, selStart);
-            const test = parseTransactionSms(sample, [{
-                // any substring of the sample guarantees the rule applies here
-                matchText: sample.slice(0, 10),
-                direction: "auto",
-                payeePrefix,
-                payeeSuffix,
-            }]);
-            if (test.payee === selectionText) {
-                return { payeePrefix, payeeSuffix };
-            }
+    const anchors = useMemo(() => {
+        const result: Partial<Record<FieldKey, FieldAnchor>> = {};
+        for (const field of FIELDS) {
+            const range = selections[field.key];
+            if (!range) continue;
+            const anchor = deriveAnchor(sample, tokens, range);
+            if (anchor) result[field.key] = anchor;
         }
-        // No preceding words (name at message start) or no calibration hit
-        const fallback = precedingWords.length
-            ? sample.slice(precedingWords[precedingWords.length - 1].start, selStart)
-            : null;
-        return { payeePrefix: fallback, payeeSuffix };
-    }, [selection, selectionText, tokens, sample]);
+        return result;
+    }, [selections, sample, tokens]);
 
     const draftRule: SmsRule | null = useMemo(() => {
         if (!sample.trim() || matchText.trim().length < 2) return null;
         return {
             matchText: matchText.trim(),
             direction: directionDetected ? "auto" : (direction ?? "auto"),
-            payeePrefix: derived.payeePrefix,
-            payeeSuffix: derived.payeeSuffix,
+            anchors,
         };
-    }, [sample, matchText, direction, directionDetected, derived]);
+    }, [sample, matchText, direction, directionDetected, anchors]);
 
     const preview = useMemo(
         () => (draftRule && sample.trim() ? parseTransactionSms(sample, [draftRule]) : null),
@@ -132,16 +147,30 @@ export const SmsFormatSettings = () => {
         setIsAdding(false);
         setSample("");
         setMatchText("");
-        setSelection(null);
+        setSelections({});
+        setActiveField("payee");
         setDirection(null);
     };
 
     const onSave = () => {
         if (!draftRule) return;
         createRule.mutate(
-            { ...draftRule, sample: sample.trim() || null },
+            {
+                matchText: draftRule.matchText,
+                direction: draftRule.direction,
+                anchors: draftRule.anchors ?? null,
+                sample: sample.trim() || null,
+            },
             { onSuccess: resetForm },
         );
+    };
+
+    const fieldOfToken = (index: number): (typeof FIELDS)[number] | null => {
+        for (const field of FIELDS) {
+            const range = selections[field.key];
+            if (range && index >= range[0] && index <= range[1]) return field;
+        }
+        return null;
     };
 
     return (
@@ -212,40 +241,50 @@ export const SmsFormatSettings = () => {
                     </div>
 
                     {sample.trim() && (
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                             <Label className="text-sm font-medium">
-                                2. Tap the words that are the name{" "}
-                                <span className="font-normal text-muted-foreground">
-                                    (who you paid, or who paid you)
-                                </span>
+                                2. Pick a field, then tap its words in the message
                             </Label>
+                            <div className="flex flex-wrap gap-1.5">
+                                {FIELDS.map((field) => (
+                                    <button
+                                        key={field.key}
+                                        type="button"
+                                        onClick={() => setActiveField(field.key)}
+                                        className={cn(
+                                            "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                                            activeField === field.key
+                                                ? field.selectedClass
+                                                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                                        )}
+                                    >
+                                        {field.label}
+                                        {selections[field.key] && " ✓"}
+                                    </button>
+                                ))}
+                            </div>
                             <div className="rounded-md border bg-muted/30 p-3 leading-7 text-sm">
-                                {tokens.map((token, i) =>
-                                    token.isWord ? (
+                                {tokens.map((token, i) => {
+                                    if (!token.isWord) return <span key={i}>{token.text}</span>;
+                                    const owner = fieldOfToken(i);
+                                    return (
                                         <button
                                             key={i}
                                             type="button"
                                             onClick={() => onTapWord(i)}
                                             className={cn(
                                                 "rounded px-0.5 transition-colors",
-                                                selection && i >= selection[0] && i <= selection[1]
-                                                    ? "bg-primary text-primary-foreground"
-                                                    : "hover:bg-accent",
+                                                owner ? owner.selectedClass : "hover:bg-accent",
                                             )}
                                         >
                                             {token.text}
                                         </button>
-                                    ) : (
-                                        <span key={i}>{token.text}</span>
-                                    ),
-                                )}
+                                    );
+                                })}
                             </div>
-                            {selectionText && (
-                                <p className="text-xs text-muted-foreground">
-                                    Name: <span className="font-medium text-foreground">{selectionText}</span>
-                                    {" "}— tap a selected word to clear.
-                                </p>
-                            )}
+                            <p className="text-xs text-muted-foreground">
+                                Anything you don&apos;t tap is detected automatically. Tap a highlighted word to clear it.
+                            </p>
                         </div>
                     )}
 
@@ -292,6 +331,11 @@ export const SmsFormatSettings = () => {
                                     <span className="font-medium">{preview.payee ?? "(no name)"}</span>
                                     {preview.accountHint && (
                                         <span className="text-xs text-muted-foreground">{preview.accountHint}</span>
+                                    )}
+                                    {preview.date && (
+                                        <span className="text-xs text-muted-foreground">
+                                            {formatDate(preview.date, "dd MMM yyyy")}
+                                        </span>
                                     )}
                                 </span>
                             ) : (

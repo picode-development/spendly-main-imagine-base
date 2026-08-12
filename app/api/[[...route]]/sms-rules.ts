@@ -34,8 +34,12 @@ const app = new Hono()
         zValidator("json", z.object({
             matchText: z.string().min(2).max(100),
             direction: z.enum(["auto", "income", "expense"]),
-            payeePrefix: z.string().max(60).nullish(),
-            payeeSuffix: z.string().max(60).nullish(),
+            anchors: z.object({
+                payee: z.object({ prefix: z.string().min(1).max(80), suffix: z.string().max(80).nullish() }).nullish(),
+                amount: z.object({ prefix: z.string().min(1).max(80), suffix: z.string().max(80).nullish() }).nullish(),
+                account: z.object({ prefix: z.string().min(1).max(80), suffix: z.string().max(80).nullish() }).nullish(),
+                date: z.object({ prefix: z.string().min(1).max(80), suffix: z.string().max(80).nullish() }).nullish(),
+            }).nullish(),
             sample: z.string().max(2000).nullish(),
         })),
         async (c) => {

@@ -97,6 +97,15 @@ export const InsertPendingTransactionSchema = createInsertSchema(pendingTransact
     date: z.coerce.date(),
 });
 
+// Per-field "before/after" anchors — the value sits between them.
+// See lib/sms-parser.ts FieldAnchor / SmsRule.
+export type SmsRuleAnchors = {
+    payee?: { prefix: string; suffix?: string | null } | null;
+    amount?: { prefix: string; suffix?: string | null } | null;
+    account?: { prefix: string; suffix?: string | null } | null;
+    date?: { prefix: string; suffix?: string | null } | null;
+};
+
 // User-taught SMS formats (Settings → SMS formats). Applied by the parser
 // before its built-in heuristics — see lib/sms-parser.ts SmsRule.
 export const smsRules = pgTable("sms_rules", {
@@ -104,8 +113,7 @@ export const smsRules = pgTable("sms_rules", {
     userId: text("user_id").notNull(),
     matchText: text("match_text").notNull(),      // literal that identifies the format
     direction: text("direction").notNull().default("auto"), // auto | income | expense
-    payeePrefix: text("payee_prefix"),            // words right before the payee
-    payeeSuffix: text("payee_suffix"),            // optional words right after
+    anchors: jsonb("anchors").$type<SmsRuleAnchors>(),
     sample: text("sample"),                       // the message it was taught from
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });

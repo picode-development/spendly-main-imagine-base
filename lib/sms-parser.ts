@@ -15,17 +15,59 @@ export type ParsedSms = {
     isTransaction: boolean;
 };
 
+/** "What comes before / after the value" — the value sits between them. */
+export type FieldAnchor = {
+    prefix: string;
+    suffix?: string | null;
+};
+
 /**
  * A user-taught format (Settings → SMS formats). When `matchText` appears in a
- * message, the rule's direction and payee extraction override the built-in
- * heuristics; everything else still comes from the generic parser.
+ * message, the rule's direction and per-field anchors override the built-in
+ * heuristics; unmapped fields still come from the generic parser.
  */
 export type SmsRule = {
     matchText: string;
     direction: "auto" | "income" | "expense";
-    payeePrefix?: string | null;
-    payeeSuffix?: string | null;
+    anchors?: {
+        payee?: FieldAnchor | null;
+        amount?: FieldAnchor | null;
+        account?: FieldAnchor | null;
+        date?: FieldAnchor | null;
+    } | null;
 };
+
+/** Extracts the text between an anchor's prefix and suffix (case-insensitive). */
+export function extractAnchor(text: string, anchor: FieldAnchor): string | null {
+    const idx = text.toLowerCase().indexOf(anchor.prefix.toLowerCase());
+    if (idx < 0) return null;
+    const rest = text.slice(idx + anchor.prefix.length);
+    let end = anchor.suffix
+        ? rest.toLowerCase().indexOf(anchor.suffix.toLowerCase())
+        : -1;
+    if (end < 0) end = rest.search(/[.,;\n]/);
+    if (end < 0) end = rest.length;
+    const value = rest.slice(0, Math.min(end, 60)).trim().replace(/\s{2,}/g, " ");
+    return value.length >= 1 ? value : null;
+}
+
+const MONTHS_LOOSE = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** Parses "12-08-26", "12 Aug 2026", "12/08" etc. from an anchored capture. */
+function parseLooseDate(value: string): Date | null {
+    const m = value.match(/(\d{1,2})[-\/ ]?([a-z]{3,9}|\d{1,2})[-\/ ]?(\d{2,4})?/i);
+    if (!m) return null;
+    const day = parseInt(m[1], 10);
+    const monthRaw = m[2].toLowerCase();
+    const month = /^\d+$/.test(monthRaw)
+        ? parseInt(monthRaw, 10) - 1
+        : MONTHS_LOOSE.indexOf(monthRaw.slice(0, 3));
+    let year = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+    if (year < 100) year += 2000;
+    if (month < 0 || month > 11 || day < 1 || day > 31) return null;
+    const date = new Date(year, month, day);
+    return isNaN(date.getTime()) ? null : date;
+}
 
 const AMOUNT_RE = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i;
 // SBI-style "debited by 150.0" / "credited with 2000" — no currency prefix
@@ -78,14 +120,25 @@ export function parseTransactionSms(message: string, rules: SmsRule[] = []): Par
         (r) => r.matchText && text.toLowerCase().includes(r.matchText.toLowerCase()),
     ) ?? null;
 
-    const amountMatch = text.match(AMOUNT_RE) ?? text.match(AMOUNT_FALLBACK_RE);
     const isDebit = DEBIT_RE.test(text);
     const isCredit = CREDIT_RE.test(text);
 
     let magnitude: number | null = null;
-    if (amountMatch) {
-        const value = parseFloat(amountMatch[1].replace(/,/g, ""));
-        if (!isNaN(value) && value > 0) magnitude = Math.round(value * 1000);
+
+    // A taught amount position beats the built-in currency patterns
+    if (rule?.anchors?.amount) {
+        const raw = extractAnchor(text, rule.anchors.amount);
+        if (raw) {
+            const value = parseFloat(raw.replace(/[^\d.]/g, ""));
+            if (!isNaN(value) && value > 0) magnitude = Math.round(value * 1000);
+        }
+    }
+    if (magnitude === null) {
+        const amountMatch = text.match(AMOUNT_RE) ?? text.match(AMOUNT_FALLBACK_RE);
+        if (amountMatch) {
+            const value = parseFloat(amountMatch[1].replace(/,/g, ""));
+            if (!isNaN(value) && value > 0) magnitude = Math.round(value * 1000);
+        }
     }
 
     // A transaction message needs an amount and a direction — from the message
@@ -108,18 +161,9 @@ export function parseTransactionSms(message: string, rules: SmsRule[] = []): Par
     let payee: string | null = null;
 
     // A user-taught payee position beats every built-in heuristic
-    if (rule?.payeePrefix) {
-        const idx = text.toLowerCase().indexOf(rule.payeePrefix.toLowerCase());
-        if (idx >= 0) {
-            const rest = text.slice(idx + rule.payeePrefix.length);
-            let end = rule.payeeSuffix
-                ? rest.toLowerCase().indexOf(rule.payeeSuffix.toLowerCase())
-                : -1;
-            if (end < 0) end = rest.search(/[.,;\n]/);
-            if (end < 0) end = rest.length;
-            const candidate = rest.slice(0, Math.min(end, 60)).trim().replace(/\s{2,}/g, " ");
-            if (candidate.length >= 2) payee = candidate;
-        }
+    if (rule?.anchors?.payee) {
+        const candidate = extractAnchor(text, rule.anchors.payee);
+        if (candidate && candidate.length >= 2) payee = candidate;
     }
 
     // Card spends have the most specific format — try that first
@@ -151,22 +195,34 @@ export function parseTransactionSms(message: string, rules: SmsRule[] = []): Par
         if (vpaMatch) payee = vpaMatch[1];
     }
 
-    const accountMatch = text.match(ACCOUNT_RE);
-    const accountHint = accountMatch ? `a/c ..${accountMatch[1]}` : null;
+    let accountHint: string | null = null;
+    if (rule?.anchors?.account) {
+        accountHint = extractAnchor(text, rule.anchors.account);
+    }
+    if (!accountHint) {
+        const accountMatch = text.match(ACCOUNT_RE);
+        accountHint = accountMatch ? `a/c ..${accountMatch[1]}` : null;
+    }
 
     let date: Date | null = null;
-    const dateMatch = text.match(DATE_RE) ?? text.match(DATE_FALLBACK_RE);
-    if (dateMatch) {
-        const day = parseInt(dateMatch[1], 10);
-        const monthRaw = dateMatch[2].toLowerCase();
-        const month = /^\d+$/.test(monthRaw)
-            ? parseInt(monthRaw, 10) - 1
-            : MONTHS.indexOf(monthRaw.slice(0, 3));
-        let year = parseInt(dateMatch[3], 10);
-        if (year < 100) year += 2000;
-        if (month >= 0 && day >= 1 && day <= 31) {
-            const parsed = new Date(year, month, day);
-            if (!isNaN(parsed.getTime())) date = parsed;
+    if (rule?.anchors?.date) {
+        const raw = extractAnchor(text, rule.anchors.date);
+        if (raw) date = parseLooseDate(raw);
+    }
+    if (!date) {
+        const dateMatch = text.match(DATE_RE) ?? text.match(DATE_FALLBACK_RE);
+        if (dateMatch) {
+            const day = parseInt(dateMatch[1], 10);
+            const monthRaw = dateMatch[2].toLowerCase();
+            const month = /^\d+$/.test(monthRaw)
+                ? parseInt(monthRaw, 10) - 1
+                : MONTHS.indexOf(monthRaw.slice(0, 3));
+            let year = parseInt(dateMatch[3], 10);
+            if (year < 100) year += 2000;
+            if (month >= 0 && day >= 1 && day <= 31) {
+                const parsed = new Date(year, month, day);
+                if (!isNaN(parsed.getTime())) date = parsed;
+            }
         }
     }
 

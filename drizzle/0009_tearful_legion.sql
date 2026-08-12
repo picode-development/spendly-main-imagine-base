@@ -1,0 +1,1 @@
+ALTER TABLE "sms_rules" ADD COLUMN "anchors" jsonb;
