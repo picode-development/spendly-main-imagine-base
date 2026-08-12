@@ -4,7 +4,7 @@ import { calculatePercentageChange, fillMissingDays } from "@/lib/utils";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { zValidator } from "@hono/zod-validator";
 import { parse, addDays, subDays, differenceInDays } from "date-fns";
-import { and, desc, eq, gte, lt, sql, sum } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -51,10 +51,12 @@ const app = new Hono()
           );
         }
 
+        // Transfers between accounts (transfer_id set) are not real income or
+        // expenses — they only move balances, so only `remaining` counts them
         const result = await db
           .select({
-            income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
-            expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
+            income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 AND ${transactions.transferId} IS NULL THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
+            expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 AND ${transactions.transferId} IS NULL THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
             remaining: sum(transactions.amount).mapWith(Number),
           })
           .from(transactions)
@@ -107,7 +109,8 @@ const app = new Hono()
           and(
             ...baseConditions.filter(Boolean),
             ...dateConditions,
-            lt(transactions.amount, 0)
+            lt(transactions.amount, 0),
+            isNull(transactions.transferId)
           )
         )
         .groupBy(categories.name)
@@ -123,8 +126,8 @@ const app = new Hono()
       const activeDays = await db
         .select({
           date: transactions.date,
-          income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
-          expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 THEN ABS(${transactions.amount}) ELSE 0 END)`.mapWith(Number),
+          income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 AND ${transactions.transferId} IS NULL THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
+          expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 AND ${transactions.transferId} IS NULL THEN ABS(${transactions.amount}) ELSE 0 END)`.mapWith(Number),
         })
         .from(transactions)
         .innerJoin(accounts, eq(transactions.accountId, accounts.id))

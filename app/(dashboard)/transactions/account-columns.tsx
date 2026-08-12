@@ -11,7 +11,8 @@ export const AccountColumns = ({
 }: Props) => {
     const { onOpen: onOpenAccount } = useOpenAccount();
 
-    const onClick = () => {
+    const onClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
         onOpenAccount(accountId);
     };
 

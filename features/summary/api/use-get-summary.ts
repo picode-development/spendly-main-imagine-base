@@ -6,17 +6,21 @@ import { format } from "date-fns";
 
 export const useGetSummary = () => {
     const params = useSearchParams();
+    const isAllTime = params.get("range") === "all";
     const from = params.get("from") || undefined;
     const to = params.get("to") || undefined;
     const accountId = params.get("accountId") || undefined;
     const categoryId = params.get("categoryId") || undefined;
 
     const query = useQuery({
-        queryKey: ["summary", { from, to, accountId, categoryId }],
+        queryKey: ["summary", { from, to, accountId, categoryId, isAllTime }],
         queryFn: async () => {
             const queryParams: Record<string, string> = {};
-            
-            if (!from || !to) {
+
+            if (isAllTime) {
+                // True all-time: no date bounds at all
+                queryParams.allDates = "true";
+            } else if (!from || !to) {
                 const { defaultFrom, defaultTo } = getDefaultDateRange();
                 queryParams.from = format(defaultFrom, "yyyy-MM-dd");
                 queryParams.to = format(defaultTo, "yyyy-MM-dd");
@@ -24,7 +28,7 @@ export const useGetSummary = () => {
                 queryParams.from = from;
                 queryParams.to = to;
             }
-            
+
             if (accountId) queryParams.accountId = accountId;
             if (categoryId) queryParams.categoryId = categoryId;
 

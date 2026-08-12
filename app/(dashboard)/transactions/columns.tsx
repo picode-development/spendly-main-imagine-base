@@ -86,6 +86,7 @@ export type ResponseType = InferResponseType<typeof client.api.transactions.$get
           id={row.original.id}
           category={row.original.category}
           categoryId={row.original.categoryId}
+          transferId={row.original.transferId}
         />
       )
     }
@@ -123,6 +124,19 @@ export type ResponseType = InferResponseType<typeof client.api.transactions.$get
     cell: ({ row } ) => {
       const amount = parseFloat(row.getValue("amount"));
 
+      // Collapsed transfer rows (all-accounts view) are neither income nor
+      // expense — show a neutral badge with the moved amount
+      if (row.original.transferTo) {
+        return (
+          <Badge
+            variant="secondary"
+            className="text-xs font-medium px-3.5 py-2.5 rounded-3xl"
+          >
+            {formatCurrency(Math.abs(amount))}
+          </Badge>
+        )
+      }
+
       return (
         <Badge
           variant={amount < 0 ? "destructive" : "primary"}
@@ -150,8 +164,10 @@ export type ResponseType = InferResponseType<typeof client.api.transactions.$get
     cell: ({ row } ) => {
 
       return (
-        <AccountColumns 
-          account={row.original.account}
+        <AccountColumns
+          account={row.original.transferTo
+            ? `${row.original.account.trim()} → ${row.original.transferTo.trim()}`
+            : row.original.account}
           accountId={row.original.accountId}
         />
       )

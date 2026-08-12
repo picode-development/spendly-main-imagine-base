@@ -100,7 +100,7 @@ type FormValues = z.input<typeof formSchema>;
             ? new Date(transactionQuery.data.date)
             : new Date(),
         payee: transactionQuery.data.payee,
-        imageUrl: transactionQuery.data.imageUrl ?? null,
+        imageUrls: transactionQuery.data.imageUrls ?? null,
         notes: transactionQuery.data.notes,
      } : {
         accountId: "",
@@ -108,7 +108,7 @@ type FormValues = z.input<typeof formSchema>;
         amount: "",
         date: new Date(),
         payee: "",
-        imageUrl: null,
+        imageUrls: null,
         notes: "",
      };
 

@@ -14,6 +14,7 @@ import { useGetCategories } from "@/features/categories/api/use-get-categories";
 import { useGetAccounts } from "@/features/accounts/api/use-get-accounts";
 import { useCreateAccount } from "@/features/accounts/api/use-create-account";
 import { TransactionForm } from "@/features/transactions/components/transaction-form";
+import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
 import { Loader2 } from "lucide-react";
 
  const formSchema = InsertTransactionSchema.omit({
@@ -23,7 +24,7 @@ import { Loader2 } from "lucide-react";
 type FormValues = z.input<typeof formSchema>;
 
  export const NewTransactionSheet = () => {
-    const { isOpen, onClose } = useNewTransaction();
+    const { isOpen, onClose, prefill, pendingId } = useNewTransaction();
 
     const categoryQuery = useGetCategories();
     const categoryMutation = useCreateCategory();
@@ -48,9 +49,10 @@ type FormValues = z.input<typeof formSchema>;
     }));
 
     const createMutation = useCreateTransaction();
+    const deletePending = useDeletePendingTransaction();
 
     const isPending =
-        createMutation.isPending || 
+        createMutation.isPending ||
         categoryMutation.isPending ||
         accountMutation.isPending;
 
@@ -61,6 +63,10 @@ type FormValues = z.input<typeof formSchema>;
     const onSubmit = (values: FormValues) => {
         createMutation.mutate(values, {
             onSuccess: () => {
+                // Confirming a detected transaction clears it from the popup
+                if (pendingId) {
+                    deletePending.mutate({ id: pendingId, silent: true });
+                }
                 onClose();
             }
         });
@@ -86,15 +92,16 @@ type FormValues = z.input<typeof formSchema>;
                         </div>
                     )
                     : (
-                        <TransactionForm 
+                        <TransactionForm
+                            key={pendingId ?? "blank"}
                             defaultValues={{
-                            date: new Date(),
+                            date: prefill?.date ?? new Date(),
                             accountId: "",
                             categoryId: null,
-                            payee: "",
-                            amount: "",
-                            imageUrl: null,
-                            notes: null,
+                            payee: prefill?.payee ?? "",
+                            amount: prefill?.amount ?? "",
+                            imageUrls: null,
+                            notes: prefill?.notes ?? null,
                             }}
                             onSubmit={onSubmit}
                             disabled={isPending}

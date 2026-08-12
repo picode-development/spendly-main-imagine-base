@@ -141,8 +141,10 @@ export async function enroll(userId: string): Promise<AppLockRecord> {
       rp: { name: "Spendly", id: window.location.hostname },
       user: {
         id: new TextEncoder().encode(userId),
-        name: userId,
-        displayName: "Spendly App Lock",
+        // Shown by passkey managers and OS prompts — keep it the product name,
+        // not the raw Clerk userId
+        name: "Spendly",
+        displayName: "Spendly",
       },
       pubKeyCredParams: [
         { type: "public-key", alg: -7 }, // ES256

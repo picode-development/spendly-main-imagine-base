@@ -29,6 +29,7 @@ export const CategoryFilter = () => {
   const categoryId = params.get("categoryId") || "all";
   const from = params.get("from") || "";
   const to = params.get("to") || "";
+  const range = params.get("range") || "";
 
   const {
     data: categories,
@@ -41,6 +42,7 @@ export const CategoryFilter = () => {
       categoryId: newValue === "all" ? "" : newValue,
       from,
       to,
+      range,
     };
 
     const url = qs.stringifyUrl({

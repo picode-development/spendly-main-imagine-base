@@ -9,6 +9,8 @@ import { NewCategorySheet } from "@/features/categories/components/new-category-
 import { EditCategorySheet } from "@/features/categories/components/edit-category-sheet";
 import { NewTransactionSheet } from "@/features/transactions/components/new-transaction-sheet";
 import { EditTransactionSheet } from "@/features/transactions/components/edit-transaction-sheet";
+import { NewTransferSheet } from "@/features/transactions/components/new-transfer-sheet";
+import { PendingTransactionsPopup } from "@/features/transactions/components/pending-transactions-popup";
 
 export const SheetProvider = () => {
     const isMounted = useMountedState();
@@ -25,6 +27,8 @@ export const SheetProvider = () => {
 
             <NewTransactionSheet />
             <EditTransactionSheet />
+            <NewTransferSheet />
+            <PendingTransactionsPopup />
         </>
     )
 }

@@ -1,12 +1,10 @@
 import { z } from "zod";
-import { Trash } from "lucide-react";
+import { ArrowLeftRight } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AmmountInput } from "@/components/amount-input";
-import { InsertTransactionSchema } from "@/db/schema";
 import { DatePicker } from "@/components/date-picker";
 import { Select } from "@/components/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,69 +15,77 @@ import {
     FormField,
     FormItem,
     FormLabel,
+    FormMessage,
 } from "@/components/ui/form";
 import { convertAmountToMiliunits } from "@/lib/utils";
 
 const formSchema = z.object({
     date: z.coerce.date(),
-    accountId: z.string(),
-    categoryId: z.string().nullable().optional(),
-    payee: z.string(),
-    amount: z.string(),
+    fromAccountId: z.string().min(1, "Select the source account"),
+    toAccountId: z.string().min(1, "Select the destination account"),
+    amount: z.string().min(1, "Enter an amount"),
     imageUrls: z.array(z.object({
         url: z.string(),
         preview: z.string().optional(),
     })).max(5).nullable().optional(),
     notes: z.string().nullable().optional(),
-});
-
-const apiSchema = InsertTransactionSchema.omit({
-    id: true,
+}).refine((v) => v.fromAccountId !== v.toAccountId, {
+    message: "Choose two different accounts",
+    path: ["toAccountId"],
 });
 
 type FormValues = z.input<typeof formSchema>;
-type ApiFormValues = z.input<typeof apiSchema>;
 
-type Props = {
-    id?: string;
-    defaultValues: FormValues;
-    onSubmit: (values: ApiFormValues) => void;
-    onDelete?: () => void;
-    disabled?: boolean;
-    accountOptions: { label: string; value: string }[];
-    categoryOptions: { label: string; value: string }[];
-    onCreateAccount: (name: string) => void;
-    onCreateCategory: (name: string) => void;
+export type TransferValues = {
+    date: Date;
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number; // positive miliunits
+    imageUrls?: { url: string; preview?: string }[] | null;
+    notes?: string | null;
 };
 
-export const TransactionForm = ({
-    id,
-    defaultValues,
+type Props = {
+    onSubmit: (values: TransferValues) => void;
+    disabled?: boolean;
+    accountOptions: { label: string; value: string }[];
+    onCreateAccount: (name: string) => void;
+};
+
+export const TransferForm = ({
     onSubmit,
-    onDelete,
     disabled,
     accountOptions,
-    categoryOptions,
     onCreateAccount,
-    onCreateCategory,
 }: Props) => {
     const form = useForm<FormValues>({
         resolver: zodResolver(formSchema),
-        defaultValues: defaultValues,
+        defaultValues: {
+            date: new Date(),
+            fromAccountId: "",
+            toAccountId: "",
+            amount: "",
+            imageUrls: null,
+            notes: null,
+        },
     });
 
     const handleSubmit = (values: FormValues) => {
-        const amount = parseFloat(values.amount);
-        const amountInMiliunits = convertAmountToMiliunits(amount);
+        const amount = Math.abs(convertAmountToMiliunits(parseFloat(values.amount)));
+
+        if (!amount) {
+            form.setError("amount", { message: "Enter an amount greater than zero" });
+            return;
+        }
 
         onSubmit({
-            ...values,
-            amount: amountInMiliunits,
+            date: values.date as Date,
+            fromAccountId: values.fromAccountId,
+            toAccountId: values.toAccountId,
+            amount,
+            imageUrls: values.imageUrls,
+            notes: values.notes,
         });
-    };
-
-    const handleDelete = () => {
-        onDelete?.();
     };
 
     return (
@@ -105,14 +111,14 @@ export const TransactionForm = ({
                 />
 
                 <FormField
-                    name="accountId"
+                    name="fromAccountId"
                     control={form.control}
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel>Account</FormLabel>
+                            <FormLabel>From account</FormLabel>
                             <FormControl>
                                 <Select
-                                    placeholder="Select an account"
+                                    placeholder="Select the source account"
                                     options={accountOptions}
                                     onCreate={onCreateAccount}
                                     value={field.value}
@@ -120,43 +126,28 @@ export const TransactionForm = ({
                                     disabled={disabled}
                                 />
                             </FormControl>
+                            <FormMessage />
                         </FormItem>
                     )}
                 />
 
                 <FormField
-                    name="categoryId"
+                    name="toAccountId"
                     control={form.control}
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel>Category</FormLabel>
+                            <FormLabel>To account</FormLabel>
                             <FormControl>
                                 <Select
-                                    placeholder="Select a category"
-                                    options={categoryOptions}
-                                    onCreate={onCreateCategory}
+                                    placeholder="Select the destination account"
+                                    options={accountOptions}
+                                    onCreate={onCreateAccount}
                                     value={field.value}
                                     onChange={field.onChange}
                                     disabled={disabled}
                                 />
                             </FormControl>
-                        </FormItem>
-                    )}
-                />
-
-                <FormField
-                    name="payee"
-                    control={form.control}
-                    render={({ field }) => (
-                        <FormItem>
-                            <FormLabel>Payee</FormLabel>
-                            <FormControl>
-                                <Input
-                                    disabled={disabled}
-                                    placeholder="Add a payee"
-                                    {...field}
-                                />
-                            </FormControl>
+                            <FormMessage />
                         </FormItem>
                     )}
                 />
@@ -174,11 +165,11 @@ export const TransactionForm = ({
                                     placeholder="0.00"
                                 />
                             </FormControl>
+                            <FormMessage />
                         </FormItem>
                     )}
                 />
 
-                {/* 👇 NEW — before Notes */}
                 <FormField
                     name="imageUrls"
                     control={form.control}
@@ -216,21 +207,9 @@ export const TransactionForm = ({
                 />
 
                 <Button className="w-full" disabled={disabled}>
-                    {id ? "Save Changes" : "Create transaction"}
+                    <ArrowLeftRight className="size-4 mr-2" />
+                    Transfer funds
                 </Button>
-
-                {!!id && (
-                    <Button
-                        type="button"
-                        disabled={disabled}
-                        onClick={handleDelete}
-                        className="w-full"
-                        variant="outline"
-                    >
-                        <Trash className="size-4 mr-2" />
-                        <span>Delete transaction</span>
-                    </Button>
-                )}
             </form>
         </Form>
     );

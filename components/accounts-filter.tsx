@@ -29,6 +29,7 @@ export const AccountFIlter = () => {
   const categoryId = params.get("categoryId") || "";
   const from = params.get("from") || "";
   const to = params.get("to") || "";
+  const range = params.get("range") || "";
 
   const {
     data: accounts,
@@ -41,6 +42,7 @@ export const AccountFIlter = () => {
       categoryId,
       from,
       to,
+      range,
     };
 
     const url = qs.stringifyUrl({

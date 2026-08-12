@@ -44,7 +44,7 @@ export const AddNewDropdown = () => {
                    dark:bg-[#23272f] dark:shadow-xl dark:text-white"
       >
         <DropdownMenuItem
-          onClick={newTransaction.onOpen}
+          onClick={() => newTransaction.onOpen()}
           className="hover:bg-gray-100 dark:hover:bg-[#353941] dark:text-white"
         >
           <List className="mr-2 h-4 w-4" />

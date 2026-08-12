@@ -1,7 +1,8 @@
-import { integer, 
-        pgTable, 
-        text, 
-        timestamp 
+import { integer,
+        jsonb,
+        pgTable,
+        text,
+        timestamp
         } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { relations } from "drizzle-orm";
@@ -41,6 +42,10 @@ export const transactions = pgTable('transactions', {
     notes: text("notes"),
     date: timestamp("date", {mode: "date"}).notNull(),
     imageUrl: text("image_url"),
+    imageUrls: jsonb("image_urls").$type<TransactionImage[]>(),
+    // Links the two legs of an account-to-account transfer; such rows are
+    // excluded from income/expense stats but still move account balances
+    transferId: text("transfer_id"),
     accountId: text("account_id").references(() => accounts.id, {
         onDelete: "cascade",
     }).notNull(),
@@ -60,6 +65,34 @@ export const transactionsRelations = relations(transactions, ({ one }) => ({
     }),
 }));
 
+// url = full-resolution hosted image; preview = tiny inline data URL shown
+// blurred while the full image downloads (WhatsApp-style blur-up)
+export type TransactionImage = {
+    url: string;
+    preview?: string;
+};
+
 export const InsertTransactionSchema = createInsertSchema(transactions, {
+    date: z.coerce.date(),
+    imageUrls: z.array(z.object({
+        url: z.string(),
+        preview: z.string().optional(),
+    })).max(5).nullish(),
+});
+
+// Transactions detected from bank/UPI SMS messages, awaiting user review.
+// Confirming one creates a real transaction and deletes the pending row.
+export const pendingTransactions = pgTable("pending_transactions", {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    rawMessage: text("raw_message").notNull(),
+    amount: integer("amount"),          // parsed, miliunits, negative = debit
+    payee: text("payee"),               // parsed payee / UPI VPA
+    accountHint: text("account_hint"),  // e.g. "a/c ..1234" from the message
+    date: timestamp("date", { mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const InsertPendingTransactionSchema = createInsertSchema(pendingTransactions, {
     date: z.coerce.date(),
 });

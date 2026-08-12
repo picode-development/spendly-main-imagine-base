@@ -5,6 +5,7 @@ import accounts from "./accounts";
 import categories from "./categories";
 import transactions from "./transactions";
 import summary from "./summary";
+import pendingTransactions from "./pending-transactions";
 
 
 
@@ -19,6 +20,7 @@ const routes = app
   .route("/accounts", accounts)
   .route("/categories", categories)
   .route("/transactions", transactions)
+  .route("/pending-transactions", pendingTransactions)
 
 export const GET = handle(app);
 export const POST = handle(app);

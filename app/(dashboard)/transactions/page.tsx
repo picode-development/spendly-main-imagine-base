@@ -8,7 +8,9 @@ import {
  } from "@/components/ui/card";
 import { transactions as transactionsSchema } from "@/db/schema";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
-import { Loader2, Plus } from "lucide-react";
+import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
+import { useOpenTransaction } from "@/features/transactions/hooks/use-open-transaction";
+import { ArrowLeftRight, Loader2, Plus } from "lucide-react";
 import { columns } from "./columns";
 import { DataTable } from "@/components/data-table";
 import { useGetTransactions } from "@/features/transactions/api/use-get-transactions";
@@ -51,6 +53,8 @@ const TransactionsPage = () => {
     };
 
     const newTransaction = useNewTransaction();
+    const newTransfer = useNewTransfer();
+    const openTransaction = useOpenTransaction();
     const createTransactions = useBulkCreateTransactions();
     const deleteTransactions = useBulkDeleteTransactions();
     const transactionsQuery = useGetTransactions();
@@ -121,20 +125,29 @@ const TransactionsPage = () => {
                         Transactions History
                     </CardTitle>
                     <div className="flex flex-col lg:flex-row gap-y-2 items-center gap-x-2 ">
-                        <Button 
-                        onClick={newTransaction.onOpen} 
+                        <Button
+                        onClick={() => newTransaction.onOpen()}
                         size="sm"
                         className="w-full lg:w-auto"
                         >
                             <Plus className="size-4 mr-2" />
                             Add New
                         </Button>
+                        <Button
+                        onClick={newTransfer.onOpen}
+                        size="sm"
+                        className="w-full lg:w-auto"
+                        >
+                            <ArrowLeftRight className="size-4 mr-2" />
+                            Transfer
+                        </Button>
                         <UploadButton onUpload={onUpload} />
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <DataTable 
+                    <DataTable
                         filterKey="payee"
+                        searchPlaceholder="Search..."
                         columns={columns}
                         data={transactions}
                         onDelete={(row) => {
@@ -142,6 +155,7 @@ const TransactionsPage = () => {
                             deleteTransactions.mutate({ ids });
                         }}
                         disabled={isDisabled}
+                        onRowClick={(row) => openTransaction.onOpen(row.original.id)}
                     />
                         
                 </CardContent>
