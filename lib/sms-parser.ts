@@ -19,14 +19,34 @@ const AMOUNT_RE = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i;
 // SBI-style "debited by 150.0" / "credited with 2000" — no currency prefix
 const AMOUNT_FALLBACK_RE = /\b(?:debited|credited)\s+(?:by|with|for)\s+([\d,]+(?:\.\d{1,2})?)\b/i;
 
-const DEBIT_RE = /\b(?:debited|debit|paid|sent|spent|withdrawn|purchase(?:d)?|deducted)\b/i;
-const CREDIT_RE = /\b(?:credited|credit|received|deposited|refund(?:ed)?|cashback)\b/i;
+const DEBIT_RE = /\b(?:debited|debit|paid|sent|spent|withdrawn|withdrawal|purchase(?:d)?|deducted)\b/i;
+// "cashback" deliberately excluded: promos say "get cashback Rs.X"; real
+// cashback credits always say "credited"
+const CREDIT_RE = /\b(?:credited|credit|received|deposited|refund(?:ed)?)\b/i;
 
-// "to SWIGGY", "at AMAZON", "from LOKESH", "towards X" — stop at common tails
-const PAYEE_RE = /\b(?:to|at|from|towards|info:?)\s*[:\-]?\s*([A-Za-z0-9@._\- &']{2,40}?)(?=\s+(?:on|via|ref(?:no)?|upi|txn|a\/c|ac|using|for|dated|avl|bal|\d{6,})\b|[.,;\n]|$)/gi;
+// Direction-aware payee markers. Debits name the receiver ("to SWIGGY",
+// "at AMAZON", "towards X"); credits name the sender ("from LOKESH",
+// "by EMPLOYER"). Matching only the right set avoids grabbing the user's own
+// bank from phrases like "debited from Kotak Bank AC X1234 to ...".
+const PAYEE_CHARS = "[A-Za-z0-9@._/\\- &']";
+const PAYEE_STOP = "(?=\\s+(?:on|via|ref(?:no)?|upi|txn|a\\/c|ac|acct|using|for|dated|avl|bal|from|to|with|through|in|is|was|and|\\d{6,})\\b|[.,;()\\n]|$)";
+const DEBIT_PAYEE_RE = new RegExp(`\\b(?:towards|trf\\s+to|to|at)\\s*[:\\-]?\\s*(${PAYEE_CHARS}{2,40}?)${PAYEE_STOP}`, "gi");
+const CREDIT_PAYEE_RE = new RegExp(`\\b(?:from|by)\\s*[:\\-]?\\s*(${PAYEE_CHARS}{2,40}?)${PAYEE_STOP}`, "gi");
 
-// Captures like "your", "you" mean the regex grabbed the account owner, not a payee
-const PAYEE_STOPWORDS = new Set(["your", "you", "u", "ur", "the", "my"]);
+// Card spends bury the merchant after the date: "Card XX7003 on 12-Aug-26 on
+// AMAZON PAY" — grab the token after the second on/at
+const CARD_PAYEE_RE = /\bcard\s+(?:no\.?\s*)?[x*]*\d+\s+(?:on|dated)\s+\S+\s+(?:on|at)\s+([A-Za-z0-9@._/\- &']{2,40}?)(?=[.,;()\n]|\s+(?:avl|ref|txn)\b|$)/i;
+
+// Reject captures that are the account owner or the user's own bank/account
+const PAYEE_STOPWORDS = new Set(["your", "you", "u", "ur", "the", "my", "me", "atm"]);
+const isBadPayee = (candidate: string): boolean => {
+    const lower = candidate.toLowerCase();
+    return PAYEE_STOPWORDS.has(lower)
+        || /^[\d,.\s]+$/.test(candidate)          // it's an amount/ref, not a name
+        || /\bbank\b/i.test(candidate)            // "HDFC Bank", "Kotak Bank AC..."
+        || /^a\/?c\b/i.test(candidate)
+        || /\baccount\b/i.test(candidate);
+};
 
 const VPA_RE = /\b([\w.\-]{2,}@[a-z]{2,})\b/i;
 
@@ -58,13 +78,29 @@ export function parseTransactionSms(message: string): ParsedSms {
     }
 
     let payee: string | null = null;
-    for (const match of text.matchAll(PAYEE_RE)) {
-        const candidate = match[1].trim().replace(/\s{2,}/g, " ");
-        if (!PAYEE_STOPWORDS.has(candidate.toLowerCase())) {
-            payee = candidate;
-            break;
+
+    // Card spends have the most specific format — try that first
+    if (/\bcard\b/i.test(text)) {
+        const cardMatch = text.match(CARD_PAYEE_RE);
+        if (cardMatch && !isBadPayee(cardMatch[1].trim())) {
+            payee = cardMatch[1].trim().replace(/\s{2,}/g, " ");
         }
     }
+
+    if (!payee) {
+        // Debit wins the direction (a "debited ... credited" self-transfer is
+        // still a debit from the user's perspective), so pick markers to match
+        const payeeRe = isDebit ? DEBIT_PAYEE_RE : CREDIT_PAYEE_RE;
+        payeeRe.lastIndex = 0;
+        for (const match of text.matchAll(payeeRe)) {
+            const candidate = match[1].trim().replace(/\s{2,}/g, " ");
+            if (!isBadPayee(candidate)) {
+                payee = candidate;
+                break;
+            }
+        }
+    }
+
     // "to VPA name.surname@bank" — the payee regex stops at the dot; the full
     // UPI id is a better payee than the truncated "VPA name"
     if (!payee || /^vpa\b/i.test(payee)) {

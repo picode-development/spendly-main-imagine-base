@@ -39,9 +39,8 @@ export const PendingTransactionsPopup = () => {
                 date: new Date(item.date),
                 payee: item.payee ?? "",
                 amount: item.amount === null ? "" : String(item.amount),
-                notes: item.accountHint
-                    ? `${item.accountHint} — ${item.rawMessage}`.slice(0, 200)
-                    : item.rawMessage.slice(0, 200),
+                // Keep notes clean: just the account hint, not the raw SMS
+                notes: item.accountHint ?? undefined,
             },
         });
     };
