@@ -13,6 +13,7 @@ import { useNewAccount } from "@/features/accounts/hooks/use-new-account";
 import { useOpenAccount } from "@/features/accounts/hooks/use-open-account";
 import { useNewCategory } from "@/features/categories/hooks/use-new-category";
 import { useOpenCategory } from "@/features/categories/hooks/use-open-category";
+import { usePendingPopup } from "@/features/transactions/hooks/use-pending-popup";
 
 // Floating mic ball: above the assistant ball on desktop, above the bottom
 // navigation on phones. While recording, a pill with the live waveform sits
@@ -21,6 +22,7 @@ export const VoiceFab = () => {
     const { isSignedIn } = useAuth();
     const onAudio = useVoiceCreate();
     const { isRecording, isProcessing, levels, toggle } = useVoiceRecorder(onAudio);
+    const popupExpanded = usePendingPopup((s) => s.expanded);
 
     // Step aside while any sheet is open — same rule as the popup
     const anySheetOpen = [
@@ -36,9 +38,13 @@ export const VoiceFab = () => {
     if (!isSignedIn || anySheetOpen) return null;
 
     return (
-        // The ball is the fixed anchor — slightly smaller than the assistant
-        // ball (48px vs 56px), centers aligned in one column above it
-        <div className="fixed right-4 bottom-20 xl:right-7 xl:bottom-[5.75rem] z-[70]">
+        // The ball is the fixed anchor. On phones it hides while the detected-
+        // transactions popup is expanded (the wide card would overlap it);
+        // on desktop (xl) they don't interfere, so it stays visible.
+        <div className={cn(
+            "fixed right-4 bottom-20 xl:right-7 xl:bottom-[5.75rem] z-[70]",
+            popupExpanded && "hidden xl:block",
+        )}>
             <button
                 type="button"
                 onClick={toggle}

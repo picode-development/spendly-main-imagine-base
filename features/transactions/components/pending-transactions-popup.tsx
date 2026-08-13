@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { BellRing, ChevronDown, Plus, X } from "lucide-react";
@@ -17,6 +17,7 @@ import { useNewAccount } from "@/features/accounts/hooks/use-new-account";
 import { useOpenAccount } from "@/features/accounts/hooks/use-open-account";
 import { useNewCategory } from "@/features/categories/hooks/use-new-category";
 import { useOpenCategory } from "@/features/categories/hooks/use-open-category";
+import { usePendingPopup } from "@/features/transactions/hooks/use-pending-popup";
 
 export const PendingTransactionsPopup = () => {
     const [collapsed, setCollapsed] = useState(false);
@@ -24,6 +25,7 @@ export const PendingTransactionsPopup = () => {
     const { data: pending } = useGetPendingTransactions();
     const deletePending = useDeletePendingTransaction();
     const newTransaction = useNewTransaction();
+    const setPopupExpanded = usePendingPopup((s) => s.setExpanded);
 
     // Step aside while any sheet is open — the popup must never cover a form
     const anySheetOpen = [
@@ -36,6 +38,17 @@ export const PendingTransactionsPopup = () => {
         useOpenCategory((s) => s.isOpen),
     ].some(Boolean);
 
+    const onShareScreen = pathname === "/share-claim" || pathname === "/share";
+    const hasPending = !!pending && pending.length > 0;
+    // Expanded = the full card is showing (not collapsed, visible, has items).
+    // The voice ball reads this to step aside on phones.
+    const isExpanded = !anySheetOpen && !onShareScreen && hasPending && !collapsed;
+
+    useEffect(() => {
+        setPopupExpanded(isExpanded);
+    }, [isExpanded, setPopupExpanded]);
+    useEffect(() => () => setPopupExpanded(false), [setPopupExpanded]);
+
     if (anySheetOpen) return null;
     // The share-claim screen has its own progress/reward card — stay out of it
     if (pathname === "/share-claim" || pathname === "/share") return null;
@@ -46,7 +59,7 @@ export const PendingTransactionsPopup = () => {
             <Button
                 onClick={() => setCollapsed(false)}
                 // bottom-20 on mobile clears the fixed bottom navigation bar
-                className="fixed bottom-20 lg:bottom-4 left-4 z-[60] h-9 rounded-full shadow-lg"
+                className="fixed bottom-20 lg:bottom-4 left-4 z-[60] h-9 rounded-full shadow-lg origin-bottom-left animate-in fade-in zoom-in-90 slide-in-from-bottom-2 duration-300 ease-out"
             >
                 <BellRing className="size-4 mr-2" />
                 {pending.length} detected
@@ -73,9 +86,9 @@ export const PendingTransactionsPopup = () => {
     };
 
     return (
-        // Width leaves the mic ball's column clear on phones so the dismiss
-        // buttons on the right edge stay tappable
-        <div className="fixed bottom-20 lg:bottom-4 left-4 z-[60] w-[calc(100vw-6rem)] max-w-sm rounded-lg border bg-card text-card-foreground shadow-lg">
+        // Expanded: the voice ball hides on phones (see VoiceFab), so the card
+        // can take near-full width; capped to a tidy panel on larger screens.
+        <div className="fixed bottom-20 lg:bottom-4 left-4 right-4 sm:right-auto z-[60] sm:w-[22rem] rounded-lg border bg-card text-card-foreground shadow-lg origin-bottom-left animate-in fade-in zoom-in-95 slide-in-from-bottom-3 duration-300 ease-out">
             <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
                 <div className="flex items-center gap-2">
                     <BellRing className="size-4 text-primary" />
