@@ -45,6 +45,14 @@ const makeBlurPreview = async (buffer: Buffer): Promise<string | undefined> => {
 };
 
 export async function POST(req: NextRequest) {
+    // Genuine share launches are OS-initiated ("none") or same-origin; a
+    // malicious webpage's POST is browser-labelled "cross-site" and can't
+    // fake this header. Blocks CSRF-style stash planting and drive-by spam.
+    const fetchSite = req.headers.get("sec-fetch-site");
+    if (fetchSite === "cross-site") {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const form = await req.formData();
     const text = [form.get("title"), form.get("text"), form.get("url")]
         .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
