@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { cn, formatCurrency } from "@/lib/utils";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
+import { useClearPendingTransactions } from "@/features/transactions/api/use-clear-pending-transactions";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
 import { useOpenTransaction } from "@/features/transactions/hooks/use-open-transaction";
 import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
@@ -24,6 +25,7 @@ export const PendingTransactionsPopup = () => {
     const pathname = usePathname();
     const { data: pending } = useGetPendingTransactions();
     const deletePending = useDeletePendingTransaction();
+    const clearAll = useClearPendingTransactions();
     const newTransaction = useNewTransaction();
     const setPopupExpanded = usePendingPopup((s) => s.setExpanded);
 
@@ -96,14 +98,26 @@ export const PendingTransactionsPopup = () => {
                         {pending.length} detected transaction{pending.length > 1 ? "s" : ""}
                     </span>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => setCollapsed(true)}
-                    aria-label="Collapse"
-                    className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                    <ChevronDown className="size-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                    {pending.length > 1 && (
+                        <button
+                            type="button"
+                            onClick={() => clearAll.mutate()}
+                            disabled={clearAll.isPending}
+                            className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+                        >
+                            Clear all
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => setCollapsed(true)}
+                        aria-label="Collapse"
+                        className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                        <ChevronDown className="size-4" />
+                    </button>
+                </div>
             </div>
 
             <ul className="max-h-72 overflow-y-auto p-2 space-y-1">

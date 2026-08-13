@@ -220,6 +220,7 @@ const ShareClaimHandler = () => {
     }, []);
 
     const doneCount = items.filter((i) => i.status !== "queued" && i.status !== "working").length;
+    const successCount = items.filter((i) => i.status === "done").length;
     const progress = items.length ? Math.round((doneCount / items.length) * 100) : 0;
 
     return (
@@ -250,20 +251,38 @@ const ShareClaimHandler = () => {
                             </div>
                         ) : (
                             <div className="space-y-4">
-                                {/* Header + overall progress */}
-                                <div className="flex items-center justify-between gap-3">
-                                    <h2 className="text-base font-semibold">
-                                        {phase === "done"
-                                            ? `${items.length} screenshot${items.length > 1 ? "s" : ""} processed`
-                                            : `Reading ${items.length} screenshot${items.length > 1 ? "s" : ""}…`}
-                                    </h2>
-                                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                                        {doneCount}/{items.length}
-                                    </span>
-                                </div>
+                                {/* Full-batch win moment: a green burst when the
+                                    whole batch finishes */}
+                                {phase === "done" ? (
+                                    <div className="flex flex-col items-center gap-2 py-1 text-center animate-in fade-in zoom-in-95 duration-300">
+                                        <div className="relative mx-auto flex size-14 items-center justify-center">
+                                            <span className="absolute inset-0 animate-ping rounded-full bg-emerald-500/20" aria-hidden />
+                                            <span className="relative flex size-14 items-center justify-center rounded-full bg-emerald-500 text-white">
+                                                <Check className="size-7 animate-in zoom-in-50 duration-500" strokeWidth={3} />
+                                            </span>
+                                        </div>
+                                        <h2 className="text-base font-semibold">
+                                            {successCount > 0
+                                                ? `${successCount} transaction${successCount > 1 ? "s" : ""} detected`
+                                                : "All done"}
+                                        </h2>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-between gap-3">
+                                        <h2 className="text-base font-semibold">
+                                            Reading {items.length} screenshot{items.length > 1 ? "s" : ""}…
+                                        </h2>
+                                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                                            {doneCount}/{items.length}
+                                        </span>
+                                    </div>
+                                )}
                                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
                                     <div
-                                        className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                                        className={cn(
+                                            "h-full rounded-full transition-[width,background-color] duration-300 ease-out",
+                                            phase === "done" ? "bg-emerald-500" : "bg-primary",
+                                        )}
                                         style={{ width: `${Math.max(3, progress)}%` }}
                                     />
                                 </div>

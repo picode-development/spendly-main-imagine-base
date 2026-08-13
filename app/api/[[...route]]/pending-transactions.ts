@@ -30,6 +30,23 @@ const app = new Hono()
         },
     )
 
+    // Dismiss every detected transaction at once
+    .post(
+        "/clear-all",
+        clerkMiddleware(),
+        async (c) => {
+            const auth = getAuth(c);
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+            const data = await db
+                .delete(pendingTransactions)
+                .where(eq(pendingTransactions.userId, auth.userId))
+                .returning({ id: pendingTransactions.id });
+            return c.json({ data });
+        },
+    )
+
     // Unauthenticated ingest for SMS forwarders (MacroDroid/Tasker). Secured by
     // a shared secret token; the token maps to the owning user via env config.
     .post(

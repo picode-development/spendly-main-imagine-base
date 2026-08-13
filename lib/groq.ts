@@ -36,19 +36,21 @@ const groqKeys = (): string[] => {
         .filter((k) => k.startsWith("gsk_") && !seen.has(k) && (seen.add(k), true));
 };
 
-// Per-key cooldown: epoch-ms when a rate-limited key becomes usable again.
-// Module-level so it survives across warm serverless invocations, and is read
-// from Groq's own "try again in Xs" message. This is the "wait for whichever
-// key frees up soonest, retry the instant it's live" behavior.
-const groqCooldownUntil = new Map<string, number>();
+// Cooldown is per (scope, key) — the scope is the model/endpoint, so a key
+// rate-limited on the vision model is still free for transcription and text.
+// Each limit has its own window (Groq's own "try again in Xs" drives it, and
+// vision naturally throttles ~1 image/key/minute; whisper and text differ).
+// Module-level so it survives across warm serverless invocations.
+const cooldownUntil = new Map<string, number>();
+const cdKey = (scope: string, key: string) => `${scope}::${key}`;
 
 // Round-robin cursor so CONCURRENT callers each claim a different key instead
 // of all grabbing keys[0] and colliding. Selection is synchronous, so the
 // cursor advance is atomic between the interleaving await points.
 let groqCursor = 0;
 
-/** Picks a usable Groq key now, or the one freeing up soonest (with its wait). */
-const pickGroqKey = (keys: string[]): { key: string; waitMs: number } | null => {
+/** Picks a key usable for `scope` now, or the one freeing up soonest. */
+const pickGroqKey = (keys: string[], scope: string): { key: string; waitMs: number } | null => {
     const n = keys.length;
     if (n === 0) return null;
     const now = Date.now();
@@ -56,7 +58,7 @@ const pickGroqKey = (keys: string[]): { key: string; waitMs: number } | null => 
     for (let off = 0; off < n; off++) {
         const idx = (groqCursor + off) % n;
         const key = keys[idx];
-        const waitMs = Math.max(0, (groqCooldownUntil.get(key) ?? 0) - now);
+        const waitMs = Math.max(0, (cooldownUntil.get(cdKey(scope, key)) ?? 0) - now);
         if (waitMs === 0) {
             groqCursor = (idx + 1) % n; // next caller starts past this key
             return { key, waitMs: 0 };
@@ -66,8 +68,8 @@ const pickGroqKey = (keys: string[]): { key: string; waitMs: number } | null => 
     return soonest; // all cooling — the one freeing up soonest
 };
 
-const coolDownGroqKey = (key: string, seconds: number) => {
-    groqCooldownUntil.set(key, Date.now() + Math.max(1, seconds) * 1000);
+const coolDownGroqKey = (key: string, seconds: number, scope: string) => {
+    cooldownUntil.set(cdKey(scope, key), Date.now() + Math.max(1, seconds) * 1000);
 };
 
 const parseRetrySeconds = (errorText: string): number => {
@@ -238,7 +240,7 @@ const chatCompletion = async (
             // freeing up soonest. Non-Groq: plain round-robin.
             let apiKey: string;
             if (groq) {
-                const pick = pickGroqKey(provider.keys);
+                const pick = pickGroqKey(provider.keys, provider.model);
                 if (!pick) break;
                 if (pick.waitMs > 0) {
                     const waitS = pick.waitMs / 1000;
@@ -273,11 +275,11 @@ const chatCompletion = async (
                     console.error(`Extraction failed on ${provider.model}:`, response.status, errorText.slice(0, 140));
 
                     if (response.status === 429) {
-                        if (groq) coolDownGroqKey(apiKey, parseRetrySeconds(errorText));
+                        if (groq) coolDownGroqKey(apiKey, parseRetrySeconds(errorText), provider.model);
                         continue; // pool picks the next live key (or waits)
                     }
                     if ((response.status === 401 || response.status === 403) && groq) {
-                        coolDownGroqKey(apiKey, 3600); // dead/revoked key — park it, rotate
+                        coolDownGroqKey(apiKey, 3600, provider.model); // dead/revoked key — park it, rotate
                         continue;
                     }
                     if (response.status >= 500) {
@@ -345,7 +347,7 @@ export const llmTranscribe = async (
         const maxTurns = keys.length * 2 + 1;
         for (let turn = 0; turn < maxTurns; turn++) {
             if ((Date.now() - startedAt) / 1000 > 22) return null;
-            const pick = pickGroqKey(keys);
+            const pick = pickGroqKey(keys, model);
             if (!pick) break;
             if (pick.waitMs > 0) {
                 if (pick.waitMs > 8000) break; // don't stall a live recording too long
@@ -371,8 +373,8 @@ export const llmTranscribe = async (
                 if (!response.ok) {
                     const errText = await response.text();
                     console.error(`Transcription failed on ${model}:`, response.status);
-                    if (response.status === 429) { coolDownGroqKey(pick.key, parseRetrySeconds(errText)); continue; }
-                    if (response.status === 401 || response.status === 403) { coolDownGroqKey(pick.key, 3600); continue; }
+                    if (response.status === 429) { coolDownGroqKey(pick.key, parseRetrySeconds(errText), model); continue; }
+                    if (response.status === 401 || response.status === 403) { coolDownGroqKey(pick.key, 3600, model); continue; }
                     break; // model unavailable — try the next model
                 }
                 const data = await response.json();
@@ -403,7 +405,7 @@ export const llmCleanFieldValue = async (
 ): Promise<string | null> => {
     const keys = groqKeys();
     for (let turn = 0; turn < keys.length + 1; turn++) {
-        const pick = pickGroqKey(keys);
+        const pick = pickGroqKey(keys, FAST_MODEL);
         if (!pick || pick.waitMs > 4000) break; // this is a quick nicety — don't stall
         if (pick.waitMs > 0) await new Promise((r) => setTimeout(r, pick.waitMs + 200));
         try {
@@ -424,7 +426,7 @@ export const llmCleanFieldValue = async (
                 }),
             });
             if (!response.ok) {
-                if (response.status === 429) coolDownGroqKey(pick.key, parseRetrySeconds(await response.text()));
+                if (response.status === 429) coolDownGroqKey(pick.key, parseRetrySeconds(await response.text()), FAST_MODEL);
                 continue; // rotate to the next key
             }
             const data = await response.json();
