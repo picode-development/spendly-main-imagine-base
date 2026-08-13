@@ -24,10 +24,13 @@ self.addEventListener("fetch", (event) => {
     const fallbackRequest = event.request.clone();
     try {
       const formData = await event.request.formData();
-      const files = formData
+      // Bounded to 3: Groq offers a single vision model (qwen3.6-27b) whose
+      // free-tier token budget fits ~3 screenshots per minute
+      const allImages = formData
         .getAll("media")
-        .filter((f) => f && typeof f === "object" && f.type && f.type.startsWith("image/"))
-        .slice(0, 25);
+        .filter((f) => f && typeof f === "object" && f.type && f.type.startsWith("image/"));
+      const files = allImages.slice(0, 3);
+      const dropped = allImages.length - files.length;
       const text = ["title", "text", "url"]
         .map((k) => formData.get(k))
         .filter((v) => typeof v === "string" && v.trim().length > 0)
@@ -40,7 +43,7 @@ self.addEventListener("fetch", (event) => {
 
       await cache.put(
         `/__share/${id}/meta`,
-        new Response(JSON.stringify({ text, count: files.length }), {
+        new Response(JSON.stringify({ text, count: files.length, dropped }), {
           headers: { "Content-Type": "application/json" },
         }),
       );

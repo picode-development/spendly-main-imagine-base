@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, ScanText, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,10 @@ const ShareClaimHandler = () => {
             const cache = await caches.open("spendly-share-stash");
             const metaRes = await cache.match(`/__share/${id}/meta`);
             if (!metaRes) throw new Error("share expired");
-            const meta = (await metaRes.json()) as { text: string; count: number };
+            const meta = (await metaRes.json()) as { text: string; count: number; dropped?: number };
+            if (meta.dropped && meta.dropped > 0) {
+                toast.info(`${meta.dropped} screenshot${meta.dropped > 1 ? "s" : ""} skipped — share up to 3 at a time.`);
+            }
 
             // Pull all files off the cache immediately
             const files: File[] = [];
