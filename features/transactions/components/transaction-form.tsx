@@ -242,7 +242,7 @@ export const TransactionForm = ({
                 />
 
                 <div className="flex w-full gap-2">
-                    <Button className="flex-[3]" disabled={disabled}>
+                    <Button className="flex-1" disabled={disabled}>
                         {id ? "Save Changes" : "Create transaction"}
                     </Button>
                     <VoiceFormButton

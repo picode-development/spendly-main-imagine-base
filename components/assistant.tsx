@@ -238,8 +238,9 @@ const Assistant = () => {
 
   return (
     <>
-      {/* Desktop Only Launcher Button - Hidden on phones and tablets */}
-      <div className="fixed bottom-6 right-6 z-[100] hidden xl:block">
+      {/* Desktop Only Launcher Button - Hidden on phones and tablets.
+          z-40 keeps it beneath the form sheets (z-50). */}
+      <div className="fixed bottom-6 right-6 z-40 hidden xl:block">
         <button
           onClick={() => setIsSelectionModalOpen(true)}
           className={getLauncherButtonClasses()}

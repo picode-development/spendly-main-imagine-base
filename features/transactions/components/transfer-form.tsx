@@ -211,7 +211,7 @@ export const TransferForm = ({
                 />
 
                 <div className="flex w-full gap-2">
-                    <Button className="flex-[3]" disabled={disabled}>
+                    <Button className="flex-1" disabled={disabled}>
                         <ArrowLeftRight className="size-4 mr-2" />
                         Transfer funds
                     </Button>

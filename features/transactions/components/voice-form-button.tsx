@@ -52,8 +52,9 @@ export const VoiceFormButton = ({ onParsed, disabled }: Props) => {
             variant={isRecording ? "destructive" : "default"}
             aria-label={isRecording ? "Stop recording" : "Fill the form by voice"}
             className={cn(
-                "transition-all duration-300",
-                isRecording ? "flex-[2]" : "flex-1",
+                "shrink-0 transition-all duration-300",
+                // Square icon button at rest; expands to fit the waveform while recording
+                isRecording ? "w-28" : "w-9 px-0",
             )}
         >
             {isProcessing ? (
