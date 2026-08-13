@@ -8,8 +8,6 @@
  */
 
 const GROQ_BASE = "https://api.groq.com/openai/v1";
-// Gemini speaks the OpenAI protocol at this base — same request shape
-const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 
 type Provider = {
     base: string;
@@ -17,12 +15,8 @@ type Provider = {
     // are per-key, so extra free keys multiply throughput.
     keys: string[];
     model: string;
-    // Merged into the request body — e.g. Gemini's reasoning_effort:"none"
-    // which turns OFF thinking mode (a 37s call becomes a few seconds)
     extraBody?: Record<string, unknown>;
 };
-
-const GEMINI_FAST = { reasoning_effort: "none" as const };
 
 // All configured Groq keys: GROQ_KEYS (comma/space/newline separated) plus the
 // legacy single GROQ_KEY. Free-tier limits are per key, so N keys multiply
@@ -73,36 +67,25 @@ const coolDownGroqKey = (key: string, seconds: number, scope: string) => {
 };
 
 const parseRetrySeconds = (errorText: string): number => {
-    // A daily-quota / billing 429 (Gemini free tier) won't refill for a long
-    // time — park it for an hour instead of hammering it every few seconds
+    // A daily-quota / billing 429 won't refill for a long time — park the key
+    // for an hour instead of hammering it every few seconds
     if (/quota|billing|per day|daily limit|resource_exhausted/i.test(errorText)) return 3600;
     const m = errorText.match(/try again in ([\d.]+)s/i) ?? errorText.match(/retry.*?([\d.]+)\s*s/i);
     return m ? parseFloat(m[1]) : 5; // sane default when Groq omits the hint
 };
 
-const geminiKeys = (): string[] =>
-    `${process.env.GEMINI_KEYS ?? ""},${process.env.GEMINI_KEY ?? ""}`
-        .split(/[\s,]+/)
-        .map((k) => k.trim())
-        .filter((k) => k.length > 8);
-
-const isGroq = (base: string) => base === GROQ_BASE;
-
-// Intelligence-first with free-tier resilience: providers are tried in order,
-// each rotating its keys on rate-limit before the next provider is tried.
+// Groq-only, intelligence-first: strongest model first, stepping down on rate
+// limits; each provider rotates its key pool before the next is tried.
 const textProviders = (): Provider[] => [
     { base: GROQ_BASE, keys: groqKeys(), model: "openai/gpt-oss-120b" },
     { base: GROQ_BASE, keys: groqKeys(), model: "llama-3.3-70b-versatile" },
-    { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash", extraBody: GEMINI_FAST },
     { base: GROQ_BASE, keys: groqKeys(), model: "llama-3.1-8b-instant" },
 ];
 
-// Vision: Groq's qwen across all keys first — 6 keys give strong throughput
-// and it rotates on the 8K-TPM limit. Gemini is the cross-provider backstop
-// (its free daily quota is small, so a spent day parks it for an hour).
+// Vision: Groq's qwen (its only vision model) across all keys — 6 keys give
+// strong throughput and it rotates on the 8K-TPM limit.
 const visionProviders = (): Provider[] => [
     { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.6-27b" },
-    { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash", extraBody: GEMINI_FAST },
 ];
 
 // Full large-v3 first (best on Indian names/accents and noise), turbo as the
@@ -474,4 +457,4 @@ export const llmCleanFieldValue = async (
 /** Any Groq key present (Whisper transcription requires Groq specifically). */
 export const hasGroqKey = () => groqKeys().length > 0;
 
-export const isGroqConfigured = () => groqKeys().length > 0 || geminiKeys().length > 0;
+export const isGroqConfigured = () => groqKeys().length > 0;
