@@ -27,12 +27,18 @@ export const FillWithAiButton = ({ imageUrl, onParsed, disabled }: Props) => {
     const run = async () => {
         setLoading(true);
         try {
-            const res = await client.api["pending-transactions"]["extract-image"].$post({
-                json: { image: imageUrl },
-            });
-            const data = res.ok ? (await res.json()).data : null;
+            // A few attempts with gaps — if a batch just spent the keys, the
+            // rate-limit windows refill within a few seconds
+            let data = null;
+            for (let attempt = 0; attempt < 3 && !data; attempt++) {
+                if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
+                const res = await client.api["pending-transactions"]["extract-image"]
+                    .$post({ json: { image: imageUrl } })
+                    .catch(() => null);
+                data = res?.ok ? (await res.json()).data : null;
+            }
             if (!data) {
-                toast.error("Couldn't read the screenshot. Try once more or fill it in.");
+                toast.error("Still catching up on reads — try again in a moment.");
                 return;
             }
             onParsed({

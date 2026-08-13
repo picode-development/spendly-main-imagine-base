@@ -171,7 +171,7 @@ Respond with ONLY a JSON object:
 {
   "is_transaction": boolean,        // false for OTPs, balance alerts, promotions, reminders
   "amount": number | null,          // positive rupees, e.g. 520.50
-  "direction": "in" | "out" | null, // "out" = user paid/spent, "in" = user received
+  "direction": "in" | "out" | null, // "out" = user paid/spent, "in" = user received. If an amount is clearly stated but the wording doesn't say which way, DEFAULT to "out" (most manual entries are expenses) — do not leave it null when there is an amount
   "payee": string | null,           // who was paid or who paid (person/shop/company/UPI id). When BOTH a name and a role/descriptor are given ("Kishen Khushwant the ice cream shopkeeper"), combine them as "Name - Descriptor" (e.g. "Kishen Khushwant - Ice Cream Shopkeeper")
   "date": "YYYY-MM-DD" | null,      // transaction date if stated, else null
   "account_name": string | null,    // EXACT name from the accounts list if clearly implied, else null
@@ -213,10 +213,12 @@ const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
         typeof raw.amount === "number" && raw.amount > 0
             ? Math.round(raw.amount * 1000)
             : null;
+    // An amount with no direction defaults to an expense (money out) rather
+    // than being dropped — otherwise the field silently fails to map
     const amount =
-        magnitude === null || !raw.direction
+        magnitude === null
             ? null
-            : raw.direction === "out" ? -magnitude : magnitude;
+            : raw.direction === "in" ? magnitude : -magnitude;
 
     let date: Date | null = null;
     if (raw.date && /^\d{4}-\d{2}-\d{2}$/.test(raw.date)) {
