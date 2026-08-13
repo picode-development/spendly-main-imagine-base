@@ -36,7 +36,9 @@ export const VoiceFab = () => {
     if (!isSignedIn || anySheetOpen) return null;
 
     return (
-        <div className="fixed right-4 bottom-20 xl:right-6 xl:bottom-24 z-[70] flex items-center gap-2">
+        // The ball is the fixed anchor — matches the assistant ball's size
+        // (56px), blue, and right offset so the two stack in a clean column
+        <div className="fixed right-4 bottom-20 xl:right-6 xl:bottom-[5.75rem] z-[70]">
             <button
                 type="button"
                 onClick={toggle}
@@ -47,31 +49,32 @@ export const VoiceFab = () => {
                     : "Add a transaction by voice"
                 }
                 className={cn(
-                    "flex size-12 items-center justify-center rounded-full shadow-lg transition-colors",
+                    "flex size-14 items-center justify-center rounded-full text-white shadow-lg",
+                    "transition-all duration-300 hover:scale-110 hover:shadow-xl active:scale-95",
                     isRecording
-                        ? "bg-rose-600 text-white shadow-rose-600/40"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90",
+                        ? "bg-destructive hover:bg-destructive/90"
+                        : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
                 )}
             >
                 {isProcessing ? (
-                    <Loader2 className="size-5 animate-spin" />
+                    <Loader2 className="size-6 animate-spin" />
                 ) : isRecording ? (
-                    <Square className="size-4 fill-current" />
+                    <Square className="size-5 fill-current" />
                 ) : (
-                    <Mic className="size-5" />
+                    <Mic className="size-6" />
                 )}
             </button>
 
-            {/* Waveform pill — appears on the right of the ball while recording */}
+            {/* Waveform pill — grows inward from the ball, which never moves */}
             {isRecording && (
                 <div
                     aria-hidden
-                    className="flex h-10 items-center gap-[3px] rounded-full border border-rose-500/30 bg-card px-4 shadow-lg"
+                    className="absolute right-full top-1/2 mr-3 flex h-10 -translate-y-1/2 items-center gap-[3px] rounded-full border bg-card px-4 shadow-lg"
                 >
                     {levels.map((level, i) => (
                         <span
                             key={i}
-                            className="w-[3px] rounded-full bg-rose-500 transition-[height] duration-75"
+                            className="w-[3px] rounded-full bg-destructive transition-[height] duration-75"
                             style={{ height: `${Math.max(18, level * 90)}%` }}
                         />
                     ))}
