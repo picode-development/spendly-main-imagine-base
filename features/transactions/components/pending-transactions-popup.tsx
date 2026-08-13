@@ -128,7 +128,6 @@ export const PendingTransactionsPopup = () => {
                         <button
                             type="button"
                             onClick={() => deletePending.mutate({ id: item.id })}
-                            disabled={deletePending.isPending}
                             aria-label="Dismiss"
                             className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
                         >
