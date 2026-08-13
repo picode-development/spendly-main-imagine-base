@@ -201,7 +201,14 @@ const app = new Hono()
                 return c.json({ error: "Recording too large" }, 413);
             }
 
-            const transcript = await llmTranscribe(audio, audio.name || "voice.webm");
+            // Prime Whisper with the user's own account/category names so
+            // spoken proper nouns transcribe correctly
+            const ctx = await getLlmContext(auth.userId);
+            const transcript = await llmTranscribe(
+                audio,
+                audio.name || "voice.webm",
+                [...ctx.accounts, ...ctx.categories],
+            );
             if (!transcript) {
                 return c.json({ error: "Couldn't understand the recording" }, 502);
             }
@@ -215,7 +222,7 @@ const app = new Hono()
                 return c.json({ data: { transcript, value, parsed: null } });
             }
 
-            const parsed = await llmExtractFromText(transcript, await getLlmContext(auth.userId));
+            const parsed = await llmExtractFromText(transcript, ctx);
             return c.json({ data: { transcript, parsed } });
         },
     )

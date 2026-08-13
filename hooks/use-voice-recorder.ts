@@ -74,7 +74,15 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
         }
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = await navigator.mediaDevices.getUserMedia({
+                // Clean the signal at the source — the difference between
+                // usable and garbled speech in noisy rooms
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
             const mimeType = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("audio/webm")
                 ? "audio/webm"
                 : undefined;
