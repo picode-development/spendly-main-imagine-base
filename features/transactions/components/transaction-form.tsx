@@ -306,7 +306,9 @@ export const TransactionForm = ({
                             if (parsed.date) form.setValue("date", new Date(parsed.date));
                             if (parsed.payee) form.setValue("payee", parsed.payee);
                             if (parsed.amount != null) form.setValue("amount", String(parsed.amount / 1000));
-                            if (parsed.note || transcript) form.setValue("notes", parsed.note ?? transcript);
+                            // Only the LLM's clean note — never dump the raw
+                            // transcript (esp. for edit commands like "change…")
+                            if (parsed.note) form.setValue("notes", parsed.note);
                             const accountId = matchOptionId(accountOptions, parsed.accountName);
                             if (accountId) form.setValue("accountId", accountId);
                             const categoryId = matchOptionId(categoryOptions, parsed.categoryName);

@@ -47,7 +47,7 @@ export const useVoiceCreate = () => {
                     amount: parsed.amount != null ? String(Math.abs(parsed.amount) / 1000) : "",
                     fromAccountName: parsed.accountName ?? undefined,
                     toAccountName: parsed.toAccountName ?? undefined,
-                    notes: parsed.note ?? data?.transcript ?? undefined,
+                    notes: parsed.note ?? undefined,
                 },
             });
             return;
@@ -58,7 +58,7 @@ export const useVoiceCreate = () => {
                 date: parsed?.date ? new Date(parsed.date) : undefined,
                 payee: parsed?.payee ?? "",
                 amount: parsed?.amount != null ? String(parsed.amount / 1000) : "",
-                notes: parsed?.note ?? data?.transcript ?? undefined,
+                notes: parsed?.note ?? undefined,
                 accountName: parsed?.accountName ?? undefined,
                 categoryName: parsed?.categoryName ?? undefined,
             },

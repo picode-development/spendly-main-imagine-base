@@ -275,7 +275,8 @@ export const TransferForm = ({
                             }
                             if (parsed.date) form.setValue("date", new Date(parsed.date));
                             if (parsed.amount != null) form.setValue("amount", String(Math.abs(parsed.amount) / 1000));
-                            if (parsed.note || transcript) form.setValue("notes", parsed.note ?? transcript);
+                            // Only the LLM's clean note — never the raw transcript
+                            if (parsed.note) form.setValue("notes", parsed.note);
                             const fromId = matchOptionId(accountOptions, parsed.accountName);
                             if (fromId) form.setValue("fromAccountId", fromId);
                             const toId = matchOptionId(accountOptions, parsed.toAccountName);

@@ -431,8 +431,13 @@ const app = new Hono()
             // A transcript that transcribed fine should never come back with
             // no fields because of a transient rate-limit — retry until it
             // yields something usable (or attempts run out)
+            // Any stated field counts — a partial edit ("change category to
+            // Food") is a valid, usable result, not a failure
             const isUsable = (p: Awaited<ReturnType<typeof llmExtractFromText>>) =>
-                !!p && (p.amount != null || !!p.payee || !!p.accountName || p.isTransfer || !!p.switchTo);
+                !!p && (
+                    p.amount != null || !!p.payee || !!p.accountName || !!p.categoryName ||
+                    !!p.toAccountName || !!p.note || !!p.date || p.isTransfer || !!p.switchTo
+                );
             let parsed = await llmExtractFromText(transcript, ctx);
             for (let attempt = 0; attempt < 2 && !isUsable(parsed); attempt++) {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
