@@ -104,7 +104,8 @@ const ShareClaimHandler = () => {
                     return { url, preview };
                 })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
 
-                let [extracted, hosted] = await Promise.all([aiPromise, uploadPromise]);
+                const [initialExtract, hosted] = await Promise.all([aiPromise, uploadPromise]);
+                let extracted = initialExtract;
                 if (!extracted && !hosted) return; // both halves failed
 
                 // Local-copy read failed but the upload landed — from here on
