@@ -11,22 +11,83 @@ const GROQ_BASE = "https://api.groq.com/openai/v1";
 // Gemini speaks the OpenAI protocol at this base — same request shape
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 
-type Provider = { base: string; apiKey: string | undefined; model: string };
+type Provider = {
+    base: string;
+    // Multiple keys are rotated instantly on rate-limit (429). Groq's limits
+    // are per-key, so extra free keys multiply throughput.
+    keys: string[];
+    model: string;
+    // Merged into the request body — e.g. Gemini's reasoning_effort:"none"
+    // which turns OFF thinking mode (a 37s call becomes a few seconds)
+    extraBody?: Record<string, unknown>;
+};
+
+const GEMINI_FAST = { reasoning_effort: "none" as const };
+
+// All configured Groq keys: GROQ_KEYS (comma/space/newline separated) plus the
+// legacy single GROQ_KEY. Free-tier limits are per key, so N keys multiply
+// throughput ~N× and the pool rotates instantly when one is rate-limited.
+const groqKeys = (): string[] => {
+    const raw = `${process.env.GROQ_KEYS ?? ""},${process.env.GROQ_KEY ?? ""}`;
+    const seen = new Set<string>();
+    return raw
+        .split(/[\s,]+/)
+        .map((k) => k.trim())
+        .filter((k) => k.startsWith("gsk_") && !seen.has(k) && (seen.add(k), true));
+};
+
+// Per-key cooldown: epoch-ms when a rate-limited key becomes usable again.
+// Module-level so it survives across warm serverless invocations, and is read
+// from Groq's own "try again in Xs" message. This is the "wait for whichever
+// key frees up soonest, retry the instant it's live" behavior.
+const groqCooldownUntil = new Map<string, number>();
+
+/** Picks a usable Groq key now, or the one freeing up soonest (with its wait). */
+const pickGroqKey = (keys: string[]): { key: string; waitMs: number } | null => {
+    if (keys.length === 0) return null;
+    const now = Date.now();
+    let soonest: { key: string; waitMs: number } | null = null;
+    for (const key of keys) {
+        const waitMs = Math.max(0, (groqCooldownUntil.get(key) ?? 0) - now);
+        if (waitMs === 0) return { key, waitMs: 0 };
+        if (!soonest || waitMs < soonest.waitMs) soonest = { key, waitMs };
+    }
+    return soonest;
+};
+
+const coolDownGroqKey = (key: string, seconds: number) => {
+    groqCooldownUntil.set(key, Date.now() + Math.max(1, seconds) * 1000);
+};
+
+const parseRetrySeconds = (errorText: string): number => {
+    const m = errorText.match(/try again in ([\d.]+)s/i) ?? errorText.match(/retry.*?([\d.]+)\s*s/i);
+    return m ? parseFloat(m[1]) : 5; // sane default when Groq omits the hint
+};
+
+const geminiKeys = (): string[] =>
+    `${process.env.GEMINI_KEYS ?? ""},${process.env.GEMINI_KEY ?? ""}`
+        .split(/[\s,]+/)
+        .map((k) => k.trim())
+        .filter((k) => k.length > 8);
+
+const isGroq = (base: string) => base === GROQ_BASE;
 
 // Intelligence-first with free-tier resilience: providers are tried in order,
-// skipping any without a key and stepping down on rate limits.
+// each rotating its keys on rate-limit before the next provider is tried.
 const textProviders = (): Provider[] => [
-    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "openai/gpt-oss-120b" },
-    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "llama-3.3-70b-versatile" },
-    { base: GEMINI_BASE, apiKey: process.env.GEMINI_KEY, model: "gemini-2.5-flash" },
-    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "llama-3.1-8b-instant" },
+    { base: GROQ_BASE, keys: groqKeys(), model: "openai/gpt-oss-120b" },
+    { base: GROQ_BASE, keys: groqKeys(), model: "llama-3.3-70b-versatile" },
+    { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash", extraBody: GEMINI_FAST },
+    { base: GROQ_BASE, keys: groqKeys(), model: "llama-3.1-8b-instant" },
 ];
 
-// Vision: Gemini Flash first (free tier: ~10+ images/min vs Groq's ~3),
-// Groq's qwen as fallback when no GEMINI_KEY is set
+// Vision: Groq's qwen across every key first (fast, reliable, rotates on the
+// 8K-TPM limit), then Gemini 2.5 Flash (thinking off) as the cross-provider
+// backstop when all Groq keys are spent.
 const visionProviders = (): Provider[] => [
-    { base: GEMINI_BASE, apiKey: process.env.GEMINI_KEY, model: "gemini-2.5-flash" },
-    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "qwen/qwen3.6-27b" },
+    { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.6-27b" },
+    { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash", extraBody: GEMINI_FAST },
+    { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash-lite", extraBody: GEMINI_FAST },
 ];
 
 // Full large-v3 first (best on Indian names/accents and noise), turbo as the
@@ -149,22 +210,47 @@ const chatCompletion = async (
     ctx: LlmContext,
 ): Promise<LlmTransaction | null> => {
     const startedAt = Date.now();
+    const budgetLeft = () => 22 - (Date.now() - startedAt) / 1000;
+
     for (const provider of providers) {
-        if (!provider.apiKey) continue;
-        // Multiple attempts per provider: on a 429 the error usually says how
-        // long until the window refills — honor it while the time budget allows
-        for (let attempt = 0; attempt < 3; attempt++) {
+        if (provider.keys.length === 0) continue;
+        const groq = isGroq(provider.base);
+
+        // Enough turns to cycle every key plus a couple of json-retry shots
+        const maxTurns = provider.keys.length * 2 + 2;
+        let jsonRetryUsed = false;
+
+        for (let turn = 0; turn < maxTurns; turn++) {
+            if (budgetLeft() < 2) return null;
+
+            // Groq: cooldown-aware pool — take a live key, or wait for the one
+            // freeing up soonest. Non-Groq: plain round-robin.
+            let apiKey: string;
+            if (groq) {
+                const pick = pickGroqKey(provider.keys);
+                if (!pick) break;
+                if (pick.waitMs > 0) {
+                    const waitS = pick.waitMs / 1000;
+                    if (waitS > budgetLeft() - 1.5) break; // can't afford the wait — next provider
+                    await new Promise((r) => setTimeout(r, pick.waitMs + 250));
+                }
+                apiKey = pick.key;
+            } else {
+                apiKey = provider.keys[turn % provider.keys.length];
+            }
+
             try {
                 const response = await fetch(`${provider.base}/chat/completions`, {
                     method: "POST",
                     headers: {
-                        "Authorization": `Bearer ${provider.apiKey}`,
+                        "Authorization": `Bearer ${apiKey}`,
                         "Content-Type": "application/json",
                     },
                     body: JSON.stringify({
                         model: provider.model,
                         temperature: 0,
                         response_format: { type: "json_object" },
+                        ...provider.extraBody,
                         messages: [
                             { role: "system", content: extractionPrompt(ctx) },
                             { role: "user", content: userContent },
@@ -173,20 +259,26 @@ const chatCompletion = async (
                 });
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error(`Extraction failed on ${provider.model}:`, response.status, errorText);
-                    const waitMatch = errorText.match(/try again in ([\d.]+)s/i)
-                        ?? errorText.match(/retry.*?([\d.]+)\s*s/i);
-                    const waitSeconds = waitMatch ? parseFloat(waitMatch[1]) : NaN;
-                    const elapsedSeconds = (Date.now() - startedAt) / 1000;
-                    if (
-                        response.status === 429 &&
-                        waitSeconds > 0 &&
-                        elapsedSeconds + waitSeconds < 18 // stay inside the function's time budget
-                    ) {
-                        await new Promise((resolve) => setTimeout(resolve, (waitSeconds + 0.5) * 1000));
-                        continue; // window refilled — retry the same provider
+                    console.error(`Extraction failed on ${provider.model}:`, response.status, errorText.slice(0, 140));
+
+                    if (response.status === 429) {
+                        if (groq) coolDownGroqKey(apiKey, parseRetrySeconds(errorText));
+                        continue; // pool picks the next live key (or waits)
                     }
-                    break; // unrecoverable here — try the next provider
+                    if ((response.status === 401 || response.status === 403) && groq) {
+                        coolDownGroqKey(apiKey, 3600); // dead/revoked key — park it, rotate
+                        continue;
+                    }
+                    if (response.status >= 500) {
+                        await new Promise((r) => setTimeout(r, 1200));
+                        continue; // transient overload — try again / rotate
+                    }
+                    // Malformed JSON is nondeterministic — one immediate reshot
+                    if (/json_validate_failed/.test(errorText) && !jsonRetryUsed) {
+                        jsonRetryUsed = true;
+                        continue;
+                    }
+                    break; // other 4xx (bad model/request) — next provider
                 }
                 const data = await response.json();
                 const content = data?.choices?.[0]?.message?.content;
@@ -232,36 +324,51 @@ export const llmTranscribe = async (
     filename: string,
     vocabulary: string[] = [],
 ): Promise<string | null> => {
-    const apiKey = process.env.GROQ_KEY;
-    if (!apiKey) return null;
+    const keys = groqKeys();
+    if (keys.length === 0) return null;
+
+    const names = vocabulary.filter(Boolean).slice(0, 40).join(", ");
+    const startedAt = Date.now();
 
     for (const model of WHISPER_MODELS) {
-        try {
-            const form = new FormData();
-            form.append("file", audio, filename);
-            form.append("model", model);
-            // No language pin (any language works); the prompt biases short
-            // clips toward the primary case and primes expected proper nouns
-            const names = vocabulary.filter(Boolean).slice(0, 40).join(", ");
-            form.append(
-                "prompt",
-                `Mostly English, sometimes Hindi/Hinglish. Indian finance terms: rupees, UPI, paise, paid, credited.${names ? ` Names that may appear: ${names}.` : ""}`,
-            );
-            form.append("temperature", "0");
-
-            const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
-                method: "POST",
-                headers: { "Authorization": `Bearer ${apiKey}` },
-                body: form,
-            });
-            if (!response.ok) {
-                console.error(`Groq transcription failed on ${model}:`, response.status, await response.text());
-                continue; // rate-limited — try the higher-quota fallback
+        const maxTurns = keys.length * 2 + 1;
+        for (let turn = 0; turn < maxTurns; turn++) {
+            if ((Date.now() - startedAt) / 1000 > 22) return null;
+            const pick = pickGroqKey(keys);
+            if (!pick) break;
+            if (pick.waitMs > 0) {
+                if (pick.waitMs > 8000) break; // don't stall a live recording too long
+                await new Promise((r) => setTimeout(r, pick.waitMs + 250));
             }
-            const data = await response.json();
-            if (typeof data?.text === "string" && data.text.trim()) return data.text.trim();
-        } catch (e) {
-            console.error(`Groq transcription error on ${model}:`, e);
+            try {
+                const form = new FormData();
+                form.append("file", audio, filename);
+                form.append("model", model);
+                // No language pin (any language works); the prompt biases short
+                // clips toward the primary case and primes expected proper nouns
+                form.append(
+                    "prompt",
+                    `Mostly English, sometimes Hindi/Hinglish. Indian finance terms: rupees, UPI, paise, paid, credited.${names ? ` Names that may appear: ${names}.` : ""}`,
+                );
+                form.append("temperature", "0");
+
+                const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${pick.key}` },
+                    body: form,
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    console.error(`Transcription failed on ${model}:`, response.status);
+                    if (response.status === 429) { coolDownGroqKey(pick.key, parseRetrySeconds(errText)); continue; }
+                    if (response.status === 401 || response.status === 403) { coolDownGroqKey(pick.key, 3600); continue; }
+                    break; // model unavailable — try the next model
+                }
+                const data = await response.json();
+                if (typeof data?.text === "string" && data.text.trim()) return data.text.trim();
+            } catch (e) {
+                console.error(`Transcription error on ${model}:`, e);
+            }
         }
     }
     return null;
@@ -283,35 +390,45 @@ export const llmCleanFieldValue = async (
     field: "payee" | "amount" | "notes",
     spoken: string,
 ): Promise<string | null> => {
-    const apiKey = process.env.GROQ_KEY;
-    if (!apiKey) return null;
-
-    try {
-        const response = await fetch(`${GROQ_BASE}/chat/completions`, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                model: FAST_MODEL,
-                temperature: 0,
-                response_format: { type: "json_object" },
-                messages: [
-                    { role: "system", content: FIELD_PROMPTS[field] },
-                    { role: "user", content: spoken },
-                ],
-            }),
-        });
-        if (!response.ok) return null;
-        const data = await response.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== "string") return null;
-        const value = (JSON.parse(content) as { value?: string | null }).value;
-        return typeof value === "string" && value.trim() ? value.trim() : null;
-    } catch {
-        return null;
+    const keys = groqKeys();
+    for (let turn = 0; turn < keys.length + 1; turn++) {
+        const pick = pickGroqKey(keys);
+        if (!pick || pick.waitMs > 4000) break; // this is a quick nicety — don't stall
+        if (pick.waitMs > 0) await new Promise((r) => setTimeout(r, pick.waitMs + 200));
+        try {
+            const response = await fetch(`${GROQ_BASE}/chat/completions`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${pick.key}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: FAST_MODEL,
+                    temperature: 0,
+                    response_format: { type: "json_object" },
+                    messages: [
+                        { role: "system", content: FIELD_PROMPTS[field] },
+                        { role: "user", content: spoken },
+                    ],
+                }),
+            });
+            if (!response.ok) {
+                if (response.status === 429) coolDownGroqKey(pick.key, parseRetrySeconds(await response.text()));
+                continue; // rotate to the next key
+            }
+            const data = await response.json();
+            const content = data?.choices?.[0]?.message?.content;
+            if (typeof content !== "string") return null;
+            const value = (JSON.parse(content) as { value?: string | null }).value;
+            return typeof value === "string" && value.trim() ? value.trim() : null;
+        } catch {
+            // try the next key
+        }
     }
+    return null;
 };
 
-export const isGroqConfigured = () => !!process.env.GROQ_KEY;
+/** Any Groq key present (Whisper transcription requires Groq specifically). */
+export const hasGroqKey = () => groqKeys().length > 0;
+
+export const isGroqConfigured = () => groqKeys().length > 0 || geminiKeys().length > 0;

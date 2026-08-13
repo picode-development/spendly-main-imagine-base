@@ -2,7 +2,7 @@ import { z } from "zod";
 import { db } from "@/db/drizzle";
 import { pendingTransactions, sharedStash } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
-import { llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { hasGroqKey, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { Hono } from "hono";
@@ -337,8 +337,9 @@ const app = new Hono()
             if (!auth?.userId) {
                 return c.json({ error: "Unauthorized" }, 401);
             }
-            if (!process.env.GROQ_KEY) {
-                return c.json({ error: "Voice input needs a Groq API key (GROQ_KEY)" }, 501);
+            if (!hasGroqKey()) {
+                // Whisper is Groq-only; Gemini can't transcribe here
+                return c.json({ error: "Voice input needs a Groq API key" }, 501);
             }
 
             const body = await c.req.parseBody();
@@ -371,7 +372,13 @@ const app = new Hono()
                 return c.json({ data: { transcript, value, parsed: null } });
             }
 
-            const parsed = await llmExtractFromText(transcript, ctx);
+            let parsed = await llmExtractFromText(transcript, ctx);
+            if (!parsed) {
+                // One more attempt — a transcript that transcribed fine should
+                // never come back unparsed because of a transient hiccup
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+                parsed = await llmExtractFromText(transcript, ctx);
+            }
             return c.json({ data: { transcript, parsed } });
         },
     )
