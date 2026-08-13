@@ -104,8 +104,17 @@ const ShareClaimHandler = () => {
                     return { url, preview };
                 })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
 
-                const [extracted, hosted] = await Promise.all([aiPromise, uploadPromise]);
+                let [extracted, hosted] = await Promise.all([aiPromise, uploadPromise]);
                 if (!extracted && !hosted) return; // both halves failed
+
+                // Local-copy read failed but the upload landed — from here on
+                // the AI works off the hosted ImgBB URL
+                if (!extracted && hosted) {
+                    const res = await client.api["pending-transactions"]["extract-image"].$post({
+                        json: { image: hosted.url, text: meta.text || null },
+                    }).catch(() => null);
+                    if (res?.ok) extracted = (await res.json()).data;
+                }
 
                 const res = await client.api["pending-transactions"]["create-detected"].$post({
                     json: {

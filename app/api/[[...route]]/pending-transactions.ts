@@ -178,14 +178,18 @@ const app = new Hono()
         },
     )
 
-    // Extraction-only: reads a locally-provided image copy (data URL) so the
-    // AI never waits for hosting. Retries once — a single transient Groq
-    // failure must not produce a silently empty detection.
+    // Extraction-only. Accepts a local data-URL copy (the initial detection,
+    // before hosting completes) or a hosted https URL (every AI task after
+    // the upload). Retries once — a single transient Groq failure must not
+    // produce a silently empty detection.
     .post(
         "/extract-image",
         clerkMiddleware(),
         zValidator("json", z.object({
-            image: z.string().startsWith("data:image/").max(3_500_000),
+            image: z.string().max(3_500_000).refine(
+                (v) => v.startsWith("data:image/") || v.startsWith("https://"),
+                "Must be an image data URL or an https URL",
+            ),
             text: z.string().max(2000).nullish(),
         })),
         async (c) => {
