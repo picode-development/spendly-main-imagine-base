@@ -10,9 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { client } from "@/lib/hono";
 import { formatCurrency } from "@/lib/utils";
+import { uploadImageWithProgress, makeImagePreview } from "@/features/transactions/lib/upload-imgbb";
 
 type ClaimState =
-    | { phase: "reading" }
+    | { phase: "reading"; detail?: string; progress?: number }
     | { phase: "done"; count: number; amount: number | null; payee: string | null }
     | { phase: "error" };
 
@@ -30,27 +31,107 @@ const ShareClaimHandler = () => {
         fired.current = true;
 
         const token = params.get("token");
-        if (!token) {
+        const localId = params.get("local");
+        if (!token && !localId) {
             router.replace("/transactions");
             return;
         }
 
+        const finish = (rows: { amount?: number | null; payee?: string | null }[]) => {
+            queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
+            setState({
+                phase: "done",
+                count: rows.length,
+                amount: rows[0]?.amount ?? null,
+                payee: rows[0]?.payee ?? null,
+            });
+            setTimeout(() => router.replace("/transactions"), rows.length > 1 ? 2200 : 1800);
+        };
+
+        // Service-worker path: files were parked on-device at FULL quality.
+        // A sequential queue processes each screenshot — upload, then AI
+        // reading — with one progress bar spanning the whole batch.
+        const claimLocal = async (id: string) => {
+            const cache = await caches.open("spendly-share-stash");
+            const metaRes = await cache.match(`/__share/${id}/meta`);
+            if (!metaRes) throw new Error("share expired");
+            const meta = (await metaRes.json()) as { text: string; count: number };
+
+            const totalSteps = Math.max(1, meta.count * 2); // upload + AI per image
+            let doneSteps = 0;
+            const tick = (detail: string) => {
+                setState({
+                    phase: "reading",
+                    detail,
+                    progress: Math.round((doneSteps / totalSteps) * 100),
+                });
+            };
+
+            const rows: { amount?: number | null; payee?: string | null }[] = [];
+            for (let i = 0; i < meta.count; i++) {
+                const label = meta.count > 1 ? `Screenshot ${i + 1} of ${meta.count}` : "Screenshot";
+                try {
+                    const fileRes = await cache.match(`/__share/${id}/file/${i}`);
+                    if (!fileRes) { doneSteps += 2; continue; }
+                    const blob = await fileRes.blob();
+                    const file = new File([blob], "screenshot.jpg", { type: blob.type || "image/jpeg" });
+
+                    tick(`${label} — uploading…`);
+                    const [url, preview] = await Promise.all([
+                        uploadImageWithProgress(file, () => {}).promise,
+                        makeImagePreview(file).catch(() => undefined),
+                    ]);
+                    doneSteps += 1;
+
+                    tick(`${label} — reading the details…`);
+                    const res = await client.api["pending-transactions"]["from-share"].$post({
+                        json: { text: meta.text || null, images: [{ url, preview }] },
+                    });
+                    doneSteps += 1;
+                    if (res.ok) {
+                        const { data } = await res.json();
+                        rows.push(...(Array.isArray(data) ? data : [data]));
+                    }
+                    tick(`${label} — done`);
+                } catch {
+                    // One bad screenshot never sinks the batch
+                    doneSteps = (i + 1) * 2;
+                }
+            }
+
+            // Clear the on-device stash either way
+            for (let i = 0; i < meta.count; i++) await cache.delete(`/__share/${id}/file/${i}`);
+            await cache.delete(`/__share/${id}/meta`);
+
+            // Text-only share (no images survived or none were sent)
+            if (rows.length === 0 && meta.text) {
+                setState({ phase: "reading", detail: "Reading the message…" });
+                const res = await client.api["pending-transactions"]["from-share"].$post({
+                    json: { text: meta.text, images: [] },
+                });
+                if (!res.ok) throw new Error("extraction failed");
+                const { data } = await res.json();
+                rows.push(...(Array.isArray(data) ? data : [data]));
+            }
+
+            if (rows.length === 0) throw new Error("nothing to read");
+            finish(rows);
+        };
+
+        // Server-stash path (fallback when the service worker isn't active)
+        const claimToken = async (t: string) => {
+            const res = await client.api["pending-transactions"]["claim-share"].$post({
+                json: { token: t },
+            });
+            if (!res.ok) throw new Error("claim failed");
+            const { data } = await res.json();
+            finish(Array.isArray(data) ? data : [data]);
+        };
+
         (async () => {
             try {
-                const res = await client.api["pending-transactions"]["claim-share"].$post({
-                    json: { token },
-                });
-                if (!res.ok) throw new Error("claim failed");
-                const { data } = await res.json();
-                const rows = Array.isArray(data) ? data : [data];
-                queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
-                setState({
-                    phase: "done",
-                    count: rows.length,
-                    amount: rows[0]?.amount ?? null,
-                    payee: rows[0]?.payee ?? null,
-                });
-                setTimeout(() => router.replace("/transactions"), rows.length > 1 ? 2200 : 1800);
+                if (localId) await claimLocal(localId);
+                else await claimToken(token!);
             } catch {
                 setState({ phase: "error" });
                 setTimeout(() => router.replace("/transactions"), 3000);
@@ -76,12 +157,23 @@ const ShareClaimHandler = () => {
                         <div className="space-y-1">
                             <h2 className="text-base font-semibold">Reading what you shared</h2>
                             <p className="text-sm text-muted-foreground">
-                                Picking out the amount, name, and date…
+                                {state.detail ?? "Picking out the amount, name, and date…"}
                             </p>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
-                            <div className="h-full w-1/3 rounded-full bg-primary animate-[progress-sweep_1.4s_ease-in-out_infinite] motion-reduce:animate-pulse" />
+                            {state.progress !== undefined ? (
+                                // Determinate: upload + AI steps across the whole batch
+                                <div
+                                    className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                                    style={{ width: `${Math.max(4, state.progress)}%` }}
+                                />
+                            ) : (
+                                <div className="h-full w-1/3 rounded-full bg-primary animate-[progress-sweep_1.4s_ease-in-out_infinite] motion-reduce:animate-pulse" />
+                            )}
                         </div>
+                        {state.progress !== undefined && (
+                            <p className="text-xs text-muted-foreground tabular-nums">{state.progress}%</p>
+                        )}
                     </div>
                 )}
 

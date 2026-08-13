@@ -178,6 +178,67 @@ const app = new Hono()
         },
     )
 
+    // Client-uploaded share (service-worker path): images are already hosted
+    // by the page; extract each and fan out one pending per image.
+    .post(
+        "/from-share",
+        clerkMiddleware(),
+        zValidator("json", z.object({
+            text: z.string().max(2000).nullish(),
+            images: z.array(z.object({
+                url: z.string().url(),
+                preview: z.string().optional(),
+            })).max(10),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { text, images } = c.req.valid("json");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+            if (images.length === 0 && !text?.trim()) {
+                return c.json({ error: "Nothing to read" }, 400);
+            }
+
+            let rows;
+            if (images.length > 0) {
+                const ctx = await getLlmContext(auth.userId);
+                rows = await Promise.all(images.map(async (image) => {
+                    const extracted = await llmExtractFromImage(image.url, ctx, text);
+                    const parsed = extracted ? {
+                        amount: extracted.isTransaction ? extracted.amount : null,
+                        payee: extracted.payee,
+                        accountHint: extracted.accountName ?? extracted.accountHint,
+                        categoryHint: extracted.categoryName,
+                        note: extracted.note,
+                        date: extracted.date ?? new Date(),
+                    } : (text ? await parseMessage(auth.userId!, text) : null);
+
+                    return {
+                        id: createId(),
+                        userId: auth.userId!,
+                        rawMessage: text || "Shared screenshot",
+                        imageUrls: [image],
+                        ...(parsed ?? { date: new Date() }),
+                    };
+                }));
+            } else {
+                const parsed = await parseMessage(auth.userId, text!.trim());
+                rows = [{
+                    id: createId(),
+                    userId: auth.userId,
+                    rawMessage: text!.trim(),
+                    imageUrls: null,
+                    ...(parsed ?? { date: new Date() }),
+                }];
+            }
+
+            const data = await db.insert(pendingTransactions).values(rows).returning();
+            return c.json({ data });
+        },
+    )
+
     // Voice input: transcribes the recording; with mode=extract it also pulls
     // out transaction fields (matched against the user's accounts/categories).
     .post(

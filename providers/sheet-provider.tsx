@@ -13,6 +13,7 @@ import { NewTransferSheet } from "@/features/transactions/components/new-transfe
 import { PendingTransactionsPopup } from "@/features/transactions/components/pending-transactions-popup";
 import { VoiceFab } from "@/features/transactions/components/voice-fab";
 import { UpdatePrompt } from "@/components/update-prompt";
+import { SwRegister } from "@/components/sw-register";
 
 export const SheetProvider = () => {
     const isMounted = useMountedState();
@@ -33,6 +34,7 @@ export const SheetProvider = () => {
             <PendingTransactionsPopup />
             <VoiceFab />
             <UpdatePrompt />
+            <SwRegister />
         </>
     )
 }
