@@ -51,12 +51,12 @@ Respond with ONLY a JSON object:
   "is_transaction": boolean,        // false for OTPs, balance alerts, promotions, reminders
   "amount": number | null,          // positive rupees, e.g. 520.50
   "direction": "in" | "out" | null, // "out" = user paid/spent, "in" = user received
-  "payee": string | null,           // who was paid or who paid (person/shop/company/UPI id)
+  "payee": string | null,           // who was paid or who paid (person/shop/company/UPI id). When BOTH a name and a role/descriptor are given ("Kishen Khushwant the ice cream shopkeeper"), combine them as "Name - Descriptor" (e.g. "Kishen Khushwant - Ice Cream Shopkeeper")
   "date": "YYYY-MM-DD" | null,      // transaction date if stated, else null
   "account_name": string | null,    // EXACT name from the accounts list if clearly implied, else null
   "category_name": string | null,   // EXACT name from the categories list if it clearly fits, else null
   "account_hint": string | null,    // short context like "a/c ..0934" or masked card number, else null
-  "note": string | null,            // clean one-line note (max 12 words) worth keeping with the transaction, e.g. "NEFT from RBROTHERS, a/c ..0934" or "Dinner with family, paid via GPay"; null if nothing useful
+  "note": string | null,            // the note to save with the transaction. CRITICAL: if the speaker/message EXPLICITLY states a note, reason, occasion, or any extra detail ("note that...", "this was for...", "it was a gift"), include ALL of those stated details — never drop or shorten what was explicitly said. Join multiple details with " - ". Only when nothing was explicitly stated may you write a brief factual summary (max 12 words), or null
   "is_transfer": boolean,           // true ONLY when moving money between the user's OWN accounts ("transfer 500 from My Money to Savings", "move funds to savings")
   "to_account_name": string | null  // for transfers: destination account, EXACT name from the accounts list (account_name is the source)
 }
