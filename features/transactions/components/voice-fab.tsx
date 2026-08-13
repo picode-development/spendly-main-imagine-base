@@ -53,7 +53,9 @@ export const VoiceFab = () => {
                     "transition-all duration-300 hover:scale-110 hover:shadow-xl active:scale-95",
                     isRecording
                         ? "bg-destructive hover:bg-destructive/90"
-                        : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+                        // Spendly's brand green (the logo color) — distinct from
+                        // the blue assistant ball below it
+                        : "bg-[#02a149] hover:bg-[#029045]",
                 )}
             >
                 {isProcessing ? (
