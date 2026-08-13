@@ -17,8 +17,10 @@ type Props = {
 };
 
 export const RadarVariant = ({ data = [], theme }: Props) => {
-    const themeContext = useTheme();
-    const isDark = theme === "dark" || (!theme && themeContext.theme === "dark");
+    const { resolvedTheme } = useTheme();
+    // resolvedTheme collapses "system" to the real dark/light (raw theme left
+    // system unresolved → black axis text in system dark mode)
+    const isDark = theme === "dark" || (!theme && resolvedTheme === "dark");
     const gradientId = isDark ? "radarGradientDark" : "radarGradientLight";
     const gridStroke = isDark ? "#334155" : "#e5e7eb"; 
     const textColor = isDark ? "#ffffff" : "#000000";

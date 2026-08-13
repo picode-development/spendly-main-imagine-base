@@ -29,6 +29,15 @@ export const useVoiceCreate = () => {
         const { data } = await res.json();
         const parsed = data?.parsed;
 
+        // Extraction came back empty — say what was heard so the failure is
+        // diagnosable instead of silently dumping the transcript into notes
+        if (!parsed || (!parsed.isTransfer && parsed.amount == null && !parsed.payee && !parsed.accountName && !parsed.switchTo)) {
+            toast.info(
+                `Heard: "${data?.transcript ?? ""}" — couldn't pick out details, saved to notes.`,
+                { duration: 8000 },
+            );
+        }
+
         // "Transfer funds from X to Y" or "switch to transfer form" → the
         // transfer form, not a transaction
         if (parsed?.isTransfer || parsed?.switchTo === "transfer") {

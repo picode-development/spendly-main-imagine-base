@@ -106,6 +106,30 @@ const visionProviders = (): Provider[] => [
 // Full large-v3 first (best on Indian names/accents and noise), turbo as the
 // higher-quota fallback
 const WHISPER_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"];
+
+// Whisper hallucinates stock phrases from its training data on silent/near-
+// silent audio (subtitle credits, YouTube outros). Treat these as "no speech".
+// Matched as the WHOLE utterance (not substrings) so real speech like
+// "amazon.com" is never dropped — except "amara.org", which never appears in
+// genuine transaction speech.
+const WHISPER_HALLUCINATIONS = new Set([
+    "subtitles by the amara.org community",
+    "thanks for watching",
+    "thank you for watching",
+    "thank you",
+    "please subscribe",
+    "like and subscribe",
+    "you",
+    "bye",
+    "bye.",
+]);
+
+const isHallucinatedSilence = (text: string): boolean => {
+    const t = text.trim().toLowerCase().replace(/[.!?]+$/g, "").trim();
+    if (t.length <= 1) return true;               // "", "."
+    if (t.includes("amara.org")) return true;     // never in real speech
+    return WHISPER_HALLUCINATIONS.has(t);         // whole-utterance match only
+};
 const FAST_MODEL = "llama-3.1-8b-instant";
 
 export type LlmContext = {
@@ -378,7 +402,10 @@ export const llmTranscribe = async (
                     break; // model unavailable — try the next model
                 }
                 const data = await response.json();
-                if (typeof data?.text === "string" && data.text.trim()) return data.text.trim();
+                const text = typeof data?.text === "string" ? data.text.trim() : "";
+                // Silence → Whisper hallucination → treat as nothing said
+                if (text && isHallucinatedSilence(text)) return null;
+                if (text) return text;
             } catch (e) {
                 console.error(`Transcription error on ${model}:`, e);
             }

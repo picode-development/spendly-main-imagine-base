@@ -35,19 +35,16 @@ type Props = {
 };
 
 export const Chart = ({ data = [] }: Props) => {
-    const { theme } = useTheme(); // "light" | "dark" | "system"
+    // resolvedTheme already collapses "system" to the OS's actual dark/light
+    // (and reacts to changes) — using raw `theme` left "system" unresolved,
+    // so dark-mode-via-system rendered light-mode axis text.
+    const { resolvedTheme } = useTheme();
     const [chartType, setChartType] = useState("area");
 
     const onTypeChange = (type: string) => {
         //TODO: add paywall
         setChartType(type);
     };
-
-    const resolvedTheme = theme === "system"
-        ? typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark"
-            : "light"
-        : theme;
 
     return (
         <Card className="border-none drop-shadow-sm">
