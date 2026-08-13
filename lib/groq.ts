@@ -65,7 +65,7 @@ Rules: never invent an amount. Balance figures are NOT the transaction amount. F
 
 Formatting rules for all text values (payee, note):
 - Use Title Case for names ("ice cream shopkeeper" → "Ice Cream Shopkeeper"); notes as clean sentences with proper capitalization.
-- The input may be English, Hindi, or mixed Hinglish. ALWAYS write output values in Latin script — transliterate any Hindi to Hinglish (e.g. दूध वाला → "Doodh Wala", सब्ज़ी → "Sabzi"). Never output Devanagari.`;
+- The input is usually English but may be Hindi, Hinglish, or any other language. ALWAYS write output values in Latin script — keep English as-is, transliterate Hindi to Hinglish (e.g. दूध वाला → "Doodh Wala", सब्ज़ी → "Sabzi"). Never output Devanagari or other non-Latin scripts.`;
 
 type RawExtraction = {
     is_transaction?: boolean;
@@ -170,7 +170,9 @@ export const llmTranscribe = async (audio: Blob, filename: string): Promise<stri
         const form = new FormData();
         form.append("file", audio, filename);
         form.append("model", WHISPER_MODEL);
-        // No language pin: users speak English, Hindi, or mixed Hinglish
+        // No language pin (any language works); the prompt biases short
+        // clips toward the primary case: English with Indian finance terms
+        form.append("prompt", "Mostly English, sometimes Hindi/Hinglish. Indian finance terms: rupees, UPI, paise, kirana, paid, credited.");
         form.append("temperature", "0");
 
         const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
