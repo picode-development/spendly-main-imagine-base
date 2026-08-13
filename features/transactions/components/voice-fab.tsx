@@ -60,9 +60,9 @@ export const VoiceFab = () => {
                     isRecording
                         ? "bg-destructive text-white hover:bg-destructive/90"
                         // Header-gradient ball at rest with a dull-white icon;
-                        // on hover the whole ball turns to a golden gradient
-                        // with a warm glow, like the top navigation
-                        : "bg-gradient-to-br from-[var(--header-gradient-from)] to-[var(--header-gradient-to)] text-white/70 hover:from-amber-300 hover:to-amber-500 hover:text-white hover:shadow-[0_0_16px_rgba(245,197,66,0.5)]",
+                        // on hover it becomes the exact "Create New" gold
+                        // (#e3b27a with a warm glow, black icon)
+                        : "bg-gradient-to-br from-[var(--header-gradient-from)] to-[var(--header-gradient-to)] text-white/70 hover:bg-none hover:bg-[#e3b27a] hover:text-black hover:shadow-[0_0_15px_#e3b27a]",
                 )}
             >
                 {isProcessing ? (
