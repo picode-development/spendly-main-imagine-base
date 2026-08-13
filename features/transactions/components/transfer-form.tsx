@@ -10,6 +10,7 @@ import { Select } from "@/components/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageUpload } from "./image-upload";
 import { VoiceFormButton } from "./voice-form-button";
+import { FillWithAiButton } from "./fill-with-ai-button";
 import {
     Form,
     FormControl,
@@ -215,6 +216,25 @@ export const TransferForm = ({
                         </FormItem>
                     )}
                 />
+
+                {(() => {
+                    const attached = (form.watch("imageUrls") ?? []) as { url: string }[];
+                    return attached[0]?.url ? (
+                        <FillWithAiButton
+                            imageUrl={attached[0].url}
+                            disabled={disabled}
+                            onParsed={(parsed) => {
+                                if (parsed.date) form.setValue("date", new Date(parsed.date));
+                                if (parsed.amount != null) form.setValue("amount", String(Math.abs(parsed.amount) / 1000));
+                                if (parsed.note) form.setValue("notes", parsed.note);
+                                const fromId = matchOptionId(accountOptions, parsed.accountName);
+                                if (fromId) form.setValue("fromAccountId", fromId);
+                                const toId = matchOptionId(accountOptions, parsed.toAccountName);
+                                if (toId) form.setValue("toAccountId", toId);
+                            }}
+                        />
+                    ) : null;
+                })()}
 
                 <div className="flex w-full gap-2">
                     <Button className="flex-1" disabled={disabled}>

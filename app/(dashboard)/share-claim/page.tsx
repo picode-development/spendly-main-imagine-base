@@ -21,6 +21,11 @@ const MAX_SHARE_IMAGES = 25;
 const CONCURRENCY = 6;
 
 type ItemStatus = "queued" | "working" | "done" | "empty" | "error";
+
+// Finished items (wins first) sort to the top; still-processing sink down
+const STATUS_ORDER: Record<ItemStatus, number> = {
+    done: 0, empty: 1, error: 2, working: 3, queued: 4,
+};
 type Item = {
     status: ItemStatus;
     preview?: string;         // objectURL thumbnail for the row
@@ -263,59 +268,75 @@ const ShareClaimHandler = () => {
                                     />
                                 </div>
 
-                                {/* Per-screenshot rows */}
+                                {/* Per-screenshot rows — finished float to the
+                                    top (wins first), in-progress sink to the bottom */}
                                 <ul className="max-h-[46vh] space-y-1.5 overflow-y-auto">
-                                    {items.map((item, i) => (
-                                        <li
-                                            key={i}
-                                            className="flex items-center gap-3 rounded-lg border bg-card/50 p-2"
-                                        >
-                                            <div className="relative size-10 shrink-0 overflow-hidden rounded-md border bg-muted">
-                                                {item.preview && (
-                                                    <img src={item.preview} alt="" className="size-full object-cover" />
-                                                )}
-                                                {(item.status === "queued" || item.status === "working") && (
-                                                    <span className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                                        <Loader2 className={cn("size-4 text-white", item.status === "working" && "animate-spin")} />
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            <div className="min-w-0 flex-1">
-                                                {item.status === "done" ? (
-                                                    <div className="flex items-center gap-2">
-                                                        {item.amount != null && (
-                                                            <Badge
-                                                                variant={item.amount < 0 ? "destructive" : "primary"}
-                                                                className="shrink-0 tabular-nums"
-                                                            >
-                                                                {formatCurrency(item.amount / 1000)}
-                                                            </Badge>
+                                    {items
+                                        .map((item, i) => ({ item, i }))
+                                        .sort((a, b) => STATUS_ORDER[a.item.status] - STATUS_ORDER[b.item.status])
+                                        .map(({ item, i }) => {
+                                            const finished = item.status === "done" || item.status === "empty" || item.status === "error";
+                                            return (
+                                                <li
+                                                    key={i}
+                                                    className={cn(
+                                                        "flex items-center gap-3 rounded-lg border p-2 transition-colors duration-500",
+                                                        item.status === "done" && "border-emerald-500/30 bg-emerald-500/5",
+                                                        item.status === "error" && "border-destructive/30 bg-destructive/5",
+                                                        !finished && "bg-card/50",
+                                                    )}
+                                                >
+                                                    <div className="relative size-10 shrink-0 overflow-hidden rounded-md border bg-muted">
+                                                        {item.preview && (
+                                                            <img src={item.preview} alt="" className="size-full object-cover" />
                                                         )}
-                                                        <span className="truncate text-sm font-medium">
-                                                            {item.payee ?? "Detected"}
-                                                        </span>
+                                                        {(item.status === "queued" || item.status === "working") && (
+                                                            <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                                                <Loader2 className={cn("size-4 text-white", item.status === "working" && "animate-spin")} />
+                                                            </span>
+                                                        )}
                                                     </div>
-                                                ) : (
-                                                    <p className={cn(
-                                                        "truncate text-sm",
-                                                        item.status === "error" ? "text-destructive" : "text-muted-foreground",
-                                                    )}>
-                                                        {item.status === "queued" && "Waiting…"}
-                                                        {item.status === "working" && "Reading…"}
-                                                        {item.status === "empty" && "Saved — add details manually"}
-                                                        {item.status === "error" && "Couldn't read this one"}
-                                                    </p>
-                                                )}
-                                            </div>
 
-                                            <div className="shrink-0">
-                                                {item.status === "done" && <Check className="size-4 text-emerald-500" strokeWidth={3} />}
-                                                {item.status === "empty" && <Check className="size-4 text-muted-foreground" />}
-                                                {item.status === "error" && <XCircle className="size-4 text-destructive" />}
-                                            </div>
-                                        </li>
-                                    ))}
+                                                    <div className="min-w-0 flex-1">
+                                                        {item.status === "done" ? (
+                                                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-1 duration-300">
+                                                                {item.amount != null && (
+                                                                    <Badge
+                                                                        variant={item.amount < 0 ? "destructive" : "primary"}
+                                                                        className="shrink-0 tabular-nums"
+                                                                    >
+                                                                        {formatCurrency(item.amount / 1000)}
+                                                                    </Badge>
+                                                                )}
+                                                                <span className="truncate text-sm font-medium">
+                                                                    {item.payee ?? "Detected"}
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            <p className={cn(
+                                                                "truncate text-sm",
+                                                                item.status === "error" ? "text-destructive" : "text-muted-foreground",
+                                                            )}>
+                                                                {item.status === "queued" && "Waiting…"}
+                                                                {item.status === "working" && "Reading…"}
+                                                                {item.status === "empty" && "Saved — add details manually"}
+                                                                {item.status === "error" && "Couldn't read this one"}
+                                                            </p>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="shrink-0">
+                                                        {item.status === "done" && (
+                                                            <span className="flex size-6 items-center justify-center rounded-full bg-emerald-500 text-white animate-in zoom-in-50 duration-300">
+                                                                <Check className="size-3.5" strokeWidth={3} />
+                                                            </span>
+                                                        )}
+                                                        {item.status === "empty" && <Check className="size-4 text-muted-foreground" />}
+                                                        {item.status === "error" && <XCircle className="size-4 text-destructive" />}
+                                                    </div>
+                                                </li>
+                                            );
+                                        })}
                                 </ul>
 
                                 {phase === "done" && (

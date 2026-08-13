@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImageUpload } from "./image-upload";
 import { VoiceFieldButton } from "./voice-field-button";
 import { VoiceFormButton } from "./voice-form-button";
+import { FillWithAiButton } from "./fill-with-ai-button";
 import {
     Form,
     FormControl,
@@ -248,6 +249,26 @@ export const TransactionForm = ({
                         </FormItem>
                     )}
                 />
+
+                {(() => {
+                    const attached = (form.watch("imageUrls") ?? []) as { url: string }[];
+                    return attached[0]?.url ? (
+                        <FillWithAiButton
+                            imageUrl={attached[0].url}
+                            disabled={disabled}
+                            onParsed={(parsed) => {
+                                if (parsed.date) form.setValue("date", new Date(parsed.date));
+                                if (parsed.payee) form.setValue("payee", parsed.payee);
+                                if (parsed.amount != null) form.setValue("amount", String(parsed.amount / 1000));
+                                if (parsed.note) form.setValue("notes", parsed.note);
+                                const accId = matchOptionId(accountOptions, parsed.accountName);
+                                if (accId) form.setValue("accountId", accId);
+                                const catId = matchOptionId(categoryOptions, parsed.categoryName);
+                                if (catId) form.setValue("categoryId", catId);
+                            }}
+                        />
+                    ) : null;
+                })()}
 
                 <div className="flex w-full gap-2">
                     <Button className="flex-1" disabled={disabled}>
