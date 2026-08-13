@@ -36,9 +36,9 @@ export const VoiceFab = () => {
     if (!isSignedIn || anySheetOpen) return null;
 
     return (
-        // The ball is the fixed anchor — matches the assistant ball's size
-        // (56px), blue, and right offset so the two stack in a clean column
-        <div className="fixed right-4 bottom-20 xl:right-6 xl:bottom-[5.75rem] z-[70]">
+        // The ball is the fixed anchor — slightly smaller than the assistant
+        // ball (48px vs 56px), centers aligned in one column above it
+        <div className="fixed right-4 bottom-20 xl:right-7 xl:bottom-[5.75rem] z-[70]">
             <button
                 type="button"
                 onClick={toggle}
@@ -49,21 +49,21 @@ export const VoiceFab = () => {
                     : "Add a transaction by voice"
                 }
                 className={cn(
-                    "flex size-14 items-center justify-center rounded-full text-white shadow-lg",
-                    "transition-all duration-300 hover:scale-110 hover:shadow-xl active:scale-95",
+                    "group flex size-12 items-center justify-center rounded-full shadow-lg",
+                    "transition-all duration-300 hover:scale-110 active:scale-95",
                     isRecording
-                        ? "bg-destructive hover:bg-destructive/90"
-                        // The app's header gradient (theme-aware CSS vars) —
-                        // same blue family as the assistant ball, richer weight
-                        : "bg-gradient-to-br from-[var(--header-gradient-from)] to-[var(--header-gradient-to)] hover:brightness-110",
+                        ? "bg-destructive text-white hover:bg-destructive/90"
+                        // Header gradient ball; the icon idles dull white and
+                        // lifts to gold with a soft glow on hover, like the nav
+                        : "bg-gradient-to-br from-[var(--header-gradient-from)] to-[var(--header-gradient-to)] text-white/70 hover:text-amber-300 hover:shadow-[0_0_12px_rgba(245,197,66,0.35)]",
                 )}
             >
                 {isProcessing ? (
-                    <Loader2 className="size-6 animate-spin" />
+                    <Loader2 className="size-5 animate-spin text-white" />
                 ) : isRecording ? (
-                    <Square className="size-5 fill-current" />
+                    <Square className="size-4 fill-current" />
                 ) : (
-                    <Mic className="size-6" />
+                    <Mic className="size-5 transition-colors duration-300" />
                 )}
             </button>
 
