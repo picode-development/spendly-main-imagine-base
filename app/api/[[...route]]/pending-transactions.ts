@@ -178,6 +178,77 @@ const app = new Hono()
         },
     )
 
+    // Extraction-only: reads a locally-provided image copy (data URL) so the
+    // AI never waits for hosting. Retries once — a single transient Groq
+    // failure must not produce a silently empty detection.
+    .post(
+        "/extract-image",
+        clerkMiddleware(),
+        zValidator("json", z.object({
+            image: z.string().startsWith("data:image/").max(3_500_000),
+            text: z.string().max(2000).nullish(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { image, text } = c.req.valid("json");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+
+            const ctx = await getLlmContext(auth.userId);
+            let extracted = await llmExtractFromImage(image, ctx, text);
+            if (!extracted) {
+                await new Promise((resolve) => setTimeout(resolve, 800));
+                extracted = await llmExtractFromImage(image, ctx, text);
+            }
+            return c.json({ data: extracted });
+        },
+    )
+
+    // Insert-only: the client already has the extraction and the hosted
+    // full-quality image; this just records the detected transaction.
+    .post(
+        "/create-detected",
+        clerkMiddleware(),
+        zValidator("json", z.object({
+            rawMessage: z.string().min(1).max(2000),
+            amount: z.number().int().nullish(),
+            payee: z.string().max(200).nullish(),
+            accountHint: z.string().max(200).nullish(),
+            categoryHint: z.string().max(200).nullish(),
+            note: z.string().max(500).nullish(),
+            date: z.coerce.date().nullish(),
+            imageUrls: z.array(z.object({
+                url: z.string().url(),
+                preview: z.string().optional(),
+            })).max(5).nullish(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const values = c.req.valid("json");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+
+            const [data] = await db.insert(pendingTransactions).values({
+                id: createId(),
+                userId: auth.userId,
+                rawMessage: values.rawMessage,
+                amount: values.amount ?? null,
+                payee: values.payee ?? null,
+                accountHint: values.accountHint ?? null,
+                categoryHint: values.categoryHint ?? null,
+                note: values.note ?? null,
+                imageUrls: values.imageUrls ?? null,
+                date: values.date ?? new Date(),
+            }).returning();
+
+            return c.json({ data });
+        },
+    )
+
     // Client-uploaded share (service-worker path): images are already hosted
     // by the page; extract each and fan out one pending per image.
     .post(

@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { client } from "@/lib/hono";
 import { formatCurrency } from "@/lib/utils";
 import { uploadImageWithProgress, makeImagePreview } from "@/features/transactions/lib/upload-imgbb";
+import { toAiDataUrl } from "@/features/transactions/lib/image-data-url";
 
 type ClaimState =
     | { phase: "reading"; detail?: string; progress?: number }
@@ -49,59 +50,93 @@ const ShareClaimHandler = () => {
         };
 
         // Service-worker path: files were parked on-device at FULL quality.
-        // A sequential queue processes each screenshot — upload, then AI
-        // reading — with one progress bar spanning the whole batch.
+        // A pool processes up to 5 screenshots concurrently; per screenshot,
+        // the full-quality upload and the AI read (from a local copy) run in
+        // PARALLEL — one progress bar spans everything.
         const claimLocal = async (id: string) => {
             const cache = await caches.open("spendly-share-stash");
             const metaRes = await cache.match(`/__share/${id}/meta`);
             if (!metaRes) throw new Error("share expired");
             const meta = (await metaRes.json()) as { text: string; count: number };
 
-            const totalSteps = Math.max(1, meta.count * 2); // upload + AI per image
+            // Pull all files off the cache immediately
+            const files: File[] = [];
+            for (let i = 0; i < meta.count; i++) {
+                const fileRes = await cache.match(`/__share/${id}/file/${i}`);
+                if (!fileRes) continue;
+                const blob = await fileRes.blob();
+                files.push(new File([blob], "screenshot.jpg", { type: blob.type || "image/jpeg" }));
+                await cache.delete(`/__share/${id}/file/${i}`);
+            }
+            await cache.delete(`/__share/${id}/meta`);
+
+            const totalSteps = Math.max(1, files.length * 2); // upload + AI per image
             let doneSteps = 0;
-            const tick = (detail: string) => {
+            let doneItems = 0;
+            const tick = () => {
                 setState({
                     phase: "reading",
-                    detail,
-                    progress: Math.round((doneSteps / totalSteps) * 100),
+                    detail: files.length > 1
+                        ? `${doneItems} of ${files.length} screenshots done…`
+                        : "Uploading and reading the screenshot…",
+                    progress: Math.min(99, Math.round((doneSteps / totalSteps) * 100)),
                 });
             };
+            tick();
 
             const rows: { amount?: number | null; payee?: string | null }[] = [];
-            for (let i = 0; i < meta.count; i++) {
-                const label = meta.count > 1 ? `Screenshot ${i + 1} of ${meta.count}` : "Screenshot";
-                try {
-                    const fileRes = await cache.match(`/__share/${id}/file/${i}`);
-                    if (!fileRes) { doneSteps += 2; continue; }
-                    const blob = await fileRes.blob();
-                    const file = new File([blob], "screenshot.jpg", { type: blob.type || "image/jpeg" });
 
-                    tick(`${label} — uploading…`);
+            const processOne = async (file: File) => {
+                // AI reads the local copy while the full-quality original uploads
+                const aiPromise = (async () => {
+                    const dataUrl = await toAiDataUrl(file);
+                    const res = await client.api["pending-transactions"]["extract-image"].$post({
+                        json: { image: dataUrl, text: meta.text || null },
+                    });
+                    return res.ok ? (await res.json()).data : null;
+                })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
+
+                const uploadPromise = (async () => {
                     const [url, preview] = await Promise.all([
                         uploadImageWithProgress(file, () => {}).promise,
                         makeImagePreview(file).catch(() => undefined),
                     ]);
-                    doneSteps += 1;
+                    return { url, preview };
+                })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
 
-                    tick(`${label} — reading the details…`);
-                    const res = await client.api["pending-transactions"]["from-share"].$post({
-                        json: { text: meta.text || null, images: [{ url, preview }] },
-                    });
-                    doneSteps += 1;
-                    if (res.ok) {
-                        const { data } = await res.json();
-                        rows.push(...(Array.isArray(data) ? data : [data]));
-                    }
-                    tick(`${label} — done`);
-                } catch {
-                    // One bad screenshot never sinks the batch
-                    doneSteps = (i + 1) * 2;
+                const [extracted, hosted] = await Promise.all([aiPromise, uploadPromise]);
+                if (!extracted && !hosted) return; // both halves failed
+
+                const res = await client.api["pending-transactions"]["create-detected"].$post({
+                    json: {
+                        rawMessage: meta.text || "Shared screenshot",
+                        amount: extracted?.isTransaction ? extracted.amount : null,
+                        payee: extracted?.payee ?? null,
+                        accountHint: extracted?.accountName ?? extracted?.accountHint ?? null,
+                        categoryHint: extracted?.categoryName ?? null,
+                        note: extracted?.note ?? null,
+                        date: extracted?.date ? new Date(extracted.date) : undefined,
+                        imageUrls: hosted ? [hosted] : null,
+                    },
+                });
+                if (res.ok) {
+                    const { data } = await res.json();
+                    rows.push(data);
                 }
-            }
+            };
 
-            // Clear the on-device stash either way
-            for (let i = 0; i < meta.count; i++) await cache.delete(`/__share/${id}/file/${i}`);
-            await cache.delete(`/__share/${id}/meta`);
+            // Worker pool: up to 5 screenshots in flight at once
+            const queue = [...files];
+            await Promise.all(
+                Array.from({ length: Math.min(5, queue.length) }, async () => {
+                    while (queue.length > 0) {
+                        const file = queue.shift()!;
+                        await processOne(file).catch(() => {});
+                        doneItems += 1;
+                        tick();
+                    }
+                }),
+            );
 
             // Text-only share (no images survived or none were sent)
             if (rows.length === 0 && meta.text) {
