@@ -85,16 +85,38 @@ const ShareClaimHandler = () => {
             tick();
 
             const rows: { amount?: number | null; payee?: string | null }[] = [];
+            let duplicates = 0;
+
+            // Vision calls run one at a time (the free tier rate-limits
+            // concurrent calls into silent failures); uploads stay parallel
+            let aiChain: Promise<unknown> = Promise.resolve();
+            const queueAi = <T,>(task: () => Promise<T>): Promise<T> => {
+                const run = aiChain.then(task, task);
+                aiChain = run.catch(() => null);
+                return run;
+            };
+
+            const contentHash = async (file: File): Promise<string | null> => {
+                try {
+                    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+                    return Array.from(new Uint8Array(digest))
+                        .map((b) => b.toString(16).padStart(2, "0"))
+                        .join("")
+                        .slice(0, 32);
+                } catch {
+                    return null;
+                }
+            };
 
             const processOne = async (file: File) => {
                 // AI reads the local copy while the full-quality original uploads
-                const aiPromise = (async () => {
+                const aiPromise = queueAi(async () => {
                     const dataUrl = await toAiDataUrl(file);
                     const res = await client.api["pending-transactions"]["extract-image"].$post({
                         json: { image: dataUrl, text: meta.text || null },
                     });
                     return res.ok ? (await res.json()).data : null;
-                })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
+                }).catch(() => null).finally(() => { doneSteps += 1; tick(); });
 
                 const uploadPromise = (async () => {
                     const [url, preview] = await Promise.all([
@@ -104,16 +126,22 @@ const ShareClaimHandler = () => {
                     return { url, preview };
                 })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
 
-                const [initialExtract, hosted] = await Promise.all([aiPromise, uploadPromise]);
+                const [initialExtract, hosted, clientKey] = await Promise.all([
+                    aiPromise,
+                    uploadPromise,
+                    contentHash(file),
+                ]);
                 let extracted = initialExtract;
                 if (!extracted && !hosted) return; // both halves failed
 
                 // Local-copy read failed but the upload landed — from here on
                 // the AI works off the hosted ImgBB URL
                 if (!extracted && hosted) {
-                    const res = await client.api["pending-transactions"]["extract-image"].$post({
-                        json: { image: hosted.url, text: meta.text || null },
-                    }).catch(() => null);
+                    const res = await queueAi(() =>
+                        client.api["pending-transactions"]["extract-image"].$post({
+                            json: { image: hosted.url, text: meta.text || null },
+                        }),
+                    ).catch(() => null);
                     if (res?.ok) extracted = (await res.json()).data;
                 }
 
@@ -127,11 +155,13 @@ const ShareClaimHandler = () => {
                         note: extracted?.note ?? null,
                         date: extracted?.date ? new Date(extracted.date) : undefined,
                         imageUrls: hosted ? [hosted] : null,
+                        clientKey,
                     },
                 });
                 if (res.ok) {
                     const { data } = await res.json();
-                    rows.push(data);
+                    if (data) rows.push(data);
+                    else duplicates += 1; // same screenshot already pending
                 }
             };
 
@@ -157,6 +187,12 @@ const ShareClaimHandler = () => {
                 if (!res.ok) throw new Error("extraction failed");
                 const { data } = await res.json();
                 rows.push(...(Array.isArray(data) ? data : [data]));
+            }
+
+            // Everything was a re-delivered duplicate — nothing new to show
+            if (rows.length === 0 && duplicates > 0) {
+                router.replace("/transactions");
+                return;
             }
 
             if (rows.length === 0) throw new Error("nothing to read");

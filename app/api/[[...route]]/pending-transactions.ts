@@ -201,10 +201,12 @@ const app = new Hono()
             }
 
             const ctx = await getLlmContext(auth.userId);
-            let extracted = await llmExtractFromImage(image, ctx, text);
-            if (!extracted) {
-                await new Promise((resolve) => setTimeout(resolve, 800));
+            // Spaced attempts ride out the vision model's per-minute limits
+            let extracted = null;
+            for (const delayMs of [0, 1200, 3000]) {
+                if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
                 extracted = await llmExtractFromImage(image, ctx, text);
+                if (extracted) break;
             }
             return c.json({ data: extracted });
         },
@@ -227,6 +229,9 @@ const app = new Hono()
                 url: z.string().url(),
                 preview: z.string().optional(),
             })).max(5).nullish(),
+            // Content hash of the screenshot — makes inserts idempotent when
+            // Android re-delivers a share intent on app resume
+            clientKey: z.string().regex(/^[a-f0-9]{16,64}$/).nullish(),
         })),
         async (c) => {
             const auth = getAuth(c);
@@ -236,8 +241,12 @@ const app = new Hono()
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
+            const id = values.clientKey
+                ? `img${values.clientKey.slice(0, 32)}`
+                : createId();
+
             const [data] = await db.insert(pendingTransactions).values({
-                id: createId(),
+                id,
                 userId: auth.userId,
                 rawMessage: values.rawMessage,
                 amount: values.amount ?? null,
@@ -247,9 +256,11 @@ const app = new Hono()
                 note: values.note ?? null,
                 imageUrls: values.imageUrls ?? null,
                 date: values.date ?? new Date(),
-            }).returning();
+            }).onConflictDoNothing().returning();
 
-            return c.json({ data });
+            // Conflict = this exact screenshot is already pending — a
+            // re-delivered share, not a new transaction
+            return c.json({ data: data ?? null });
         },
     )
 
