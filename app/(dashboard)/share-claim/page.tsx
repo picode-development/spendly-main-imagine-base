@@ -31,6 +31,9 @@ type Item = {
     preview?: string;         // objectURL thumbnail for the row
     amount?: number | null;
     payee?: string | null;
+    // Kept on blank rows so a manual retry can re-read them
+    url?: string;
+    pendingId?: string;
 };
 
 // Lands here (signed-in GET) right after an Android share; claims the shared
@@ -44,13 +47,65 @@ const ShareClaimHandler = () => {
 
     const [phase, setPhase] = useState<"reading" | "done" | "error">("reading");
     const [items, setItems] = useState<Item[]>([]);
+    const [retrying, setRetrying] = useState(false);
     // Non-image single spinner (text share / server-stash fallback)
     const [simple, setSimple] = useState(false);
+
+    const itemsRef = useRef<Item[]>([]);
+    itemsRef.current = items;
 
     const updateItem = (i: number, patch: Partial<Item>) =>
         setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
 
     useEffect(() => () => previews.current.forEach((u) => URL.revokeObjectURL(u)), []);
+
+    // Re-read a hosted screenshot and fill its blank pending row
+    const extractAndFill = async (index: number, url: string, pendingId: string) => {
+        updateItem(index, { status: "retry" });
+        const res = await client.api["pending-transactions"]["extract-image"]
+            .$post({ json: { image: url } }).catch(() => null);
+        const data = res?.ok ? (await res.json()).data : null;
+        const hasData = data && (data.amount != null || !!data.payee);
+        if (hasData) {
+            await client.api["pending-transactions"]["detected"][":id"].$patch({
+                param: { id: pendingId },
+                json: {
+                    amount: data.isTransaction ? data.amount : null,
+                    payee: data.payee ?? null,
+                    accountHint: data.accountName ?? data.accountHint ?? null,
+                    categoryHint: data.categoryName ?? null,
+                    note: data.note ?? null,
+                    date: data.date ? new Date(data.date) : undefined,
+                },
+            }).catch(() => null);
+            updateItem(index, { status: "done", amount: data.amount ?? null, payee: data.payee ?? null });
+            return true;
+        }
+        updateItem(index, { status: "empty" });
+        return false;
+    };
+
+    // Manual "Retry pending" — re-runs every still-blank row
+    const retryBlanks = async () => {
+        setRetrying(true);
+        const blanks = itemsRef.current
+            .map((it, i) => ({ it, i }))
+            .filter(({ it }) => it.status === "empty" && it.url && it.pendingId);
+        await Promise.all(
+            Array.from({ length: Math.min(CONCURRENCY, blanks.length) }, async () => {
+                while (blanks.length > 0) {
+                    const { it, i } = blanks.shift()!;
+                    await extractAndFill(i, it.url!, it.pendingId!).catch(() => {});
+                }
+            }),
+        );
+        queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
+        setRetrying(false);
+        // All resolved — head to review
+        if (!itemsRef.current.some((it) => it.status === "empty" || it.status === "error")) {
+            router.replace("/transactions");
+        }
+    };
 
     useEffect(() => {
         if (fired.current) return;
@@ -177,8 +232,8 @@ const ShareClaimHandler = () => {
                     updateItem(index, { status: "done", amount: data?.amount ?? null, payee: data?.payee ?? null });
                 } else if (data && hosted) {
                     // Blank for now — keep it visibly "retrying" (never a
-                    // premature "add manually") and queue a second attempt
-                    updateItem(index, { status: "retry" });
+                    // premature "add manually"); store how to re-read it later
+                    updateItem(index, { status: "retry", url: hosted.url, pendingId: data.id });
                     toRetry.push({ index, pendingId: data.id, url: hosted.url });
                 } else {
                     updateItem(index, { status: "empty" });
@@ -195,32 +250,15 @@ const ShareClaimHandler = () => {
                 }),
             );
 
-            // Retry pass for the blanks — the key pool naturally waits for a
-            // refilled window, so these usually resolve now
+            // Automatic retry pass — the key pool waits for a refilled window,
+            // so most blanks resolve here without the user doing anything
             if (toRetry.length > 0) {
                 const retryQueue = [...toRetry];
                 await Promise.all(
                     Array.from({ length: Math.min(CONCURRENCY, retryQueue.length) }, async () => {
                         while (retryQueue.length > 0) {
                             const { index, pendingId, url } = retryQueue.shift()!;
-                            const extracted = await extractFrom(url).catch(() => null);
-                            const hasData = extracted && (extracted.amount != null || !!extracted.payee);
-                            if (hasData) {
-                                await client.api["pending-transactions"]["detected"][":id"].$patch({
-                                    param: { id: pendingId },
-                                    json: {
-                                        amount: extracted.isTransaction ? extracted.amount : null,
-                                        payee: extracted.payee ?? null,
-                                        accountHint: extracted.accountName ?? extracted.accountHint ?? null,
-                                        categoryHint: extracted.categoryName ?? null,
-                                        note: extracted.note ?? null,
-                                        date: extracted.date ? new Date(extracted.date) : undefined,
-                                    },
-                                }).catch(() => null);
-                                updateItem(index, { status: "done", amount: extracted.amount ?? null, payee: extracted.payee ?? null });
-                            } else {
-                                updateItem(index, { status: "empty" });
-                            }
+                            await extractAndFill(index, url, pendingId).catch(() => updateItem(index, { status: "empty" }));
                         }
                     }),
                 );
@@ -228,8 +266,12 @@ const ShareClaimHandler = () => {
 
             queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
             setPhase("done");
-            // Longer dwell for bigger batches so the user can scan the results
-            setTimeout(() => router.replace("/transactions"), Math.min(6000, 2500 + files.length * 250));
+            // If some rows are still blank, DON'T auto-redirect — let the user
+            // choose to retry them or continue. Only auto-leave when all clean.
+            const anyBlank = itemsRef.current.some((it) => it.status === "empty" || it.status === "error");
+            if (!anyBlank) {
+                setTimeout(() => router.replace("/transactions"), Math.min(6000, 2500 + files.length * 250));
+            }
         };
 
         // Server-stash path (fallback when the service worker isn't active)
@@ -256,6 +298,7 @@ const ShareClaimHandler = () => {
     const inFlight = (s: ItemStatus) => s === "queued" || s === "working" || s === "retry";
     const doneCount = items.filter((i) => !inFlight(i.status)).length;
     const successCount = items.filter((i) => i.status === "done").length;
+    const blankCount = items.filter((i) => i.status === "empty" || i.status === "error").length;
     const progress = items.length ? Math.round((doneCount / items.length) * 100) : 0;
 
     return (
@@ -395,10 +438,41 @@ const ShareClaimHandler = () => {
                                 </ul>
 
                                 {phase === "done" && (
-                                    <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                                        <Loader2 className="size-3 animate-spin" />
-                                        Taking you to review…
-                                    </p>
+                                    blankCount > 0 ? (
+                                        // Some couldn't be read — let the user choose
+                                        <div className="space-y-2 pt-1">
+                                            <p className="text-center text-xs text-muted-foreground">
+                                                {blankCount} couldn&apos;t be read (rate limits). Retry them, or continue and use Fill with AI later.
+                                            </p>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    className="flex-1"
+                                                    onClick={retryBlanks}
+                                                    disabled={retrying}
+                                                >
+                                                    {retrying
+                                                        ? <Loader2 className="size-4 mr-2 animate-spin" />
+                                                        : null}
+                                                    {retrying ? "Retrying…" : `Retry ${blankCount}`}
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="flex-1"
+                                                    onClick={() => router.replace("/transactions")}
+                                                    disabled={retrying}
+                                                >
+                                                    Continue
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                                            <Loader2 className="size-3 animate-spin" />
+                                            Taking you to review…
+                                        </p>
+                                    )
                                 )}
                             </div>
                         )}

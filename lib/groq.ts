@@ -73,6 +73,9 @@ const coolDownGroqKey = (key: string, seconds: number, scope: string) => {
 };
 
 const parseRetrySeconds = (errorText: string): number => {
+    // A daily-quota / billing 429 (Gemini free tier) won't refill for a long
+    // time — park it for an hour instead of hammering it every few seconds
+    if (/quota|billing|per day|daily limit|resource_exhausted/i.test(errorText)) return 3600;
     const m = errorText.match(/try again in ([\d.]+)s/i) ?? errorText.match(/retry.*?([\d.]+)\s*s/i);
     return m ? parseFloat(m[1]) : 5; // sane default when Groq omits the hint
 };
@@ -94,13 +97,12 @@ const textProviders = (): Provider[] => [
     { base: GROQ_BASE, keys: groqKeys(), model: "llama-3.1-8b-instant" },
 ];
 
-// Vision: Groq's qwen across every key first (fast, reliable, rotates on the
-// 8K-TPM limit), then Gemini 2.5 Flash (thinking off) as the cross-provider
-// backstop when all Groq keys are spent.
+// Vision: Groq's qwen across all keys first — 6 keys give strong throughput
+// and it rotates on the 8K-TPM limit. Gemini is the cross-provider backstop
+// (its free daily quota is small, so a spent day parks it for an hour).
 const visionProviders = (): Provider[] => [
     { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.6-27b" },
     { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash", extraBody: GEMINI_FAST },
-    { base: GEMINI_BASE, keys: geminiKeys(), model: "gemini-2.5-flash-lite", extraBody: GEMINI_FAST },
 ];
 
 // Full large-v3 first (best on Indian names/accents and noise), turbo as the
@@ -255,7 +257,6 @@ const chatCompletion = async (
 
     for (const provider of providers) {
         if (provider.keys.length === 0) continue;
-        const groq = isGroq(provider.base);
 
         // Enough turns to cycle every key plus a couple of json-retry shots
         const maxTurns = provider.keys.length * 2 + 2;
@@ -264,21 +265,17 @@ const chatCompletion = async (
         for (let turn = 0; turn < maxTurns; turn++) {
             if (budgetLeft() < 2) return null;
 
-            // Groq: cooldown-aware pool — take a live key, or wait for the one
-            // freeing up soonest. Non-Groq: plain round-robin.
-            let apiKey: string;
-            if (groq) {
-                const pick = pickGroqKey(provider.keys, provider.model);
-                if (!pick) break;
-                if (pick.waitMs > 0) {
-                    const waitS = pick.waitMs / 1000;
-                    if (waitS > budgetLeft() - 1.5) break; // can't afford the wait — next provider
-                    await new Promise((r) => setTimeout(r, pick.waitMs + 250));
-                }
-                apiKey = pick.key;
-            } else {
-                apiKey = provider.keys[turn % provider.keys.length];
+            // Cooldown-aware pool for every provider — take a live key, or wait
+            // for the one freeing up soonest. A quota-dead provider (long
+            // cooldown) is skipped immediately, falling to the next one.
+            const pick = pickGroqKey(provider.keys, provider.model);
+            if (!pick) break;
+            if (pick.waitMs > 0) {
+                const waitS = pick.waitMs / 1000;
+                if (waitS > budgetLeft() - 1.5) break; // can't afford the wait — next provider
+                await new Promise((r) => setTimeout(r, pick.waitMs + 250));
             }
+            const apiKey = pick.key;
 
             try {
                 const response = await fetch(`${provider.base}/chat/completions`, {
@@ -303,10 +300,12 @@ const chatCompletion = async (
                     console.error(`Extraction failed on ${provider.model}:`, response.status, errorText.slice(0, 140));
 
                     if (response.status === 429) {
-                        if (groq) coolDownGroqKey(apiKey, parseRetrySeconds(errorText), provider.model);
+                        // parseRetrySeconds returns a long cooldown for daily-
+                        // quota errors, so a spent Gemini is parked, not looped
+                        coolDownGroqKey(apiKey, parseRetrySeconds(errorText), provider.model);
                         continue; // pool picks the next live key (or waits)
                     }
-                    if ((response.status === 401 || response.status === 403) && groq) {
+                    if (response.status === 401 || response.status === 403) {
                         coolDownGroqKey(apiKey, 3600, provider.model); // dead/revoked key — park it, rotate
                         continue;
                     }
