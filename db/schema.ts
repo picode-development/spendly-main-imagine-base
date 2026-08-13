@@ -90,6 +90,7 @@ export const pendingTransactions = pgTable("pending_transactions", {
     payee: text("payee"),               // parsed payee / UPI VPA
     accountHint: text("account_hint"),  // "a/c ..1234" or a matched account name
     categoryHint: text("category_hint"),// LLM-matched category name, if any
+    note: text("note"),                 // LLM-written one-line note for the transaction
     imageUrls: jsonb("image_urls").$type<TransactionImage[]>(), // shared screenshot(s)
     date: timestamp("date", { mode: "date" }).notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),

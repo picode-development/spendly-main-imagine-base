@@ -31,6 +31,7 @@ export type ParsedPendingFields = {
     payee: string | null;
     accountHint: string | null;
     categoryHint: string | null;
+    note: string | null;
     date: Date;
 };
 
@@ -50,6 +51,7 @@ export const parseMessage = async (
             payee: llm.payee,
             accountHint: llm.accountName ?? llm.accountHint,
             categoryHint: llm.categoryName,
+            note: llm.note,
             date: llm.date ?? new Date(),
         };
     }
@@ -62,6 +64,7 @@ export const parseMessage = async (
         payee: parsed.payee,
         accountHint: parsed.accountHint,
         categoryHint: null,
+        note: null,
         date: parsed.date ?? new Date(),
     };
 };

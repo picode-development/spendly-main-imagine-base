@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
             payee: extracted?.payee ?? null,
             accountHint: extracted?.accountName ?? extracted?.accountHint ?? null,
             categoryHint: extracted?.categoryName ?? null,
+            note: extracted?.note ?? null,
             imageUrls,
             date: extracted?.date ?? new Date(),
         });

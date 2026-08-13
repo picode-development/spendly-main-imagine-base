@@ -30,6 +30,8 @@ export type LlmTransaction = {
     categoryName: string | null;
     /** Short human note, e.g. "a/c ..0934" or "UPI ref 1234" */
     accountHint: string | null;
+    /** A clean one-line note for the transaction, e.g. "NEFT from RBROTHERS, a/c ..0934" */
+    note: string | null;
 };
 
 const extractionPrompt = (ctx: LlmContext) => `You extract financial transaction details from Indian bank SMS messages, UPI app notifications, payment screenshots, or spoken descriptions.
@@ -48,7 +50,8 @@ Respond with ONLY a JSON object:
   "date": "YYYY-MM-DD" | null,      // transaction date if stated, else null
   "account_name": string | null,    // EXACT name from the accounts list if clearly implied, else null
   "category_name": string | null,   // EXACT name from the categories list if it clearly fits, else null
-  "account_hint": string | null     // short context like "a/c ..0934" or masked card number, else null
+  "account_hint": string | null,    // short context like "a/c ..0934" or masked card number, else null
+  "note": string | null             // clean one-line note (max 12 words) worth keeping with the transaction, e.g. "NEFT from RBROTHERS, a/c ..0934" or "Dinner with family, paid via GPay"; null if nothing useful
 }
 
 Rules: never invent an amount. Balance figures are NOT the transaction amount. For transfers between the user's own accounts, is_transaction is still true. Match account_name/category_name only from the given lists, case-sensitively as written there.`;
@@ -62,6 +65,7 @@ type RawExtraction = {
     account_name?: string | null;
     category_name?: string | null;
     account_hint?: string | null;
+    note?: string | null;
 };
 
 const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
@@ -88,6 +92,7 @@ const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
         accountName: raw.account_name?.trim() || null,
         categoryName: raw.category_name?.trim() || null,
         accountHint: raw.account_hint?.trim() || null,
+        note: raw.note?.trim() || null,
     };
 };
 

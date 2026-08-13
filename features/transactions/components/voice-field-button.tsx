@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Mic, Square } from "lucide-react";
+import { Loader2, Mic } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -12,9 +12,10 @@ type Props = {
     label: string;
 };
 
-// Small per-field mic: speak the value, it lands in the field
+// Small per-field mic: speak the value, it lands in the field. While
+// recording it shows a live mini-waveform inside a red ring.
 export const VoiceFieldButton = ({ onResult, label }: Props) => {
-    const { isRecording, isProcessing, toggle } = useVoiceRecorder(async (blob) => {
+    const { isRecording, isProcessing, levels, toggle } = useVoiceRecorder(async (blob) => {
         const form = new FormData();
         form.append("audio", blob, "voice.webm");
         const res = await fetch("/api/pending-transactions/voice?mode=transcribe", {
@@ -36,17 +37,27 @@ export const VoiceFieldButton = ({ onResult, label }: Props) => {
             onClick={toggle}
             aria-label={isRecording ? `Stop recording ${label}` : `Speak ${label}`}
             className={cn(
-                "flex size-6 items-center justify-center rounded-full transition-colors",
+                "flex h-6 items-center justify-center rounded-full transition-all",
                 isRecording
-                    ? "bg-destructive/15 text-destructive animate-pulse"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    ? "w-12 gap-[2px] bg-destructive/10 px-2 text-destructive ring-2 ring-destructive/40"
+                    : "w-6 text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
         >
-            {isProcessing
-                ? <Loader2 className="size-3.5 animate-spin" />
-                : isRecording
-                    ? <Square className="size-3" />
-                    : <Mic className="size-3.5" />}
+            {isProcessing ? (
+                <Loader2 className="size-3.5 animate-spin" />
+            ) : isRecording ? (
+                // Live mini-waveform (3 buckets sampled from the spectrum)
+                [2, 5, 8].map((bucket) => (
+                    <span
+                        key={bucket}
+                        aria-hidden
+                        className="w-[2px] rounded-full bg-current transition-[height] duration-75"
+                        style={{ height: `${Math.max(20, (levels[bucket] ?? 0) * 100)}%` }}
+                    />
+                ))
+            ) : (
+                <Mic className="size-3.5" />
+            )}
         </button>
     );
 };

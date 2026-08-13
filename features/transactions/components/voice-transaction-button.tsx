@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Mic, Square } from "lucide-react";
+import { Loader2, Mic } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -8,12 +8,12 @@ import { cn } from "@/lib/utils";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
 
-// "Speak the whole transaction": records, transcribes, extracts every field
-// it can, and opens the pre-filled transaction sheet
+// "Speak the whole transaction": records with a live waveform, transcribes,
+// extracts every field it can, and opens the pre-filled transaction sheet
 export const VoiceTransactionButton = () => {
     const newTransaction = useNewTransaction();
 
-    const { isRecording, isProcessing, toggle } = useVoiceRecorder(async (blob) => {
+    const { isRecording, isProcessing, levels, toggle } = useVoiceRecorder(async (blob) => {
         const form = new FormData();
         form.append("audio", blob, "voice.webm");
         const res = await fetch("/api/pending-transactions/voice", {
@@ -33,7 +33,7 @@ export const VoiceTransactionButton = () => {
                 date: parsed?.date ? new Date(parsed.date) : undefined,
                 payee: parsed?.payee ?? "",
                 amount: parsed?.amount != null ? String(parsed.amount / 1000) : "",
-                notes: data?.transcript ?? undefined,
+                notes: parsed?.note ?? data?.transcript ?? undefined,
                 accountName: parsed?.accountName ?? undefined,
                 categoryName: parsed?.categoryName ?? undefined,
             },
@@ -46,14 +46,33 @@ export const VoiceTransactionButton = () => {
             size="sm"
             variant={isRecording ? "destructive" : "default"}
             disabled={isProcessing}
-            className={cn("w-full lg:w-auto", isRecording && "animate-pulse")}
+            className="w-full lg:w-auto"
         >
-            {isProcessing
-                ? <Loader2 className="size-4 mr-2 animate-spin" />
-                : isRecording
-                    ? <Square className="size-4 mr-2" />
-                    : <Mic className="size-4 mr-2" />}
-            {isProcessing ? "Thinking…" : isRecording ? "Stop" : "Voice"}
+            {isProcessing ? (
+                <>
+                    <Loader2 className="size-4 mr-2 animate-spin" />
+                    Thinking…
+                </>
+            ) : isRecording ? (
+                <>
+                    {/* Live waveform driven by the mic input */}
+                    <span className="mr-2 flex h-4 items-center gap-[2px]" aria-hidden>
+                        {levels.map((level, i) => (
+                            <span
+                                key={i}
+                                className="w-[2px] rounded-full bg-current transition-[height] duration-75"
+                                style={{ height: `${Math.max(15, level * 100)}%` }}
+                            />
+                        ))}
+                    </span>
+                    Listening…
+                </>
+            ) : (
+                <>
+                    <Mic className="size-4 mr-2" />
+                    Voice
+                </>
+            )}
         </Button>
     );
 };
