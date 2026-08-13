@@ -15,6 +15,7 @@ import { useGetAccounts } from "@/features/accounts/api/use-get-accounts";
 import { useCreateAccount } from "@/features/accounts/api/use-create-account";
 import { TransactionForm } from "@/features/transactions/components/transaction-form";
 import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
+import { matchOptionId } from "@/lib/match-option";
 import { Loader2 } from "lucide-react";
 
  const formSchema = InsertTransactionSchema.omit({
@@ -22,16 +23,6 @@ import { Loader2 } from "lucide-react";
  });
 
 type FormValues = z.input<typeof formSchema>;
-
- const matchOption = (
-    options: { label: string; value: string }[],
-    name?: string,
- ): string => {
-    if (!name) return "";
-    return options.find(
-        (o) => o.label.trim().toLowerCase() === name.trim().toLowerCase(),
-    )?.value ?? "";
- };
 
  export const NewTransactionSheet = () => {
     const { isOpen, onClose, prefill, prefillKey, pendingId } = useNewTransaction();
@@ -106,8 +97,8 @@ type FormValues = z.input<typeof formSchema>;
                             key={pendingId ?? prefillKey ?? "blank"}
                             defaultValues={{
                             date: prefill?.date ?? new Date(),
-                            accountId: matchOption(accountOptions, prefill?.accountName),
-                            categoryId: matchOption(categoryOptions, prefill?.categoryName) || null,
+                            accountId: matchOptionId(accountOptions, prefill?.accountName),
+                            categoryId: matchOptionId(categoryOptions, prefill?.categoryName) || null,
                             payee: prefill?.payee ?? "",
                             amount: prefill?.amount ?? "",
                             imageUrls: prefill?.imageUrls ?? null,

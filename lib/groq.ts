@@ -61,7 +61,11 @@ Respond with ONLY a JSON object:
   "to_account_name": string | null  // for transfers: destination account, EXACT name from the accounts list (account_name is the source)
 }
 
-Rules: never invent an amount. Balance figures are NOT the transaction amount. For transfers between the user's own accounts, is_transaction is still true. Match account_name/category_name only from the given lists, case-sensitively as written there.`;
+Rules: never invent an amount. Balance figures are NOT the transaction amount. For transfers between the user's own accounts, is_transaction is still true. Match account_name/category_name only from the given lists, case-sensitively as written there.
+
+Formatting rules for all text values (payee, note):
+- Use Title Case for names ("ice cream shopkeeper" → "Ice Cream Shopkeeper"); notes as clean sentences with proper capitalization.
+- The input may be English, Hindi, or mixed Hinglish. ALWAYS write output values in Latin script — transliterate any Hindi to Hinglish (e.g. दूध वाला → "Doodh Wala", सब्ज़ी → "Sabzi"). Never output Devanagari.`;
 
 type RawExtraction = {
     is_transaction?: boolean;
@@ -166,7 +170,7 @@ export const llmTranscribe = async (audio: Blob, filename: string): Promise<stri
         const form = new FormData();
         form.append("file", audio, filename);
         form.append("model", WHISPER_MODEL);
-        form.append("language", "en");
+        // No language pin: users speak English, Hindi, or mixed Hinglish
         form.append("temperature", "0");
 
         const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
@@ -186,10 +190,12 @@ export const llmTranscribe = async (audio: Blob, filename: string): Promise<stri
     }
 };
 
+const LANGUAGE_RULE = `The speech may be English, Hindi, or mixed Hinglish — always write the value in Latin script, transliterating Hindi to Hinglish (दूध वाला → "Doodh Wala"), never Devanagari.`;
+
 const FIELD_PROMPTS: Record<string, string> = {
-    payee: `The user dictated the payee for a transaction. Extract ONLY the person/shop/company name — no filler words ("uh", "the payee is"), no trailing punctuation. Reply JSON: {"value": string | null}. Examples: "uh the chicken shopkeeper." → {"value": "Chicken Shopkeeper"}; "paid to sneha didi" → {"value": "Sneha didi"}.`,
-    amount: `The user dictated an amount of money in rupees. Extract it as a plain number string with no currency symbol or commas. Reply JSON: {"value": string | null}. Examples: "two hundred fifty rupees" → {"value": "250"}; "1,250.50" → {"value": "1250.50"}.`,
-    notes: `The user dictated a note for a transaction. Rewrite it as a clean short note — drop filler words, fix obvious transcription slips, keep the meaning and any names/amounts. Reply JSON: {"value": string | null}.`,
+    payee: `The user dictated the payee for a transaction. Extract ONLY the person/shop/company name in Title Case — no filler words ("uh", "the payee is"), no trailing punctuation. ${LANGUAGE_RULE} Reply JSON: {"value": string | null}. Examples: "uh the chicken shopkeeper." → {"value": "Chicken Shopkeeper"}; "paid to sneha didi" → {"value": "Sneha Didi"}.`,
+    amount: `The user dictated an amount of money in rupees (possibly in Hindi, e.g. "dhai sau" = 250). Extract it as a plain number string with no currency symbol or commas. Reply JSON: {"value": string | null}. Examples: "two hundred fifty rupees" → {"value": "250"}; "1,250.50" → {"value": "1250.50"}.`,
+    notes: `The user dictated a note for a transaction. Rewrite it as a clean short note with proper sentence capitalization — drop filler words, fix obvious transcription slips, keep the meaning and any names/amounts. ${LANGUAGE_RULE} Reply JSON: {"value": string | null}.`,
 };
 
 /**

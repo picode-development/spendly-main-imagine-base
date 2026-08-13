@@ -69,7 +69,9 @@ export const PendingTransactionsPopup = () => {
     };
 
     return (
-        <div className="fixed bottom-20 lg:bottom-4 left-4 z-[60] w-[calc(100vw-2rem)] max-w-sm rounded-lg border bg-card text-card-foreground shadow-lg">
+        // Width leaves the mic ball's column clear on phones so the dismiss
+        // buttons on the right edge stay tappable
+        <div className="fixed bottom-20 lg:bottom-4 left-4 z-[60] w-[calc(100vw-6rem)] max-w-sm rounded-lg border bg-card text-card-foreground shadow-lg">
             <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
                 <div className="flex items-center gap-2">
                     <BellRing className="size-4 text-primary" />

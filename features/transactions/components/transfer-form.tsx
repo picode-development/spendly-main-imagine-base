@@ -19,6 +19,7 @@ import {
     FormMessage,
 } from "@/components/ui/form";
 import { convertAmountToMiliunits } from "@/lib/utils";
+import { matchOptionId } from "@/lib/match-option";
 
 const formSchema = z.object({
     date: z.coerce.date(),
@@ -222,13 +223,9 @@ export const TransferForm = ({
                             if (parsed.date) form.setValue("date", new Date(parsed.date));
                             if (parsed.amount != null) form.setValue("amount", String(Math.abs(parsed.amount) / 1000));
                             if (parsed.note || transcript) form.setValue("notes", parsed.note ?? transcript);
-                            const fromId = accountOptions.find(
-                                (o) => o.label.trim().toLowerCase() === parsed.accountName?.trim().toLowerCase(),
-                            )?.value;
+                            const fromId = matchOptionId(accountOptions, parsed.accountName);
                             if (fromId) form.setValue("fromAccountId", fromId);
-                            const toId = accountOptions.find(
-                                (o) => o.label.trim().toLowerCase() === parsed.toAccountName?.trim().toLowerCase(),
-                            )?.value;
+                            const toId = matchOptionId(accountOptions, parsed.toAccountName);
                             if (toId) form.setValue("toAccountId", toId);
                         }}
                     />

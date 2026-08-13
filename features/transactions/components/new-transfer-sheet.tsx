@@ -10,17 +10,8 @@ import { useCreateTransfer } from "@/features/transactions/api/use-create-transf
 import { useGetAccounts } from "@/features/accounts/api/use-get-accounts";
 import { useCreateAccount } from "@/features/accounts/api/use-create-account";
 import { TransferForm, TransferValues } from "@/features/transactions/components/transfer-form";
+import { matchOptionId } from "@/lib/match-option";
 import { Loader2 } from "lucide-react";
-
-const matchOption = (
-    options: { label: string; value: string }[],
-    name?: string,
-): string => {
-    if (!name) return "";
-    return options.find(
-        (o) => o.label.trim().toLowerCase() === name.trim().toLowerCase(),
-    )?.value ?? "";
-};
 
 export const NewTransferSheet = () => {
     const { isOpen, onClose, prefill, prefillKey } = useNewTransfer();
@@ -76,8 +67,8 @@ export const NewTransferSheet = () => {
                             onCreateAccount={onCreateAccount}
                             defaultValues={prefill ? {
                                 date: prefill.date ?? new Date(),
-                                fromAccountId: matchOption(accountOptions, prefill.fromAccountName),
-                                toAccountId: matchOption(accountOptions, prefill.toAccountName),
+                                fromAccountId: matchOptionId(accountOptions, prefill.fromAccountName),
+                                toAccountId: matchOptionId(accountOptions, prefill.toAccountName),
                                 amount: prefill.amount ?? "",
                                 notes: prefill.notes ?? null,
                             } : undefined}
