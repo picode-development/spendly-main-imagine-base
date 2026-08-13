@@ -12,8 +12,18 @@ import { useCreateAccount } from "@/features/accounts/api/use-create-account";
 import { TransferForm, TransferValues } from "@/features/transactions/components/transfer-form";
 import { Loader2 } from "lucide-react";
 
+const matchOption = (
+    options: { label: string; value: string }[],
+    name?: string,
+): string => {
+    if (!name) return "";
+    return options.find(
+        (o) => o.label.trim().toLowerCase() === name.trim().toLowerCase(),
+    )?.value ?? "";
+};
+
 export const NewTransferSheet = () => {
-    const { isOpen, onClose } = useNewTransfer();
+    const { isOpen, onClose, prefill, prefillKey } = useNewTransfer();
 
     const accountQuery = useGetAccounts();
     const accountMutation = useCreateAccount();
@@ -59,10 +69,18 @@ export const NewTransferSheet = () => {
                     )
                     : (
                         <TransferForm
+                            key={prefillKey ?? "blank"}
                             onSubmit={onSubmit}
                             disabled={isPending}
                             accountOptions={accountOptions}
                             onCreateAccount={onCreateAccount}
+                            defaultValues={prefill ? {
+                                date: prefill.date ?? new Date(),
+                                fromAccountId: matchOption(accountOptions, prefill.fromAccountName),
+                                toAccountId: matchOption(accountOptions, prefill.toAccountName),
+                                amount: prefill.amount ?? "",
+                                notes: prefill.notes ?? null,
+                            } : undefined}
                         />
                     )
                 }

@@ -33,10 +33,13 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
         recorderRef.current?.stream.getTracks().forEach((t) => t.stop());
     }, []);
 
-    const startMeter = (stream: MediaStream) => {
+    const startMeter = async (stream: MediaStream) => {
         try {
             const ctx = new AudioContext();
             audioCtxRef.current = ctx;
+            // Mobile browsers start audio contexts suspended — without this the
+            // analyser reads silence and the waveform stays flat
+            if (ctx.state === "suspended") await ctx.resume();
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.6;
@@ -51,7 +54,7 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
                 const next = Array.from({ length: VOICE_BARS }, (_, i) => {
                     let sum = 0;
                     for (let j = 0; j < bucket; j++) sum += data[i * bucket + j] ?? 0;
-                    return Math.min(1, (sum / bucket) / 200);
+                    return Math.min(1, (sum / bucket) / 160);
                 });
                 setLevels(next);
                 rafRef.current = requestAnimationFrame(tick);

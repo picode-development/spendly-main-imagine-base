@@ -32,6 +32,10 @@ export type LlmTransaction = {
     accountHint: string | null;
     /** A clean one-line note for the transaction, e.g. "NEFT from RBROTHERS, a/c ..0934" */
     note: string | null;
+    /** True when the user moves money between their OWN accounts */
+    isTransfer: boolean;
+    /** For transfers: destination account name from the user's list */
+    toAccountName: string | null;
 };
 
 const extractionPrompt = (ctx: LlmContext) => `You extract financial transaction details from Indian bank SMS messages, UPI app notifications, payment screenshots, or spoken descriptions.
@@ -51,7 +55,9 @@ Respond with ONLY a JSON object:
   "account_name": string | null,    // EXACT name from the accounts list if clearly implied, else null
   "category_name": string | null,   // EXACT name from the categories list if it clearly fits, else null
   "account_hint": string | null,    // short context like "a/c ..0934" or masked card number, else null
-  "note": string | null             // clean one-line note (max 12 words) worth keeping with the transaction, e.g. "NEFT from RBROTHERS, a/c ..0934" or "Dinner with family, paid via GPay"; null if nothing useful
+  "note": string | null,            // clean one-line note (max 12 words) worth keeping with the transaction, e.g. "NEFT from RBROTHERS, a/c ..0934" or "Dinner with family, paid via GPay"; null if nothing useful
+  "is_transfer": boolean,           // true ONLY when moving money between the user's OWN accounts ("transfer 500 from My Money to Savings", "move funds to savings")
+  "to_account_name": string | null  // for transfers: destination account, EXACT name from the accounts list (account_name is the source)
 }
 
 Rules: never invent an amount. Balance figures are NOT the transaction amount. For transfers between the user's own accounts, is_transaction is still true. Match account_name/category_name only from the given lists, case-sensitively as written there.`;
@@ -66,6 +72,8 @@ type RawExtraction = {
     category_name?: string | null;
     account_hint?: string | null;
     note?: string | null;
+    is_transfer?: boolean;
+    to_account_name?: string | null;
 };
 
 const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
@@ -93,6 +101,8 @@ const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
         categoryName: raw.category_name?.trim() || null,
         accountHint: raw.account_hint?.trim() || null,
         note: raw.note?.trim() || null,
+        isTransfer: raw.is_transfer === true,
+        toAccountName: raw.to_account_name?.trim() || null,
     };
 };
 

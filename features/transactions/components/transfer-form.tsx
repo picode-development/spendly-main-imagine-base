@@ -50,6 +50,7 @@ type Props = {
     disabled?: boolean;
     accountOptions: { label: string; value: string }[];
     onCreateAccount: (name: string) => void;
+    defaultValues?: Partial<FormValues>;
 };
 
 export const TransferForm = ({
@@ -57,6 +58,7 @@ export const TransferForm = ({
     disabled,
     accountOptions,
     onCreateAccount,
+    defaultValues,
 }: Props) => {
     const form = useForm<FormValues>({
         resolver: zodResolver(formSchema),
@@ -67,6 +69,7 @@ export const TransferForm = ({
             amount: "",
             imageUrls: null,
             notes: null,
+            ...defaultValues,
         },
     });
 

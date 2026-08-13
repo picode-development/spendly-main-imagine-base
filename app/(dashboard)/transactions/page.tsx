@@ -135,7 +135,7 @@ const TransactionsPage = () => {
                             Add New
                         </Button>
                         <Button
-                        onClick={newTransfer.onOpen}
+                        onClick={() => newTransfer.onOpen()}
                         size="sm"
                         className="w-full lg:w-auto"
                         >
