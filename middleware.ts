@@ -7,7 +7,9 @@ const isProtectedRoute = createRouteMatcher([
   "/accounts",
   "/categories",
   "/share",
-  "/share-target",
+  // NOTE: /share-target is deliberately NOT protected — Android share POSTs
+  // arrive without SameSite-Lax cookies; /share-claim (GET) does the auth.
+  "/share-claim",
 ])
 
 export default clerkMiddleware(async (auth, req) => {

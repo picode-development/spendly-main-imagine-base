@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { db } from "@/db/drizzle";
-import { pendingTransactions } from "@/db/schema";
+import { pendingTransactions, sharedStash } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
-import { llmCleanFieldValue, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt } from "drizzle-orm";
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { zValidator } from "@hono/zod-validator";
@@ -97,6 +97,70 @@ const app = new Hono()
                 rawMessage: message,
                 ...(parsed ?? { date: new Date() }),
             }).returning();
+
+            return c.json({ data });
+        },
+    )
+
+    // Claims a share-target stash (see app/share-target/route.ts) into the
+    // signed-in user's pending transactions, running extraction with their
+    // account/category context.
+    .post(
+        "/claim-share",
+        clerkMiddleware(),
+        zValidator("json", z.object({
+            token: z.string(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { token } = c.req.valid("json");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+
+            const [stash] = await db
+                .select()
+                .from(sharedStash)
+                .where(eq(sharedStash.id, token));
+
+            if (!stash) {
+                return c.json({ error: "Nothing to claim" }, 404);
+            }
+
+            let parsed = null;
+            if (stash.imageUrls?.length) {
+                const extracted = await llmExtractFromImage(
+                    stash.imageUrls[0].url,
+                    await getLlmContext(auth.userId),
+                );
+                if (extracted) {
+                    parsed = {
+                        amount: extracted.isTransaction ? extracted.amount : null,
+                        payee: extracted.payee,
+                        accountHint: extracted.accountName ?? extracted.accountHint,
+                        categoryHint: extracted.categoryName,
+                        note: extracted.note,
+                        date: extracted.date ?? new Date(),
+                    };
+                }
+            } else if (stash.rawText) {
+                parsed = await parseMessage(auth.userId, stash.rawText);
+            }
+
+            const [data] = await db.insert(pendingTransactions).values({
+                id: createId(),
+                userId: auth.userId,
+                rawMessage: stash.rawText || "Shared screenshot",
+                imageUrls: stash.imageUrls,
+                ...(parsed ?? { date: new Date() }),
+            }).returning();
+
+            // Burn the token and sweep stale unclaimed stashes
+            await db.delete(sharedStash).where(eq(sharedStash.id, token));
+            await db.delete(sharedStash).where(
+                lt(sharedStash.createdAt, new Date(Date.now() - 60 * 60 * 1000)),
+            );
 
             return c.json({ data });
         },

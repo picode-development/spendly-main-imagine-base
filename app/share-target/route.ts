@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import sharp from "sharp";
 
 import { db } from "@/db/drizzle";
-import { pendingTransactions, TransactionImage } from "@/db/schema";
+import { sharedStash, TransactionImage } from "@/db/schema";
 import { createId } from "@paralleldrive/cuid2";
-import { llmExtractFromImage } from "@/lib/groq";
-import { parseMessage, getLlmContext } from "@/lib/parse-message";
 
-// Android PWA share target (see app/manifest.ts). Receives shared text or a
-// payment screenshot; screenshots are auto-attached as the receipt image and
-// read by the vision model.
+// Android PWA share target (see app/manifest.ts). Share launches are
+// top-level POSTs, and browsers withhold SameSite-Lax session cookies on
+// those — so this endpoint is deliberately UNAUTHENTICATED. It stashes the
+// shared content under a one-time token and redirects to the signed-in
+// /share-claim page (a GET, where cookies flow), which claims the stash
+// into the user's pending transactions.
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 const uploadToImgBB = async (buffer: Buffer): Promise<string | null> => {
     const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY;
@@ -43,61 +45,37 @@ const makeBlurPreview = async (buffer: Buffer): Promise<string | undefined> => {
 };
 
 export async function POST(req: NextRequest) {
-    const { userId } = await auth();
-    if (!userId) {
-        return NextResponse.redirect(new URL("/sign-in", req.url), 303);
-    }
-
     const form = await req.formData();
     const text = [form.get("title"), form.get("text"), form.get("url")]
         .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
         .join(" ")
-        .trim();
+        .trim()
+        .slice(0, 2000);
     const image = form
         .getAll("media")
-        .find((f): f is File => f instanceof File && f.type.startsWith("image/"));
+        .find((f): f is File =>
+            f instanceof File && f.type.startsWith("image/") && f.size <= MAX_IMAGE_BYTES);
 
     if (!image && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);
     }
 
+    let imageUrls: TransactionImage[] | null = null;
     if (image) {
         const buffer = Buffer.from(await image.arrayBuffer());
-        const dataUrl = `data:${image.type};base64,${buffer.toString("base64")}`;
-
-        // Host the screenshot, build its blur-up preview, and read it — in parallel
-        const [hostedUrl, preview, extracted] = await Promise.all([
+        const [hostedUrl, preview] = await Promise.all([
             uploadToImgBB(buffer),
             makeBlurPreview(buffer),
-            getLlmContext(userId).then((ctx) => llmExtractFromImage(dataUrl, ctx)),
         ]);
-
-        const imageUrls: TransactionImage[] | null = hostedUrl
-            ? [{ url: hostedUrl, preview }]
-            : null;
-
-        await db.insert(pendingTransactions).values({
-            id: createId(),
-            userId,
-            rawMessage: text || "Shared screenshot",
-            amount: extracted?.isTransaction ? extracted.amount : null,
-            payee: extracted?.payee ?? null,
-            accountHint: extracted?.accountName ?? extracted?.accountHint ?? null,
-            categoryHint: extracted?.categoryName ?? null,
-            note: extracted?.note ?? null,
-            imageUrls,
-            date: extracted?.date ?? new Date(),
-        });
-    } else {
-        // Text only — stored even when parsing is incomplete: sharing was explicit
-        const parsed = await parseMessage(userId, text);
-        await db.insert(pendingTransactions).values({
-            id: createId(),
-            userId,
-            rawMessage: text,
-            ...(parsed ?? { date: new Date() }),
-        });
+        if (hostedUrl) imageUrls = [{ url: hostedUrl, preview }];
     }
 
-    return NextResponse.redirect(new URL("/transactions", req.url), 303);
+    const token = createId();
+    await db.insert(sharedStash).values({
+        id: token,
+        rawText: text || null,
+        imageUrls,
+    });
+
+    return NextResponse.redirect(new URL(`/share-claim?token=${token}`, req.url), 303);
 }

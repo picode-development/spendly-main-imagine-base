@@ -9,6 +9,7 @@ import { DatePicker } from "@/components/date-picker";
 import { Select } from "@/components/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageUpload } from "./image-upload";
+import { VoiceFormButton } from "./voice-form-button";
 import {
     Form,
     FormControl,
@@ -209,10 +210,29 @@ export const TransferForm = ({
                     )}
                 />
 
-                <Button className="w-full" disabled={disabled}>
-                    <ArrowLeftRight className="size-4 mr-2" />
-                    Transfer funds
-                </Button>
+                <div className="flex w-full gap-2">
+                    <Button className="flex-[3]" disabled={disabled}>
+                        <ArrowLeftRight className="size-4 mr-2" />
+                        Transfer funds
+                    </Button>
+                    <VoiceFormButton
+                        disabled={disabled}
+                        onParsed={(parsed, transcript) => {
+                            if (!parsed) return;
+                            if (parsed.date) form.setValue("date", new Date(parsed.date));
+                            if (parsed.amount != null) form.setValue("amount", String(Math.abs(parsed.amount) / 1000));
+                            if (parsed.note || transcript) form.setValue("notes", parsed.note ?? transcript);
+                            const fromId = accountOptions.find(
+                                (o) => o.label.trim().toLowerCase() === parsed.accountName?.trim().toLowerCase(),
+                            )?.value;
+                            if (fromId) form.setValue("fromAccountId", fromId);
+                            const toId = accountOptions.find(
+                                (o) => o.label.trim().toLowerCase() === parsed.toAccountName?.trim().toLowerCase(),
+                            )?.value;
+                            if (toId) form.setValue("toAccountId", toId);
+                        }}
+                    />
+                </div>
             </form>
         </Form>
     );

@@ -12,6 +12,7 @@ import { Select } from "@/components/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageUpload } from "./image-upload";
 import { VoiceFieldButton } from "./voice-field-button";
+import { VoiceFormButton } from "./voice-form-button";
 import {
     Form,
     FormControl,
@@ -240,9 +241,29 @@ export const TransactionForm = ({
                     )}
                 />
 
-                <Button className="w-full" disabled={disabled}>
-                    {id ? "Save Changes" : "Create transaction"}
-                </Button>
+                <div className="flex w-full gap-2">
+                    <Button className="flex-[3]" disabled={disabled}>
+                        {id ? "Save Changes" : "Create transaction"}
+                    </Button>
+                    <VoiceFormButton
+                        disabled={disabled}
+                        onParsed={(parsed, transcript) => {
+                            if (!parsed) return;
+                            if (parsed.date) form.setValue("date", new Date(parsed.date));
+                            if (parsed.payee) form.setValue("payee", parsed.payee);
+                            if (parsed.amount != null) form.setValue("amount", String(parsed.amount / 1000));
+                            if (parsed.note || transcript) form.setValue("notes", parsed.note ?? transcript);
+                            const accountId = accountOptions.find(
+                                (o) => o.label.trim().toLowerCase() === parsed.accountName?.trim().toLowerCase(),
+                            )?.value;
+                            if (accountId) form.setValue("accountId", accountId);
+                            const categoryId = categoryOptions.find(
+                                (o) => o.label.trim().toLowerCase() === parsed.categoryName?.trim().toLowerCase(),
+                            )?.value;
+                            if (categoryId) form.setValue("categoryId", categoryId);
+                        }}
+                    />
+                </div>
 
                 {!!id && (
                     <Button

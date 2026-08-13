@@ -100,6 +100,17 @@ export const InsertPendingTransactionSchema = createInsertSchema(pendingTransact
     date: z.coerce.date(),
 });
 
+// Web Share Target staging: Android share POSTs arrive without session
+// cookies (SameSite-Lax is withheld on cross-app POST navigations), so the
+// payload is stashed under a one-time token and claimed by the signed-in
+// /share-claim page right after.
+export const sharedStash = pgTable("shared_stash", {
+    id: text("id").primaryKey(),        // one-time claim token
+    rawText: text("raw_text"),
+    imageUrls: jsonb("image_urls").$type<TransactionImage[]>(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 // Per-field "before/after" anchors — the value sits between them.
 // See lib/sms-parser.ts FieldAnchor / SmsRule.
 export type SmsRuleAnchors = {
