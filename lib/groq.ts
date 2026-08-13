@@ -154,10 +154,19 @@ const chatCompletion = async (
 export const llmExtractFromText = (text: string, ctx: LlmContext) =>
     chatCompletion(TEXT_MODEL, text, ctx);
 
-/** Extract a transaction from a payment screenshot (https or data: URL). */
-export const llmExtractFromImage = (imageUrl: string, ctx: LlmContext) =>
+/**
+ * Extract a transaction from a payment screenshot (https or data: URL).
+ * UPI apps often attach a summary caption when sharing — pass it as
+ * `accompanyingText` so both sources are read together.
+ */
+export const llmExtractFromImage = (imageUrl: string, ctx: LlmContext, accompanyingText?: string | null) =>
     chatCompletion(VISION_MODEL, [
-        { type: "text", text: "Extract the transaction from this payment screenshot." },
+        {
+            type: "text",
+            text: accompanyingText?.trim()
+                ? `Extract the transaction from this payment screenshot. It was shared with this accompanying text (use both sources; the screenshot wins on conflicts): "${accompanyingText.trim()}"`
+                : "Extract the transaction from this payment screenshot.",
+        },
         { type: "image_url", image_url: { url: imageUrl } },
     ], ctx);
 

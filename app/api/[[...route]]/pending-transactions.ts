@@ -130,9 +130,12 @@ const app = new Hono()
 
             let parsed = null;
             if (stash.imageUrls?.length) {
+                // UPI apps attach a summary caption to shared screenshots —
+                // the vision model reads both together
                 const extracted = await llmExtractFromImage(
                     stash.imageUrls[0].url,
                     await getLlmContext(auth.userId),
+                    stash.rawText,
                 );
                 if (extracted) {
                     parsed = {
@@ -143,6 +146,9 @@ const app = new Hono()
                         note: extracted.note,
                         date: extracted.date ?? new Date(),
                     };
+                } else if (stash.rawText) {
+                    // Vision unavailable — at least parse the caption text
+                    parsed = await parseMessage(auth.userId, stash.rawText);
                 }
             } else if (stash.rawText) {
                 parsed = await parseMessage(auth.userId, stash.rawText);
