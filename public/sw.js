@@ -24,12 +24,11 @@ self.addEventListener("fetch", (event) => {
     const fallbackRequest = event.request.clone();
     try {
       const formData = await event.request.formData();
-      // Bounded to 3: Groq offers a single vision model (qwen3.6-27b) whose
-      // free-tier token budget fits ~3 screenshots per minute
+      // Gemini Flash (primary vision) handles 10+ images/min on its free tier
       const allImages = formData
         .getAll("media")
         .filter((f) => f && typeof f === "object" && f.type && f.type.startsWith("image/"));
-      const files = allImages.slice(0, 3);
+      const files = allImages.slice(0, 10);
       const dropped = allImages.length - files.length;
       const text = ["title", "text", "url"]
         .map((k) => formData.get(k))

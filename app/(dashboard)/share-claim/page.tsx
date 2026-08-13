@@ -60,7 +60,7 @@ const ShareClaimHandler = () => {
             if (!metaRes) throw new Error("share expired");
             const meta = (await metaRes.json()) as { text: string; count: number; dropped?: number };
             if (meta.dropped && meta.dropped > 0) {
-                toast.info(`${meta.dropped} screenshot${meta.dropped > 1 ? "s" : ""} skipped — share up to 3 at a time.`);
+                toast.info(`${meta.dropped} screenshot${meta.dropped > 1 ? "s" : ""} skipped — share up to 10 at a time.`);
             }
 
             // Pull all files off the cache immediately

@@ -8,16 +8,27 @@
  */
 
 const GROQ_BASE = "https://api.groq.com/openai/v1";
-// Intelligence-first with free-tier resilience: try the strongest model, and
-// when its daily free quota rate-limits (429) step down the chain instead of
-// failing. The 8B tier has a far larger free allowance and still handles
-// extraction acceptably.
-const TEXT_MODELS = [
-    "openai/gpt-oss-120b",
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
+// Gemini speaks the OpenAI protocol at this base — same request shape
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
+
+type Provider = { base: string; apiKey: string | undefined; model: string };
+
+// Intelligence-first with free-tier resilience: providers are tried in order,
+// skipping any without a key and stepping down on rate limits.
+const textProviders = (): Provider[] => [
+    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "openai/gpt-oss-120b" },
+    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "llama-3.3-70b-versatile" },
+    { base: GEMINI_BASE, apiKey: process.env.GEMINI_KEY, model: "gemini-2.5-flash" },
+    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "llama-3.1-8b-instant" },
 ];
-const VISION_MODEL = "qwen/qwen3.6-27b";
+
+// Vision: Gemini Flash first (free tier: ~10+ images/min vs Groq's ~3),
+// Groq's qwen as fallback when no GEMINI_KEY is set
+const visionProviders = (): Provider[] => [
+    { base: GEMINI_BASE, apiKey: process.env.GEMINI_KEY, model: "gemini-2.5-flash" },
+    { base: GROQ_BASE, apiKey: process.env.GROQ_KEY, model: "qwen/qwen3.6-27b" },
+];
+
 // Full large-v3 first (best on Indian names/accents and noise), turbo as the
 // higher-quota fallback
 const WHISPER_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"];
@@ -133,28 +144,25 @@ const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
 };
 
 const chatCompletion = async (
-    models: string[],
+    providers: Provider[],
     userContent: unknown,
     ctx: LlmContext,
 ): Promise<LlmTransaction | null> => {
-    const apiKey = process.env.GROQ_KEY;
-    if (!apiKey) return null;
-
     const startedAt = Date.now();
-    for (const model of models) {
-        // Multiple attempts per model: on a 429, Groq's error says exactly
-        // how long until the token-per-minute window refills — honor it as
-        // long as the serverless time budget allows
+    for (const provider of providers) {
+        if (!provider.apiKey) continue;
+        // Multiple attempts per provider: on a 429 the error usually says how
+        // long until the window refills — honor it while the time budget allows
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                const response = await fetch(`${GROQ_BASE}/chat/completions`, {
+                const response = await fetch(`${provider.base}/chat/completions`, {
                     method: "POST",
                     headers: {
-                        "Authorization": `Bearer ${apiKey}`,
+                        "Authorization": `Bearer ${provider.apiKey}`,
                         "Content-Type": "application/json",
                     },
                     body: JSON.stringify({
-                        model,
+                        model: provider.model,
                         temperature: 0,
                         response_format: { type: "json_object" },
                         messages: [
@@ -165,8 +173,9 @@ const chatCompletion = async (
                 });
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error(`Groq extraction failed on ${model}:`, response.status, errorText);
-                    const waitMatch = errorText.match(/try again in ([\d.]+)s/i);
+                    console.error(`Extraction failed on ${provider.model}:`, response.status, errorText);
+                    const waitMatch = errorText.match(/try again in ([\d.]+)s/i)
+                        ?? errorText.match(/retry.*?([\d.]+)\s*s/i);
                     const waitSeconds = waitMatch ? parseFloat(waitMatch[1]) : NaN;
                     const elapsedSeconds = (Date.now() - startedAt) / 1000;
                     if (
@@ -175,16 +184,16 @@ const chatCompletion = async (
                         elapsedSeconds + waitSeconds < 18 // stay inside the function's time budget
                     ) {
                         await new Promise((resolve) => setTimeout(resolve, (waitSeconds + 0.5) * 1000));
-                        continue; // window refilled — retry the same model
+                        continue; // window refilled — retry the same provider
                     }
-                    break; // unrecoverable here — try the next tier
+                    break; // unrecoverable here — try the next provider
                 }
                 const data = await response.json();
                 const content = data?.choices?.[0]?.message?.content;
                 if (typeof content !== "string") break;
                 return toLlmTransaction(JSON.parse(content) as RawExtraction);
             } catch (e) {
-                console.error(`Groq extraction error on ${model}:`, e);
+                console.error(`Extraction error on ${provider.model}:`, e);
                 break;
             }
         }
@@ -194,7 +203,7 @@ const chatCompletion = async (
 
 /** Extract a transaction from an SMS / notification / spoken text. */
 export const llmExtractFromText = (text: string, ctx: LlmContext) =>
-    chatCompletion(TEXT_MODELS, text, ctx);
+    chatCompletion(textProviders(), text, ctx);
 
 /**
  * Extract a transaction from a payment screenshot (https or data: URL).
@@ -202,7 +211,7 @@ export const llmExtractFromText = (text: string, ctx: LlmContext) =>
  * `accompanyingText` so both sources are read together.
  */
 export const llmExtractFromImage = (imageUrl: string, ctx: LlmContext, accompanyingText?: string | null) =>
-    chatCompletion([VISION_MODEL], [
+    chatCompletion(visionProviders(), [
         {
             type: "text",
             text: accompanyingText?.trim()
