@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/form";
 import { convertAmountToMiliunits } from "@/lib/utils";
 import { matchOptionId } from "@/lib/match-option";
+import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
+import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
 
 const formSchema = z.object({
     date: z.coerce.date(),
@@ -62,6 +64,9 @@ export const TransferForm = ({
     onCreateAccount,
     defaultValues,
 }: Props) => {
+    const newTransaction = useNewTransaction();
+    const newTransfer = useNewTransfer();
+
     const form = useForm<FormValues>({
         resolver: zodResolver(formSchema),
         defaultValues: {
@@ -220,6 +225,21 @@ export const TransferForm = ({
                         disabled={disabled}
                         onParsed={(parsed, transcript) => {
                             if (!parsed) return;
+                            // Spoken a plain transaction? Route to the normal form
+                            if (!parsed.isTransfer && (parsed.amount != null || parsed.payee)) {
+                                newTransfer.onClose();
+                                newTransaction.onOpen({
+                                    prefill: {
+                                        date: parsed.date ? new Date(parsed.date) : undefined,
+                                        payee: parsed.payee ?? "",
+                                        amount: parsed.amount != null ? String(parsed.amount / 1000) : "",
+                                        notes: parsed.note ?? transcript ?? undefined,
+                                        accountName: parsed.accountName ?? undefined,
+                                        categoryName: parsed.categoryName ?? undefined,
+                                    },
+                                });
+                                return;
+                            }
                             if (parsed.date) form.setValue("date", new Date(parsed.date));
                             if (parsed.amount != null) form.setValue("amount", String(Math.abs(parsed.amount) / 1000));
                             if (parsed.note || transcript) form.setValue("notes", parsed.note ?? transcript);

@@ -8,7 +8,9 @@
  */
 
 const GROQ_BASE = "https://api.groq.com/openai/v1";
-const TEXT_MODEL = "llama-3.3-70b-versatile";
+// GPT-OSS 120B: strongest text model on Groq — gets extraction right the
+// first time (intent, names, dates) instead of needing user corrections
+const TEXT_MODEL = "openai/gpt-oss-120b";
 const VISION_MODEL = "qwen/qwen3.6-27b";
 // Full large-v3 (not turbo): noticeably better on Indian names/accents and
 // noisy audio; latency cost is small on Groq
@@ -59,7 +61,7 @@ Respond with ONLY a JSON object:
   "category_name": string | null,   // EXACT name from the categories list if it clearly fits, else null
   "account_hint": string | null,    // short context like "a/c ..0934" or masked card number, else null
   "note": string | null,            // the note to save with the transaction. CRITICAL: if the speaker/message EXPLICITLY states a note, reason, occasion, or any extra detail ("note that...", "this was for...", "it was a gift"), include ALL of those stated details — never drop or shorten what was explicitly said. Join multiple details with " - ". Only when nothing was explicitly stated may you write a brief factual summary (max 12 words), or null
-  "is_transfer": boolean,           // true ONLY when moving money between the user's OWN accounts ("transfer 500 from My Money to Savings", "move funds to savings")
+  "is_transfer": boolean,           // MUST be true whenever the user says "transfer funds", "transferring", "move money", or describes moving an amount FROM one of their accounts TO another of their accounts — explicit transfer wording always wins. False for paying/receiving from other people or shops.
   "to_account_name": string | null  // for transfers: destination account, EXACT name from the accounts list (account_name is the source)
 }
 

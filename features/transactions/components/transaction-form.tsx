@@ -22,6 +22,9 @@ import {
 } from "@/components/ui/form";
 import { convertAmountToMiliunits } from "@/lib/utils";
 import { matchOptionId } from "@/lib/match-option";
+import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
+import { useOpenTransaction } from "@/features/transactions/hooks/use-open-transaction";
+import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
 
 const formSchema = z.object({
     date: z.coerce.date(),
@@ -70,6 +73,10 @@ export const TransactionForm = ({
         resolver: zodResolver(formSchema),
         defaultValues: defaultValues,
     });
+
+    const newTransaction = useNewTransaction();
+    const openTransaction = useOpenTransaction();
+    const newTransfer = useNewTransfer();
 
     const handleSubmit = (values: FormValues) => {
         const amount = parseFloat(values.amount);
@@ -250,6 +257,21 @@ export const TransactionForm = ({
                         disabled={disabled}
                         onParsed={(parsed, transcript) => {
                             if (!parsed) return;
+                            // Explicit transfer wording → the transfer form, always
+                            if (parsed.isTransfer) {
+                                newTransaction.onClose();
+                                openTransaction.onClose();
+                                newTransfer.onOpen({
+                                    prefill: {
+                                        date: parsed.date ? new Date(parsed.date) : undefined,
+                                        amount: parsed.amount != null ? String(Math.abs(parsed.amount) / 1000) : "",
+                                        fromAccountName: parsed.accountName ?? undefined,
+                                        toAccountName: parsed.toAccountName ?? undefined,
+                                        notes: parsed.note ?? transcript ?? undefined,
+                                    },
+                                });
+                                return;
+                            }
                             if (parsed.date) form.setValue("date", new Date(parsed.date));
                             if (parsed.payee) form.setValue("payee", parsed.payee);
                             if (parsed.amount != null) form.setValue("amount", String(parsed.amount / 1000));
