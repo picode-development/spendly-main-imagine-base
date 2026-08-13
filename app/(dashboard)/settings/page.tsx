@@ -30,7 +30,12 @@ import { useGetPendingTransactions } from "@/features/transactions/api/use-get-p
 import { client } from "@/lib/hono";
 import { convertAmountFromMiliunits } from "@/lib/utils";
 
-const csvEscape = (value: string) => `"${value.replace(/"/g, '""')}"`;
+// Quotes the value and defuses spreadsheet formula injection (=, +, -, @
+// prefixes execute in Excel/Sheets — SMS-derived payees are untrusted)
+const csvEscape = (value: string) => {
+    const defused = /^[=+\-@]/.test(value) ? `'${value}` : value;
+    return `"${defused.replace(/"/g, '""')}"`;
+};
 
 const SettingsPage = () => {
   const router = useRouter();

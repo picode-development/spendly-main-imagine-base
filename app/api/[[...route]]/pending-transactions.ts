@@ -197,6 +197,9 @@ const app = new Hono()
             if (!(audio instanceof File)) {
                 return c.json({ error: "Missing audio" }, 400);
             }
+            if (audio.size > 15 * 1024 * 1024) {
+                return c.json({ error: "Recording too large" }, 413);
+            }
 
             const transcript = await llmTranscribe(audio, audio.name || "voice.webm");
             if (!transcript) {
