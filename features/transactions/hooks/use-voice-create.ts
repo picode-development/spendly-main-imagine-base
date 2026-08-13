@@ -29,8 +29,9 @@ export const useVoiceCreate = () => {
         const { data } = await res.json();
         const parsed = data?.parsed;
 
-        // "Transfer funds from X to Y" → the transfer form, not a transaction
-        if (parsed?.isTransfer) {
+        // "Transfer funds from X to Y" or "switch to transfer form" → the
+        // transfer form, not a transaction
+        if (parsed?.isTransfer || parsed?.switchTo === "transfer") {
             newTransfer.onOpen({
                 prefill: {
                     date: parsed.date ? new Date(parsed.date) : undefined,

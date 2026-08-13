@@ -257,17 +257,27 @@ export const TransactionForm = ({
                         disabled={disabled}
                         onParsed={(parsed, transcript) => {
                             if (!parsed) return;
-                            // Explicit transfer wording → the transfer form, always
-                            if (parsed.isTransfer) {
+                            // Explicit transfer wording or a "switch to transfer
+                            // form" command → the transfer form, carrying over
+                            // anything already typed here
+                            if (parsed.isTransfer || parsed.switchTo === "transfer") {
+                                const current = form.getValues();
                                 newTransaction.onClose();
                                 openTransaction.onClose();
                                 newTransfer.onOpen({
                                     prefill: {
-                                        date: parsed.date ? new Date(parsed.date) : undefined,
-                                        amount: parsed.amount != null ? String(Math.abs(parsed.amount) / 1000) : "",
-                                        fromAccountName: parsed.accountName ?? undefined,
+                                        date: parsed.date
+                                            ? new Date(parsed.date)
+                                            : (current.date as Date | undefined),
+                                        amount: parsed.amount != null
+                                            ? String(Math.abs(parsed.amount) / 1000)
+                                            : (current.amount ? String(Math.abs(parseFloat(current.amount)) || "") : ""),
+                                        fromAccountName: parsed.accountName
+                                            ?? accountOptions.find((o) => o.value === current.accountId)?.label,
                                         toAccountName: parsed.toAccountName ?? undefined,
-                                        notes: parsed.note ?? transcript ?? undefined,
+                                        notes: parsed.note
+                                            ?? (typeof current.notes === "string" && current.notes ? current.notes : undefined)
+                                            ?? (parsed.switchTo ? undefined : transcript),
                                     },
                                 });
                                 return;

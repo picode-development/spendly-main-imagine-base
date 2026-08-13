@@ -225,16 +225,29 @@ export const TransferForm = ({
                         disabled={disabled}
                         onParsed={(parsed, transcript) => {
                             if (!parsed) return;
-                            // Spoken a plain transaction? Route to the normal form
-                            if (!parsed.isTransfer && (parsed.amount != null || parsed.payee)) {
+                            // A "switch to transaction form" command or plainly
+                            // spoken transaction → the normal form, carrying over
+                            // anything already typed here
+                            if (
+                                parsed.switchTo === "transaction" ||
+                                (!parsed.isTransfer && parsed.switchTo !== "transfer" && (parsed.amount != null || parsed.payee))
+                            ) {
+                                const current = form.getValues();
                                 newTransfer.onClose();
                                 newTransaction.onOpen({
                                     prefill: {
-                                        date: parsed.date ? new Date(parsed.date) : undefined,
+                                        date: parsed.date
+                                            ? new Date(parsed.date)
+                                            : (current.date as Date | undefined),
                                         payee: parsed.payee ?? "",
-                                        amount: parsed.amount != null ? String(parsed.amount / 1000) : "",
-                                        notes: parsed.note ?? transcript ?? undefined,
-                                        accountName: parsed.accountName ?? undefined,
+                                        amount: parsed.amount != null
+                                            ? String(parsed.amount / 1000)
+                                            : (current.amount || ""),
+                                        notes: parsed.note
+                                            ?? (typeof current.notes === "string" && current.notes ? current.notes : undefined)
+                                            ?? (parsed.switchTo ? undefined : transcript),
+                                        accountName: parsed.accountName
+                                            ?? accountOptions.find((o) => o.value === current.fromAccountId)?.label,
                                         categoryName: parsed.categoryName ?? undefined,
                                     },
                                 });

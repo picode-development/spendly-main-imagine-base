@@ -16,6 +16,7 @@ export type VoiceParsedFields = {
     toAccountName: string | null;
     note: string | null;
     isTransfer: boolean;
+    switchTo: "transfer" | "transaction" | null;
 };
 
 type Props = {

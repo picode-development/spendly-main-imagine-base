@@ -8,13 +8,19 @@
  */
 
 const GROQ_BASE = "https://api.groq.com/openai/v1";
-// GPT-OSS 120B: strongest text model on Groq — gets extraction right the
-// first time (intent, names, dates) instead of needing user corrections
-const TEXT_MODEL = "openai/gpt-oss-120b";
+// Intelligence-first with free-tier resilience: try the strongest model, and
+// when its daily free quota rate-limits (429) step down the chain instead of
+// failing. The 8B tier has a far larger free allowance and still handles
+// extraction acceptably.
+const TEXT_MODELS = [
+    "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+];
 const VISION_MODEL = "qwen/qwen3.6-27b";
-// Full large-v3 (not turbo): noticeably better on Indian names/accents and
-// noisy audio; latency cost is small on Groq
-const WHISPER_MODEL = "whisper-large-v3";
+// Full large-v3 first (best on Indian names/accents and noise), turbo as the
+// higher-quota fallback
+const WHISPER_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"];
 const FAST_MODEL = "llama-3.1-8b-instant";
 
 export type LlmContext = {
@@ -41,6 +47,8 @@ export type LlmTransaction = {
     isTransfer: boolean;
     /** For transfers: destination account name from the user's list */
     toAccountName: string | null;
+    /** Explicit spoken command to switch forms ("switch to transfer form") */
+    switchTo: "transfer" | "transaction" | null;
 };
 
 const extractionPrompt = (ctx: LlmContext) => `You extract financial transaction details from Indian bank SMS messages, UPI app notifications, payment screenshots, or spoken descriptions.
@@ -62,7 +70,8 @@ Respond with ONLY a JSON object:
   "account_hint": string | null,    // short context like "a/c ..0934" or masked card number, else null
   "note": string | null,            // the note to save with the transaction. CRITICAL: if the speaker/message EXPLICITLY states a note, reason, occasion, or any extra detail ("note that...", "this was for...", "it was a gift"), include ALL of those stated details — never drop or shorten what was explicitly said. Join multiple details with " - ". Only when nothing was explicitly stated may you write a brief factual summary (max 12 words), or null
   "is_transfer": boolean,           // MUST be true whenever the user says "transfer funds", "transferring", "move money", or describes moving an amount FROM one of their accounts TO another of their accounts — explicit transfer wording always wins. False for paying/receiving from other people or shops.
-  "to_account_name": string | null  // for transfers: destination account, EXACT name from the accounts list (account_name is the source)
+  "to_account_name": string | null, // for transfers: destination account, EXACT name from the accounts list (account_name is the source)
+  "switch_to": "transfer" | "transaction" | null // ONLY when the user explicitly commands a form change: "switch to transfer form"/"open transfer form" → "transfer"; "switch to transaction form"/"normal form" → "transaction". A bare switch command with no other details is still valid (is_transaction may be false). Otherwise null.
 }
 
 Rules: never invent an amount. Balance figures are NOT the transaction amount. For transfers between the user's own accounts, is_transaction is still true. Match account_name/category_name only from the given lists, case-sensitively as written there.
@@ -87,6 +96,7 @@ type RawExtraction = {
     note?: string | null;
     is_transfer?: boolean;
     to_account_name?: string | null;
+    switch_to?: "transfer" | "transaction" | null;
 };
 
 const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
@@ -116,51 +126,56 @@ const toLlmTransaction = (raw: RawExtraction): LlmTransaction => {
         note: raw.note?.trim() || null,
         isTransfer: raw.is_transfer === true,
         toAccountName: raw.to_account_name?.trim() || null,
+        switchTo: raw.switch_to === "transfer" || raw.switch_to === "transaction"
+            ? raw.switch_to
+            : null,
     };
 };
 
 const chatCompletion = async (
-    model: string,
+    models: string[],
     userContent: unknown,
     ctx: LlmContext,
 ): Promise<LlmTransaction | null> => {
     const apiKey = process.env.GROQ_KEY;
     if (!apiKey) return null;
 
-    try {
-        const response = await fetch(`${GROQ_BASE}/chat/completions`, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                model,
-                temperature: 0,
-                response_format: { type: "json_object" },
-                messages: [
-                    { role: "system", content: extractionPrompt(ctx) },
-                    { role: "user", content: userContent },
-                ],
-            }),
-        });
-        if (!response.ok) {
-            console.error("Groq extraction failed:", response.status, await response.text());
-            return null;
+    for (const model of models) {
+        try {
+            const response = await fetch(`${GROQ_BASE}/chat/completions`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    model,
+                    temperature: 0,
+                    response_format: { type: "json_object" },
+                    messages: [
+                        { role: "system", content: extractionPrompt(ctx) },
+                        { role: "user", content: userContent },
+                    ],
+                }),
+            });
+            if (!response.ok) {
+                console.error(`Groq extraction failed on ${model}:`, response.status, await response.text());
+                continue; // rate-limited or down — try the next tier
+            }
+            const data = await response.json();
+            const content = data?.choices?.[0]?.message?.content;
+            if (typeof content !== "string") continue;
+            return toLlmTransaction(JSON.parse(content) as RawExtraction);
+        } catch (e) {
+            console.error(`Groq extraction error on ${model}:`, e);
         }
-        const data = await response.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== "string") return null;
-        return toLlmTransaction(JSON.parse(content) as RawExtraction);
-    } catch (e) {
-        console.error("Groq extraction error:", e);
-        return null;
     }
+    return null;
 };
 
 /** Extract a transaction from an SMS / notification / spoken text. */
 export const llmExtractFromText = (text: string, ctx: LlmContext) =>
-    chatCompletion(TEXT_MODEL, text, ctx);
+    chatCompletion(TEXT_MODELS, text, ctx);
 
 /**
  * Extract a transaction from a payment screenshot (https or data: URL).
@@ -168,7 +183,7 @@ export const llmExtractFromText = (text: string, ctx: LlmContext) =>
  * `accompanyingText` so both sources are read together.
  */
 export const llmExtractFromImage = (imageUrl: string, ctx: LlmContext, accompanyingText?: string | null) =>
-    chatCompletion(VISION_MODEL, [
+    chatCompletion([VISION_MODEL], [
         {
             type: "text",
             text: accompanyingText?.trim()
@@ -192,34 +207,36 @@ export const llmTranscribe = async (
     const apiKey = process.env.GROQ_KEY;
     if (!apiKey) return null;
 
-    try {
-        const form = new FormData();
-        form.append("file", audio, filename);
-        form.append("model", WHISPER_MODEL);
-        // No language pin (any language works); the prompt biases short
-        // clips toward the primary case and primes expected proper nouns
-        const names = vocabulary.filter(Boolean).slice(0, 40).join(", ");
-        form.append(
-            "prompt",
-            `Mostly English, sometimes Hindi/Hinglish. Indian finance terms: rupees, UPI, paise, paid, credited.${names ? ` Names that may appear: ${names}.` : ""}`,
-        );
-        form.append("temperature", "0");
+    for (const model of WHISPER_MODELS) {
+        try {
+            const form = new FormData();
+            form.append("file", audio, filename);
+            form.append("model", model);
+            // No language pin (any language works); the prompt biases short
+            // clips toward the primary case and primes expected proper nouns
+            const names = vocabulary.filter(Boolean).slice(0, 40).join(", ");
+            form.append(
+                "prompt",
+                `Mostly English, sometimes Hindi/Hinglish. Indian finance terms: rupees, UPI, paise, paid, credited.${names ? ` Names that may appear: ${names}.` : ""}`,
+            );
+            form.append("temperature", "0");
 
-        const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${apiKey}` },
-            body: form,
-        });
-        if (!response.ok) {
-            console.error("Groq transcription failed:", response.status, await response.text());
-            return null;
+            const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${apiKey}` },
+                body: form,
+            });
+            if (!response.ok) {
+                console.error(`Groq transcription failed on ${model}:`, response.status, await response.text());
+                continue; // rate-limited — try the higher-quota fallback
+            }
+            const data = await response.json();
+            if (typeof data?.text === "string" && data.text.trim()) return data.text.trim();
+        } catch (e) {
+            console.error(`Groq transcription error on ${model}:`, e);
         }
-        const data = await response.json();
-        return typeof data?.text === "string" && data.text.trim() ? data.text.trim() : null;
-    } catch (e) {
-        console.error("Groq transcription error:", e);
-        return null;
     }
+    return null;
 };
 
 const LANGUAGE_RULE = `The speech may be English, Hindi, or mixed Hinglish — always write the value in Latin script, transliterating Hindi to Hinglish (दूध वाला → "Doodh Wala"), never Devanagari.`;
