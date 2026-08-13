@@ -154,6 +154,7 @@ export const TransactionForm = ({
                                 <FormLabel>Payee</FormLabel>
                                 <VoiceFieldButton
                                     label="payee"
+                                    field="payee"
                                     onResult={(text) => form.setValue("payee", text.replace(/[.।]\s*$/, ""))}
                                 />
                             </div>
@@ -177,6 +178,7 @@ export const TransactionForm = ({
                                 <FormLabel>Amount</FormLabel>
                                 <VoiceFieldButton
                                     label="amount"
+                                    field="amount"
                                     onResult={(text) => {
                                         const match = text.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
                                         if (match) form.setValue("amount", match[0]);
@@ -222,6 +224,7 @@ export const TransactionForm = ({
                                 <FormLabel>Notes</FormLabel>
                                 <VoiceFieldButton
                                     label="notes"
+                                    field="notes"
                                     onResult={(text) => form.setValue("notes", text)}
                                 />
                             </div>

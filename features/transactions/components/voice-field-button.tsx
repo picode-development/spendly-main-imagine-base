@@ -7,18 +7,21 @@ import { cn } from "@/lib/utils";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 
 type Props = {
-    /** Receives the spoken text once transcribed */
-    onResult: (transcript: string) => void;
+    /** Receives the cleaned spoken value once transcribed */
+    onResult: (value: string) => void;
     label: string;
+    /** Field kind — the server cleans the transcript into just this value */
+    field?: "payee" | "amount" | "notes";
 };
 
 // Small per-field mic: speak the value, it lands in the field. While
 // recording it shows a live mini-waveform inside a red ring.
-export const VoiceFieldButton = ({ onResult, label }: Props) => {
+export const VoiceFieldButton = ({ onResult, label, field }: Props) => {
     const { isRecording, isProcessing, levels, toggle } = useVoiceRecorder(async (blob) => {
         const form = new FormData();
         form.append("audio", blob, "voice.webm");
-        const res = await fetch("/api/pending-transactions/voice?mode=transcribe", {
+        const query = field ? `mode=transcribe&field=${field}` : "mode=transcribe";
+        const res = await fetch(`/api/pending-transactions/voice?${query}`, {
             method: "POST",
             body: form,
         });
@@ -28,7 +31,8 @@ export const VoiceFieldButton = ({ onResult, label }: Props) => {
             return;
         }
         const { data } = await res.json();
-        if (data?.transcript) onResult(data.transcript);
+        const value = data?.value ?? data?.transcript;
+        if (value) onResult(value);
     });
 
     return (

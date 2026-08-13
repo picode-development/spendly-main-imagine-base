@@ -2,7 +2,7 @@ import { z } from "zod";
 import { db } from "@/db/drizzle";
 import { pendingTransactions } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
-import { llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { llmCleanFieldValue, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
@@ -109,10 +109,11 @@ const app = new Hono()
         clerkMiddleware(),
         zValidator("query", z.object({
             mode: z.enum(["extract", "transcribe"]).optional(),
+            field: z.enum(["payee", "amount", "notes"]).optional(),
         })),
         async (c) => {
             const auth = getAuth(c);
-            const { mode } = c.req.valid("query");
+            const { mode, field } = c.req.valid("query");
 
             if (!auth?.userId) {
                 return c.json({ error: "Unauthorized" }, 401);
@@ -133,7 +134,12 @@ const app = new Hono()
             }
 
             if (mode === "transcribe") {
-                return c.json({ data: { transcript, parsed: null } });
+                // Per-field dictation: clean the raw transcript into just the
+                // value for that field ("uh, the chicken shopkeeper." → name)
+                const value = field
+                    ? (await llmCleanFieldValue(field, transcript)) ?? transcript
+                    : transcript;
+                return c.json({ data: { transcript, value, parsed: null } });
             }
 
             const parsed = await llmExtractFromText(transcript, await getLlmContext(auth.userId));

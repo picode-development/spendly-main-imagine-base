@@ -11,6 +11,7 @@ const GROQ_BASE = "https://api.groq.com/openai/v1";
 const TEXT_MODEL = "llama-3.3-70b-versatile";
 const VISION_MODEL = "qwen/qwen3.6-27b";
 const WHISPER_MODEL = "whisper-large-v3-turbo";
+const FAST_MODEL = "llama-3.1-8b-instant";
 
 export type LlmContext = {
     /** The user's Spendly account names, for matching */
@@ -181,6 +182,51 @@ export const llmTranscribe = async (audio: Blob, filename: string): Promise<stri
         return typeof data?.text === "string" && data.text.trim() ? data.text.trim() : null;
     } catch (e) {
         console.error("Groq transcription error:", e);
+        return null;
+    }
+};
+
+const FIELD_PROMPTS: Record<string, string> = {
+    payee: `The user dictated the payee for a transaction. Extract ONLY the person/shop/company name — no filler words ("uh", "the payee is"), no trailing punctuation. Reply JSON: {"value": string | null}. Examples: "uh the chicken shopkeeper." → {"value": "Chicken Shopkeeper"}; "paid to sneha didi" → {"value": "Sneha didi"}.`,
+    amount: `The user dictated an amount of money in rupees. Extract it as a plain number string with no currency symbol or commas. Reply JSON: {"value": string | null}. Examples: "two hundred fifty rupees" → {"value": "250"}; "1,250.50" → {"value": "1250.50"}.`,
+    notes: `The user dictated a note for a transaction. Rewrite it as a clean short note — drop filler words, fix obvious transcription slips, keep the meaning and any names/amounts. Reply JSON: {"value": string | null}.`,
+};
+
+/**
+ * Cleans a dictated field value with a fast small model — turns raw Whisper
+ * output ("uh, the chicken shopkeeper.") into a usable value.
+ */
+export const llmCleanFieldValue = async (
+    field: "payee" | "amount" | "notes",
+    spoken: string,
+): Promise<string | null> => {
+    const apiKey = process.env.GROQ_KEY;
+    if (!apiKey) return null;
+
+    try {
+        const response = await fetch(`${GROQ_BASE}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                model: FAST_MODEL,
+                temperature: 0,
+                response_format: { type: "json_object" },
+                messages: [
+                    { role: "system", content: FIELD_PROMPTS[field] },
+                    { role: "user", content: spoken },
+                ],
+            }),
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (typeof content !== "string") return null;
+        const value = (JSON.parse(content) as { value?: string | null }).value;
+        return typeof value === "string" && value.trim() ? value.trim() : null;
+    } catch {
         return null;
     }
 };
