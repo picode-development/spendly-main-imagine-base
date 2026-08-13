@@ -277,6 +277,45 @@ const app = new Hono()
         },
     )
 
+    // Fill an existing (blank) pending row after a retry succeeded
+    .patch(
+        "/detected/:id",
+        clerkMiddleware(),
+        zValidator("param", z.object({ id: z.string() })),
+        zValidator("json", z.object({
+            amount: z.number().int().nullish(),
+            payee: z.string().max(200).nullish(),
+            accountHint: z.string().max(200).nullish(),
+            categoryHint: z.string().max(200).nullish(),
+            note: z.string().max(500).nullish(),
+            date: z.coerce.date().nullish(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { id } = c.req.valid("param");
+            const v = c.req.valid("json");
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+            const [data] = await db
+                .update(pendingTransactions)
+                .set({
+                    amount: v.amount ?? null,
+                    payee: v.payee ?? null,
+                    accountHint: v.accountHint ?? null,
+                    categoryHint: v.categoryHint ?? null,
+                    note: v.note ?? null,
+                    ...(v.date ? { date: v.date } : {}),
+                })
+                .where(and(
+                    eq(pendingTransactions.id, id),
+                    eq(pendingTransactions.userId, auth.userId),
+                ))
+                .returning();
+            return c.json({ data: data ?? null });
+        },
+    )
+
     // Client-uploaded share (service-worker path): images are already hosted
     // by the page; extract each and fan out one pending per image.
     .post(
@@ -389,11 +428,14 @@ const app = new Hono()
                 return c.json({ data: { transcript, value, parsed: null } });
             }
 
+            // A transcript that transcribed fine should never come back with
+            // no fields because of a transient rate-limit — retry until it
+            // yields something usable (or attempts run out)
+            const isUsable = (p: Awaited<ReturnType<typeof llmExtractFromText>>) =>
+                !!p && (p.amount != null || !!p.payee || !!p.accountName || p.isTransfer || !!p.switchTo);
             let parsed = await llmExtractFromText(transcript, ctx);
-            if (!parsed) {
-                // One more attempt — a transcript that transcribed fine should
-                // never come back unparsed because of a transient hiccup
-                await new Promise((resolve) => setTimeout(resolve, 1200));
+            for (let attempt = 0; attempt < 2 && !isUsable(parsed); attempt++) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
                 parsed = await llmExtractFromText(transcript, ctx);
             }
             return c.json({ data: { transcript, parsed } });

@@ -20,11 +20,11 @@ const MAX_SHARE_IMAGES = 25;
 // as many at once as we have keys; the rest queue and start as workers free.
 const CONCURRENCY = 6;
 
-type ItemStatus = "queued" | "working" | "done" | "empty" | "error";
+type ItemStatus = "queued" | "working" | "retry" | "done" | "empty" | "error";
 
 // Finished items (wins first) sort to the top; still-processing sink down
 const STATUS_ORDER: Record<ItemStatus, number> = {
-    done: 0, empty: 1, error: 2, working: 3, queued: 4,
+    done: 0, empty: 1, error: 2, retry: 3, working: 4, queued: 5,
 };
 type Item = {
     status: ItemStatus;
@@ -114,7 +114,16 @@ const ShareClaimHandler = () => {
             });
             setItems(seeded);
 
-            let created = 0;
+            // Rows that came back blank but have a hosted image — retried
+            // after the first pass, once rate-limit windows have refilled
+            const toRetry: { index: number; pendingId: string; url: string }[] = [];
+
+            const extractFrom = async (image: string) => {
+                const res = await client.api["pending-transactions"]["extract-image"]
+                    .$post({ json: { image, text: meta.text || null } })
+                    .catch(() => null);
+                return res?.ok ? (await res.json()).data : null;
+            };
 
             const processOne = async (file: File, index: number) => {
                 updateItem(index, { status: "working" });
@@ -123,10 +132,7 @@ const ShareClaimHandler = () => {
                 // concurrent reads land on different keys server-side
                 const aiPromise = (async () => {
                     const dataUrl = await toAiDataUrl(file);
-                    const res = await client.api["pending-transactions"]["extract-image"].$post({
-                        json: { image: dataUrl, text: meta.text || null },
-                    });
-                    return res.ok ? (await res.json()).data : null;
+                    return extractFrom(dataUrl);
                 })().catch(() => null);
 
                 const uploadPromise = (async () => {
@@ -142,13 +148,8 @@ const ShareClaimHandler = () => {
                 ]);
                 let extracted = initialExtract;
 
-                // Local read failed but upload landed — retry from hosted URL
-                if (!extracted && hosted) {
-                    const res = await client.api["pending-transactions"]["extract-image"]
-                        .$post({ json: { image: hosted.url, text: meta.text || null } })
-                        .catch(() => null);
-                    if (res?.ok) extracted = (await res.json()).data;
-                }
+                // Local read failed but upload landed — one immediate retry
+                if (!extracted && hosted) extracted = await extractFrom(hosted.url);
 
                 if (!extracted && !hosted) {
                     updateItem(index, { status: "error" });
@@ -168,17 +169,19 @@ const ShareClaimHandler = () => {
                         clientKey,
                     },
                 });
-                if (res.ok) {
-                    const { data } = await res.json();
-                    if (data) created += 1;
-                    const hasData = data?.amount != null || !!data?.payee;
-                    updateItem(index, {
-                        status: hasData ? "done" : "empty",
-                        amount: data?.amount ?? null,
-                        payee: data?.payee ?? null,
-                    });
+                if (!res.ok) { updateItem(index, { status: "error" }); return; }
+
+                const { data } = await res.json();
+                const hasData = data?.amount != null || !!data?.payee;
+                if (hasData) {
+                    updateItem(index, { status: "done", amount: data?.amount ?? null, payee: data?.payee ?? null });
+                } else if (data && hosted) {
+                    // Blank for now — keep it visibly "retrying" (never a
+                    // premature "add manually") and queue a second attempt
+                    updateItem(index, { status: "retry" });
+                    toRetry.push({ index, pendingId: data.id, url: hosted.url });
                 } else {
-                    updateItem(index, { status: "error" });
+                    updateItem(index, { status: "empty" });
                 }
             };
 
@@ -192,10 +195,41 @@ const ShareClaimHandler = () => {
                 }),
             );
 
+            // Retry pass for the blanks — the key pool naturally waits for a
+            // refilled window, so these usually resolve now
+            if (toRetry.length > 0) {
+                const retryQueue = [...toRetry];
+                await Promise.all(
+                    Array.from({ length: Math.min(CONCURRENCY, retryQueue.length) }, async () => {
+                        while (retryQueue.length > 0) {
+                            const { index, pendingId, url } = retryQueue.shift()!;
+                            const extracted = await extractFrom(url).catch(() => null);
+                            const hasData = extracted && (extracted.amount != null || !!extracted.payee);
+                            if (hasData) {
+                                await client.api["pending-transactions"]["detected"][":id"].$patch({
+                                    param: { id: pendingId },
+                                    json: {
+                                        amount: extracted.isTransaction ? extracted.amount : null,
+                                        payee: extracted.payee ?? null,
+                                        accountHint: extracted.accountName ?? extracted.accountHint ?? null,
+                                        categoryHint: extracted.categoryName ?? null,
+                                        note: extracted.note ?? null,
+                                        date: extracted.date ? new Date(extracted.date) : undefined,
+                                    },
+                                }).catch(() => null);
+                                updateItem(index, { status: "done", amount: extracted.amount ?? null, payee: extracted.payee ?? null });
+                            } else {
+                                updateItem(index, { status: "empty" });
+                            }
+                        }
+                    }),
+                );
+            }
+
             queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
             setPhase("done");
             // Longer dwell for bigger batches so the user can scan the results
-            setTimeout(() => router.replace("/transactions"), Math.min(6000, 2000 + created * 400));
+            setTimeout(() => router.replace("/transactions"), Math.min(6000, 2500 + files.length * 250));
         };
 
         // Server-stash path (fallback when the service worker isn't active)
@@ -219,7 +253,8 @@ const ShareClaimHandler = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const doneCount = items.filter((i) => i.status !== "queued" && i.status !== "working").length;
+    const inFlight = (s: ItemStatus) => s === "queued" || s === "working" || s === "retry";
+    const doneCount = items.filter((i) => !inFlight(i.status)).length;
     const successCount = items.filter((i) => i.status === "done").length;
     const progress = items.length ? Math.round((doneCount / items.length) * 100) : 0;
 
@@ -309,9 +344,9 @@ const ShareClaimHandler = () => {
                                                         {item.preview && (
                                                             <img src={item.preview} alt="" className="size-full object-cover" />
                                                         )}
-                                                        {(item.status === "queued" || item.status === "working") && (
+                                                        {(item.status === "queued" || item.status === "working" || item.status === "retry") && (
                                                             <span className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                                                <Loader2 className={cn("size-4 text-white", item.status === "working" && "animate-spin")} />
+                                                                <Loader2 className={cn("size-4 text-white", item.status !== "queued" && "animate-spin")} />
                                                             </span>
                                                         )}
                                                     </div>
@@ -338,6 +373,7 @@ const ShareClaimHandler = () => {
                                                             )}>
                                                                 {item.status === "queued" && "Waiting…"}
                                                                 {item.status === "working" && "Reading…"}
+                                                                {item.status === "retry" && "Retrying…"}
                                                                 {item.status === "empty" && "Saved — add details manually"}
                                                                 {item.status === "error" && "Couldn't read this one"}
                                                             </p>

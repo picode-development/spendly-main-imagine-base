@@ -56,6 +56,8 @@ export const VoiceFormButton = ({ onParsed, disabled }: Props) => {
                 "shrink-0 transition-all duration-300",
                 // Square icon button at rest; expands to fit the waveform while recording
                 isRecording ? "w-28" : "w-9 px-0",
+                // Same gold-on-hover identity as the floating voice ball
+                !isRecording && "bg-gradient-to-br from-[var(--header-gradient-from)] to-[var(--header-gradient-to)] text-white hover:from-amber-300 hover:to-amber-500 hover:text-white",
             )}
         >
             {isProcessing ? (
