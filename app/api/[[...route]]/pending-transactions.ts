@@ -128,39 +128,45 @@ const app = new Hono()
                 return c.json({ error: "Nothing to claim" }, 404);
             }
 
-            let parsed = null;
+            let rows;
             if (stash.imageUrls?.length) {
-                // UPI apps attach a summary caption to shared screenshots —
-                // the vision model reads both together
-                const extracted = await llmExtractFromImage(
-                    stash.imageUrls[0].url,
-                    await getLlmContext(auth.userId),
-                    stash.rawText,
-                );
-                if (extracted) {
-                    parsed = {
+                // Each shared screenshot becomes its own detected transaction.
+                // UPI apps attach a summary caption — the vision model reads it
+                // alongside each image.
+                const ctx = await getLlmContext(auth.userId);
+                rows = await Promise.all(stash.imageUrls.map(async (image) => {
+                    const extracted = await llmExtractFromImage(image.url, ctx, stash.rawText);
+                    const parsed = extracted ? {
                         amount: extracted.isTransaction ? extracted.amount : null,
                         payee: extracted.payee,
                         accountHint: extracted.accountName ?? extracted.accountHint,
                         categoryHint: extracted.categoryName,
                         note: extracted.note,
                         date: extracted.date ?? new Date(),
+                    } : (stash.rawText ? await parseMessage(auth.userId, stash.rawText) : null);
+
+                    return {
+                        id: createId(),
+                        userId: auth.userId!,
+                        rawMessage: stash.rawText || "Shared screenshot",
+                        imageUrls: [image],
+                        ...(parsed ?? { date: new Date() }),
                     };
-                } else if (stash.rawText) {
-                    // Vision unavailable — at least parse the caption text
-                    parsed = await parseMessage(auth.userId, stash.rawText);
-                }
-            } else if (stash.rawText) {
-                parsed = await parseMessage(auth.userId, stash.rawText);
+                }));
+            } else {
+                const parsed = stash.rawText
+                    ? await parseMessage(auth.userId, stash.rawText)
+                    : null;
+                rows = [{
+                    id: createId(),
+                    userId: auth.userId,
+                    rawMessage: stash.rawText || "Shared content",
+                    imageUrls: null,
+                    ...(parsed ?? { date: new Date() }),
+                }];
             }
 
-            const [data] = await db.insert(pendingTransactions).values({
-                id: createId(),
-                userId: auth.userId,
-                rawMessage: stash.rawText || "Shared screenshot",
-                imageUrls: stash.imageUrls,
-                ...(parsed ?? { date: new Date() }),
-            }).returning();
+            const data = await db.insert(pendingTransactions).values(rows).returning();
 
             // Burn the token and sweep stale unclaimed stashes
             await db.delete(sharedStash).where(eq(sharedStash.id, token));

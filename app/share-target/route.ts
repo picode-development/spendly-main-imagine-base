@@ -57,30 +57,35 @@ export async function POST(req: NextRequest) {
         .join(" ")
         .trim()
         .slice(0, 2000);
-    const image = form
+    // Bulk shares supported: each screenshot becomes its own detected
+    // transaction at claim time
+    const images = form
         .getAll("media")
-        .find((f): f is File =>
-            f instanceof File && f.type.startsWith("image/") && f.size <= MAX_IMAGE_BYTES);
+        .filter((f): f is File =>
+            f instanceof File && f.type.startsWith("image/") && f.size <= MAX_IMAGE_BYTES)
+        .slice(0, 10);
 
-    if (!image && !text) {
+    if (images.length === 0 && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);
     }
 
-    let imageUrls: TransactionImage[] | null = null;
-    if (image) {
-        const buffer = Buffer.from(await image.arrayBuffer());
-        const [hostedUrl, preview] = await Promise.all([
-            uploadToImgBB(buffer),
-            makeBlurPreview(buffer),
-        ]);
-        if (hostedUrl) imageUrls = [{ url: hostedUrl, preview }];
-    }
+    const uploaded = await Promise.all(
+        images.map(async (image): Promise<TransactionImage | null> => {
+            const buffer = Buffer.from(await image.arrayBuffer());
+            const [hostedUrl, preview] = await Promise.all([
+                uploadToImgBB(buffer),
+                makeBlurPreview(buffer),
+            ]);
+            return hostedUrl ? { url: hostedUrl, preview } : null;
+        }),
+    );
+    const imageUrls = uploaded.filter((u): u is TransactionImage => u !== null);
 
     const token = createId();
     await db.insert(sharedStash).values({
         id: token,
         rawText: text || null,
-        imageUrls,
+        imageUrls: imageUrls.length > 0 ? imageUrls : null,
     });
 
     return NextResponse.redirect(new URL(`/share-claim?token=${token}`, req.url), 303);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { BellRing, ChevronDown, Plus, X } from "lucide-react";
 
@@ -19,6 +20,7 @@ import { useOpenCategory } from "@/features/categories/hooks/use-open-category";
 
 export const PendingTransactionsPopup = () => {
     const [collapsed, setCollapsed] = useState(false);
+    const pathname = usePathname();
     const { data: pending } = useGetPendingTransactions();
     const deletePending = useDeletePendingTransaction();
     const newTransaction = useNewTransaction();
@@ -35,6 +37,8 @@ export const PendingTransactionsPopup = () => {
     ].some(Boolean);
 
     if (anySheetOpen) return null;
+    // The share-claim screen has its own progress/reward card — stay out of it
+    if (pathname === "/share-claim" || pathname === "/share") return null;
     if (!pending || pending.length === 0) return null;
 
     if (collapsed) {

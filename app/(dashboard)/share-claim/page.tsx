@@ -12,7 +12,7 @@ import { formatCurrency } from "@/lib/utils";
 
 type ClaimState =
     | { phase: "reading" }
-    | { phase: "done"; amount: number | null; payee: string | null }
+    | { phase: "done"; count: number; amount: number | null; payee: string | null }
     | { phase: "error" };
 
 // Lands here (signed-in GET) right after an Android share; claims the
@@ -41,13 +41,15 @@ const ShareClaimHandler = () => {
                 });
                 if (!res.ok) throw new Error("claim failed");
                 const { data } = await res.json();
+                const rows = Array.isArray(data) ? data : [data];
                 queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
                 setState({
                     phase: "done",
-                    amount: data?.amount ?? null,
-                    payee: data?.payee ?? null,
+                    count: rows.length,
+                    amount: rows[0]?.amount ?? null,
+                    payee: rows[0]?.payee ?? null,
                 });
-                setTimeout(() => router.replace("/transactions"), 1800);
+                setTimeout(() => router.replace("/transactions"), rows.length > 1 ? 2200 : 1800);
             } catch {
                 setState({ phase: "error" });
                 setTimeout(() => router.replace("/transactions"), 3000);
@@ -85,11 +87,15 @@ const ShareClaimHandler = () => {
                             <Check className="size-8 text-emerald-500" strokeWidth={3} />
                         </div>
                         <div className="space-y-1">
-                            <h2 className="text-base font-semibold">Got it!</h2>
+                            <h2 className="text-base font-semibold">
+                                {state.count > 1 ? `${state.count} transactions detected` : "Got it!"}
+                            </h2>
                             <p className="text-sm text-muted-foreground">
-                                {state.amount !== null || state.payee
-                                    ? "Here's what was detected:"
-                                    : "Saved for your review."}
+                                {state.count > 1
+                                    ? "Each screenshot is saved separately for review."
+                                    : state.amount !== null || state.payee
+                                        ? "Here's what was detected:"
+                                        : "Saved for your review."}
                             </p>
                         </div>
                         {(state.amount !== null || state.payee) && (
@@ -104,6 +110,11 @@ const ShareClaimHandler = () => {
                                 )}
                                 {state.payee && (
                                     <span className="text-sm font-medium">{state.payee}</span>
+                                )}
+                                {state.count > 1 && (
+                                    <span className="text-xs text-muted-foreground">
+                                        +{state.count - 1} more
+                                    </span>
                                 )}
                             </div>
                         )}
