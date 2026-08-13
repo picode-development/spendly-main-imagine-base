@@ -11,6 +11,7 @@ import { NewTransactionSheet } from "@/features/transactions/components/new-tran
 import { EditTransactionSheet } from "@/features/transactions/components/edit-transaction-sheet";
 import { NewTransferSheet } from "@/features/transactions/components/new-transfer-sheet";
 import { PendingTransactionsPopup } from "@/features/transactions/components/pending-transactions-popup";
+import { VoiceFab } from "@/features/transactions/components/voice-fab";
 
 export const SheetProvider = () => {
     const isMounted = useMountedState();
@@ -29,6 +30,7 @@ export const SheetProvider = () => {
             <EditTransactionSheet />
             <NewTransferSheet />
             <PendingTransactionsPopup />
+            <VoiceFab />
         </>
     )
 }
