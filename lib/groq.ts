@@ -67,11 +67,14 @@ const coolDownGroqKey = (key: string, seconds: number, scope: string) => {
 };
 
 const parseRetrySeconds = (errorText: string): number => {
-    // A daily-quota / billing 429 won't refill for a long time — park the key
-    // for an hour instead of hammering it every few seconds
-    if (/quota|billing|per day|daily limit|resource_exhausted/i.test(errorText)) return 3600;
+    // An explicit "try again in Xs" is a short per-minute rate limit — honor it
+    // exactly. (Groq's TPM message also links to /settings/billing, so we must
+    // NOT treat "billing" as a daily-quota signal or every 429 parks for an hour.)
     const m = errorText.match(/try again in ([\d.]+)s/i) ?? errorText.match(/retry.*?([\d.]+)\s*s/i);
-    return m ? parseFloat(m[1]) : 5; // sane default when Groq omits the hint
+    if (m) return parseFloat(m[1]);
+    // No wait hint at all — a hard daily quota / exhaustion; park it a while
+    if (/quota|per day|daily limit|resource_exhausted|exceeded your/i.test(errorText)) return 3600;
+    return 5; // sane default
 };
 
 // Groq-only, intelligence-first: strongest model first, stepping down on rate
