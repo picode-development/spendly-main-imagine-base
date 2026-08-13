@@ -19,12 +19,14 @@ export default function manifest(): MetadataRoute.Manifest {
             { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
         share_target: {
-            action: "/share",
-            method: "GET",
+            action: "/share-target",
+            method: "POST",
+            enctype: "multipart/form-data",
             params: {
                 title: "title",
                 text: "text",
                 url: "url",
+                files: [{ name: "media", accept: ["image/*"] }],
             },
         },
     } as MetadataRoute.Manifest;

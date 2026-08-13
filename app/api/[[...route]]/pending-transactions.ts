@@ -1,18 +1,13 @@
 import { z } from "zod";
 import { db } from "@/db/drizzle";
-import { pendingTransactions, smsRules } from "@/db/schema";
-import { parseTransactionSms, SmsRule } from "@/lib/sms-parser";
+import { pendingTransactions } from "@/db/schema";
+import { parseMessage, getLlmContext } from "@/lib/parse-message";
+import { llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { zValidator } from "@hono/zod-validator";
-
-const getUserRules = async (userId: string): Promise<SmsRule[]> =>
-    db
-        .select()
-        .from(smsRules)
-        .where(eq(smsRules.userId, userId)) as Promise<SmsRule[]>;
 
 const app = new Hono()
     .get(
@@ -59,10 +54,10 @@ const app = new Hono()
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
-            const parsed = parseTransactionSms(message, await getUserRules(inboxUserId));
+            const parsed = await parseMessage(inboxUserId, message);
 
             // OTPs, balance alerts, promos — acknowledged but not stored
-            if (!parsed.isTransaction) {
+            if (!parsed) {
                 return c.json({ data: { ignored: true as const } });
             }
 
@@ -70,10 +65,7 @@ const app = new Hono()
                 id: createId(),
                 userId: inboxUserId,
                 rawMessage: message,
-                amount: parsed.amount,
-                payee: parsed.payee,
-                accountHint: parsed.accountHint,
-                date: parsed.date ?? new Date(),
+                ...parsed,
             }).returning();
 
             return c.json({ data });
@@ -96,19 +88,56 @@ const app = new Hono()
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
-            const parsed = parseTransactionSms(message, await getUserRules(auth.userId));
+            // Stored even when parsing is incomplete: the user chose to share it
+            const parsed = await parseMessage(auth.userId, message);
 
             const [data] = await db.insert(pendingTransactions).values({
                 id: createId(),
                 userId: auth.userId,
                 rawMessage: message,
-                amount: parsed.amount,
-                payee: parsed.payee,
-                accountHint: parsed.accountHint,
-                date: parsed.date ?? new Date(),
+                ...(parsed ?? { date: new Date() }),
             }).returning();
 
             return c.json({ data });
+        },
+    )
+
+    // Voice input: transcribes the recording; with mode=extract it also pulls
+    // out transaction fields (matched against the user's accounts/categories).
+    .post(
+        "/voice",
+        clerkMiddleware(),
+        zValidator("query", z.object({
+            mode: z.enum(["extract", "transcribe"]).optional(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { mode } = c.req.valid("query");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+            if (!process.env.GROQ_KEY) {
+                return c.json({ error: "Voice input needs a Groq API key (GROQ_KEY)" }, 501);
+            }
+
+            const body = await c.req.parseBody();
+            const audio = body["audio"];
+            if (!(audio instanceof File)) {
+                return c.json({ error: "Missing audio" }, 400);
+            }
+
+            const transcript = await llmTranscribe(audio, audio.name || "voice.webm");
+            if (!transcript) {
+                return c.json({ error: "Couldn't understand the recording" }, 502);
+            }
+
+            if (mode === "transcribe") {
+                return c.json({ data: { transcript, parsed: null } });
+            }
+
+            const parsed = await llmExtractFromText(transcript, await getLlmContext(auth.userId));
+            return c.json({ data: { transcript, parsed } });
         },
     )
 

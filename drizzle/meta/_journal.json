@@ -71,6 +71,13 @@
       "when": 1786565727002,
       "tag": "0009_tearful_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1786612821186,
+      "tag": "0010_yellow_hobgoblin",
+      "breakpoints": true
     }
   ]
 }

@@ -59,6 +59,11 @@ export const PendingTransactionsPopup = () => {
                 amount: item.amount === null ? "" : String(item.amount),
                 // Keep notes clean: just the account hint, not the raw SMS
                 notes: item.accountHint ?? undefined,
+                // LLM-matched names resolve to the right account/category ids
+                accountName: item.accountHint ?? undefined,
+                categoryName: item.categoryHint ?? undefined,
+                // A shared payment screenshot arrives already attached
+                imageUrls: item.imageUrls ?? undefined,
             },
         });
     };

@@ -88,7 +88,9 @@ export const pendingTransactions = pgTable("pending_transactions", {
     rawMessage: text("raw_message").notNull(),
     amount: integer("amount"),          // parsed, miliunits, negative = debit
     payee: text("payee"),               // parsed payee / UPI VPA
-    accountHint: text("account_hint"),  // e.g. "a/c ..1234" from the message
+    accountHint: text("account_hint"),  // "a/c ..1234" or a matched account name
+    categoryHint: text("category_hint"),// LLM-matched category name, if any
+    imageUrls: jsonb("image_urls").$type<TransactionImage[]>(), // shared screenshot(s)
     date: timestamp("date", { mode: "date" }).notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });

@@ -11,6 +11,7 @@ import { DatePicker } from "@/components/date-picker";
 import { Select } from "@/components/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageUpload } from "./image-upload";
+import { VoiceFieldButton } from "./voice-field-button";
 import {
     Form,
     FormControl,
@@ -149,7 +150,13 @@ export const TransactionForm = ({
                     control={form.control}
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel>Payee</FormLabel>
+                            <div className="flex items-center justify-between">
+                                <FormLabel>Payee</FormLabel>
+                                <VoiceFieldButton
+                                    label="payee"
+                                    onResult={(text) => form.setValue("payee", text.replace(/[.।]\s*$/, ""))}
+                                />
+                            </div>
                             <FormControl>
                                 <Input
                                     disabled={disabled}
@@ -166,7 +173,16 @@ export const TransactionForm = ({
                     control={form.control}
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel>Amount</FormLabel>
+                            <div className="flex items-center justify-between">
+                                <FormLabel>Amount</FormLabel>
+                                <VoiceFieldButton
+                                    label="amount"
+                                    onResult={(text) => {
+                                        const match = text.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+                                        if (match) form.setValue("amount", match[0]);
+                                    }}
+                                />
+                            </div>
                             <FormControl>
                                 <AmmountInput
                                     {...field}
@@ -202,7 +218,13 @@ export const TransactionForm = ({
                     control={form.control}
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel>Notes</FormLabel>
+                            <div className="flex items-center justify-between">
+                                <FormLabel>Notes</FormLabel>
+                                <VoiceFieldButton
+                                    label="notes"
+                                    onResult={(text) => form.setValue("notes", text)}
+                                />
+                            </div>
                             <FormControl>
                                 <Textarea
                                     {...field}

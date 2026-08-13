@@ -23,8 +23,18 @@ import { Loader2 } from "lucide-react";
 
 type FormValues = z.input<typeof formSchema>;
 
+ const matchOption = (
+    options: { label: string; value: string }[],
+    name?: string,
+ ): string => {
+    if (!name) return "";
+    return options.find(
+        (o) => o.label.trim().toLowerCase() === name.trim().toLowerCase(),
+    )?.value ?? "";
+ };
+
  export const NewTransactionSheet = () => {
-    const { isOpen, onClose, prefill, pendingId } = useNewTransaction();
+    const { isOpen, onClose, prefill, prefillKey, pendingId } = useNewTransaction();
 
     const categoryQuery = useGetCategories();
     const categoryMutation = useCreateCategory();
@@ -93,14 +103,14 @@ type FormValues = z.input<typeof formSchema>;
                     )
                     : (
                         <TransactionForm
-                            key={pendingId ?? "blank"}
+                            key={pendingId ?? prefillKey ?? "blank"}
                             defaultValues={{
                             date: prefill?.date ?? new Date(),
-                            accountId: "",
-                            categoryId: null,
+                            accountId: matchOption(accountOptions, prefill?.accountName),
+                            categoryId: matchOption(categoryOptions, prefill?.categoryName) || null,
                             payee: prefill?.payee ?? "",
                             amount: prefill?.amount ?? "",
-                            imageUrls: null,
+                            imageUrls: prefill?.imageUrls ?? null,
                             notes: prefill?.notes ?? null,
                             }}
                             onSubmit={onSubmit}

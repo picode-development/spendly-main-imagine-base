@@ -26,7 +26,6 @@ import { Separator } from "@/components/ui/separator";
 import { AppLockSwitch } from "@/components/ui/app-lock-switch";
 import { useAppLockStore } from "@/hooks/use-app-lock";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
-import { SmsFormatSettings } from "@/features/transactions/components/sms-format-settings";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { client } from "@/lib/hono";
 import { convertAmountFromMiliunits } from "@/lib/utils";
@@ -222,10 +221,6 @@ const SettingsPage = () => {
                 : "None waiting"}
             </Button>
           </div>
-
-          <Separator className="my-2" />
-
-          <SmsFormatSettings />
 
           <Separator className="my-2" />
 

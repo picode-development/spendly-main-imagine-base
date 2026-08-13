@@ -1,5 +1,11 @@
 # SMS Auto-Capture — Setup Guide
 
+> **LLM parsing (recommended):** with `GROQ_KEY` set (locally in `.env.local`
+> and on the deploy host), messages, shared payment screenshots, and voice
+> input are understood by Groq models (Llama for text, Qwen vision for
+> screenshots, Whisper for speech) — including account/category matching.
+> Without the key, everything below still works via the built-in regex parser.
+
 Spendly can detect bank/UPI transaction messages and show them as a review
 popup ("N detected transactions") so you never forget to log one. Tapping
 **Add** opens the transaction sheet pre-filled — pick the account/category and

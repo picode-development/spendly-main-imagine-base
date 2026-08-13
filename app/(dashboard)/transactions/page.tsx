@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBulkDeleteTransactions } from "@/features/transactions/api/use-bulk-delete-transactions";
 import { useState } from "react";
 import { UploadButton } from "./upload-button";
+import { VoiceTransactionButton } from "@/features/transactions/components/voice-transaction-button";
 import { ImportCard } from "./import-card";
 import { useSelectAccount } from "@/features/accounts/hooks/use-select-account.";
 import { toast } from "sonner";
@@ -141,6 +142,7 @@ const TransactionsPage = () => {
                             <ArrowLeftRight className="size-4 mr-2" />
                             Transfer
                         </Button>
+                        <VoiceTransactionButton />
                         <UploadButton onUpload={onUpload} />
                     </div>
                 </CardHeader>
