@@ -140,34 +140,53 @@ const chatCompletion = async (
     const apiKey = process.env.GROQ_KEY;
     if (!apiKey) return null;
 
+    const startedAt = Date.now();
     for (const model of models) {
-        try {
-            const response = await fetch(`${GROQ_BASE}/chat/completions`, {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    model,
-                    temperature: 0,
-                    response_format: { type: "json_object" },
-                    messages: [
-                        { role: "system", content: extractionPrompt(ctx) },
-                        { role: "user", content: userContent },
-                    ],
-                }),
-            });
-            if (!response.ok) {
-                console.error(`Groq extraction failed on ${model}:`, response.status, await response.text());
-                continue; // rate-limited or down — try the next tier
+        // Multiple attempts per model: on a 429, Groq's error says exactly
+        // how long until the token-per-minute window refills — honor it as
+        // long as the serverless time budget allows
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const response = await fetch(`${GROQ_BASE}/chat/completions`, {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        model,
+                        temperature: 0,
+                        response_format: { type: "json_object" },
+                        messages: [
+                            { role: "system", content: extractionPrompt(ctx) },
+                            { role: "user", content: userContent },
+                        ],
+                    }),
+                });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error(`Groq extraction failed on ${model}:`, response.status, errorText);
+                    const waitMatch = errorText.match(/try again in ([\d.]+)s/i);
+                    const waitSeconds = waitMatch ? parseFloat(waitMatch[1]) : NaN;
+                    const elapsedSeconds = (Date.now() - startedAt) / 1000;
+                    if (
+                        response.status === 429 &&
+                        waitSeconds > 0 &&
+                        elapsedSeconds + waitSeconds < 18 // stay inside the function's time budget
+                    ) {
+                        await new Promise((resolve) => setTimeout(resolve, (waitSeconds + 0.5) * 1000));
+                        continue; // window refilled — retry the same model
+                    }
+                    break; // unrecoverable here — try the next tier
+                }
+                const data = await response.json();
+                const content = data?.choices?.[0]?.message?.content;
+                if (typeof content !== "string") break;
+                return toLlmTransaction(JSON.parse(content) as RawExtraction);
+            } catch (e) {
+                console.error(`Groq extraction error on ${model}:`, e);
+                break;
             }
-            const data = await response.json();
-            const content = data?.choices?.[0]?.message?.content;
-            if (typeof content !== "string") continue;
-            return toLlmTransaction(JSON.parse(content) as RawExtraction);
-        } catch (e) {
-            console.error(`Groq extraction error on ${model}:`, e);
         }
     }
     return null;

@@ -4,9 +4,11 @@
  * start immediately from the local bytes instead of waiting for the hosted
  * upload.
  *
- * Accuracy first: 2048px / q0.92 keeps a phone screenshot essentially
- * native, so small text (UPI refs, dates) stays crisp for the vision model.
- * Only if the encoded copy would blow the request-size cap does it step down.
+ * Sizing is a token budget call: vision tokens scale with resolution, and
+ * the free tier allows only 8000/minute — a 2048px copy costs ~5000 tokens
+ * (1.5 images/min) while 1280px costs ~1500 (several per minute). Payment
+ * screenshots render amounts/names in large type, so 1280px keeps reading
+ * accuracy while making batches actually flow.
  */
 const MAX_DATA_URL_CHARS = 3_400_000;
 
@@ -14,9 +16,8 @@ export async function toAiDataUrl(blob: Blob): Promise<string> {
     const bitmap = await createImageBitmap(blob);
 
     const attempts: { maxDim: number; quality: number }[] = [
-        { maxDim: 2048, quality: 0.92 },
-        { maxDim: 2048, quality: 0.8 },
-        { maxDim: 1600, quality: 0.8 },
+        { maxDim: 1280, quality: 0.85 },
+        { maxDim: 1024, quality: 0.8 },
     ];
 
     let result: string | null = null;

@@ -201,13 +201,9 @@ const app = new Hono()
             }
 
             const ctx = await getLlmContext(auth.userId);
-            // Spaced attempts ride out the vision model's per-minute limits
-            let extracted = null;
-            for (const delayMs of [0, 1200, 3000]) {
-                if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-                extracted = await llmExtractFromImage(image, ctx, text);
-                if (extracted) break;
-            }
+            // Rate-limit waits are handled inside the Groq client (it parses
+            // Groq's own "try again in Xs" from 429s and honors it)
+            const extracted = await llmExtractFromImage(image, ctx, text);
             return c.json({ data: extracted });
         },
     )
