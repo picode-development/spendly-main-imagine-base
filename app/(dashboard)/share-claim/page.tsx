@@ -7,6 +7,7 @@ import { Check, Loader2, ScanText, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { client } from "@/lib/hono";
 import { formatCurrency } from "@/lib/utils";
 
@@ -59,8 +60,11 @@ const ShareClaimHandler = () => {
     }, []);
 
     return (
-        <div className="flex min-h-[70vh] items-center justify-center px-4">
-            <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
+        // Same shell as every dashboard page: the card rises over the gradient
+        <div className="max-w-screen-2xl mx-auto w-full pb-16 -mt-24">
+            <Card className="border-none drop-shadow-sm">
+                <CardContent className="flex min-h-[420px] items-center justify-center">
+                    <div className="w-full max-w-sm p-4 text-center">
                 {state.phase === "reading" && (
                     <div className="space-y-5">
                         <div className="relative mx-auto size-16">
@@ -141,7 +145,9 @@ const ShareClaimHandler = () => {
                         </Button>
                     </div>
                 )}
-            </div>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 };
@@ -150,8 +156,12 @@ export default function ShareClaimPage() {
     return (
         <Suspense
             fallback={
-                <div className="flex min-h-[70vh] items-center justify-center">
-                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                <div className="max-w-screen-2xl mx-auto w-full pb-16 -mt-24">
+                    <Card className="border-none drop-shadow-sm">
+                        <CardContent className="flex min-h-[420px] items-center justify-center">
+                            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                        </CardContent>
+                    </Card>
                 </div>
             }
         >
