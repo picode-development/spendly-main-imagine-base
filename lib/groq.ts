@@ -42,17 +42,28 @@ const groqKeys = (): string[] => {
 // key frees up soonest, retry the instant it's live" behavior.
 const groqCooldownUntil = new Map<string, number>();
 
+// Round-robin cursor so CONCURRENT callers each claim a different key instead
+// of all grabbing keys[0] and colliding. Selection is synchronous, so the
+// cursor advance is atomic between the interleaving await points.
+let groqCursor = 0;
+
 /** Picks a usable Groq key now, or the one freeing up soonest (with its wait). */
 const pickGroqKey = (keys: string[]): { key: string; waitMs: number } | null => {
-    if (keys.length === 0) return null;
+    const n = keys.length;
+    if (n === 0) return null;
     const now = Date.now();
     let soonest: { key: string; waitMs: number } | null = null;
-    for (const key of keys) {
+    for (let off = 0; off < n; off++) {
+        const idx = (groqCursor + off) % n;
+        const key = keys[idx];
         const waitMs = Math.max(0, (groqCooldownUntil.get(key) ?? 0) - now);
-        if (waitMs === 0) return { key, waitMs: 0 };
+        if (waitMs === 0) {
+            groqCursor = (idx + 1) % n; // next caller starts past this key
+            return { key, waitMs: 0 };
+        }
         if (!soonest || waitMs < soonest.waitMs) soonest = { key, waitMs };
     }
-    return soonest;
+    return soonest; // all cooling — the one freeing up soonest
 };
 
 const coolDownGroqKey = (key: string, seconds: number) => {

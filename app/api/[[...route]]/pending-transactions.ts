@@ -270,7 +270,7 @@ const app = new Hono()
             images: z.array(z.object({
                 url: z.string().url(),
                 preview: z.string().optional(),
-            })).max(10),
+            })).max(25),
         })),
         async (c) => {
             const auth = getAuth(c);

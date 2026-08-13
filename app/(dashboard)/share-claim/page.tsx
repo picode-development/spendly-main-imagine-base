@@ -3,30 +3,49 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, ScanText, XCircle } from "lucide-react";
+import { Check, Loader2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { client } from "@/lib/hono";
 import { formatCurrency } from "@/lib/utils";
 import { uploadImageWithProgress, makeImagePreview } from "@/features/transactions/lib/upload-imgbb";
 import { toAiDataUrl } from "@/features/transactions/lib/image-data-url";
 
-type ClaimState =
-    | { phase: "reading"; detail?: string; progress?: number }
-    | { phase: "done"; count: number; amount: number | null; payee: string | null }
-    | { phase: "error" };
+const MAX_SHARE_IMAGES = 25;
+// The server pins each concurrent extraction to a different Groq key, so run
+// as many at once as we have keys; the rest queue and start as workers free.
+const CONCURRENCY = 6;
 
-// Lands here (signed-in GET) right after an Android share; claims the
-// stashed share into the pending list with a readable progress → reward flow.
+type ItemStatus = "queued" | "working" | "done" | "empty" | "error";
+type Item = {
+    status: ItemStatus;
+    preview?: string;         // objectURL thumbnail for the row
+    amount?: number | null;
+    payee?: string | null;
+};
+
+// Lands here (signed-in GET) right after an Android share; claims the shared
+// screenshots, showing each one as a live row with its own status + result.
 const ShareClaimHandler = () => {
     const params = useSearchParams();
     const router = useRouter();
     const queryClient = useQueryClient();
     const fired = useRef(false);
-    const [state, setState] = useState<ClaimState>({ phase: "reading" });
+    const previews = useRef<string[]>([]);
+
+    const [phase, setPhase] = useState<"reading" | "done" | "error">("reading");
+    const [items, setItems] = useState<Item[]>([]);
+    // Non-image single spinner (text share / server-stash fallback)
+    const [simple, setSimple] = useState(false);
+
+    const updateItem = (i: number, patch: Partial<Item>) =>
+        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+
+    useEffect(() => () => previews.current.forEach((u) => URL.revokeObjectURL(u)), []);
 
     useEffect(() => {
         if (fired.current) return;
@@ -39,31 +58,26 @@ const ShareClaimHandler = () => {
             return;
         }
 
-        const finish = (rows: { amount?: number | null; payee?: string | null }[]) => {
-            queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
-            setState({
-                phase: "done",
-                count: rows.length,
-                amount: rows[0]?.amount ?? null,
-                payee: rows[0]?.payee ?? null,
-            });
-            setTimeout(() => router.replace("/transactions"), rows.length > 1 ? 2200 : 1800);
+        const contentHash = async (file: File): Promise<string | null> => {
+            try {
+                const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+                return Array.from(new Uint8Array(digest))
+                    .map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+            } catch {
+                return null;
+            }
         };
 
         // Service-worker path: files were parked on-device at FULL quality.
-        // A pool processes up to 5 screenshots concurrently; per screenshot,
-        // the full-quality upload and the AI read (from a local copy) run in
-        // PARALLEL — one progress bar spans everything.
         const claimLocal = async (id: string) => {
             const cache = await caches.open("spendly-share-stash");
             const metaRes = await cache.match(`/__share/${id}/meta`);
             if (!metaRes) throw new Error("share expired");
             const meta = (await metaRes.json()) as { text: string; count: number; dropped?: number };
             if (meta.dropped && meta.dropped > 0) {
-                toast.info(`${meta.dropped} screenshot${meta.dropped > 1 ? "s" : ""} skipped — share up to 10 at a time.`);
+                toast.info(`${meta.dropped} more skipped — share up to ${MAX_SHARE_IMAGES} at a time.`);
             }
 
-            // Pull all files off the cache immediately
             const files: File[] = [];
             for (let i = 0; i < meta.count; i++) {
                 const fileRes = await cache.match(`/__share/${id}/file/${i}`);
@@ -74,53 +88,41 @@ const ShareClaimHandler = () => {
             }
             await cache.delete(`/__share/${id}/meta`);
 
-            const totalSteps = Math.max(1, files.length * 2); // upload + AI per image
-            let doneSteps = 0;
-            let doneItems = 0;
-            const tick = () => {
-                setState({
-                    phase: "reading",
-                    detail: files.length > 1
-                        ? `${doneItems} of ${files.length} screenshots done…`
-                        : "Uploading and reading the screenshot…",
-                    progress: Math.min(99, Math.round((doneSteps / totalSteps) * 100)),
+            // Text-only share → single spinner path
+            if (files.length === 0) {
+                if (!meta.text) throw new Error("nothing to read");
+                setSimple(true);
+                const res = await client.api["pending-transactions"]["from-share"].$post({
+                    json: { text: meta.text, images: [] },
                 });
-            };
-            tick();
+                if (!res.ok) throw new Error("extraction failed");
+                queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
+                router.replace("/transactions");
+                return;
+            }
 
-            const rows: { amount?: number | null; payee?: string | null }[] = [];
-            let duplicates = 0;
+            // Seed one row per screenshot with a thumbnail
+            const seeded: Item[] = files.map((f) => {
+                const preview = URL.createObjectURL(f);
+                previews.current.push(preview);
+                return { status: "queued", preview };
+            });
+            setItems(seeded);
 
-            // Vision calls run one at a time (the free tier rate-limits
-            // concurrent calls into silent failures); uploads stay parallel
-            let aiChain: Promise<unknown> = Promise.resolve();
-            const queueAi = <T,>(task: () => Promise<T>): Promise<T> => {
-                const run = aiChain.then(task, task);
-                aiChain = run.catch(() => null);
-                return run;
-            };
+            let created = 0;
 
-            const contentHash = async (file: File): Promise<string | null> => {
-                try {
-                    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-                    return Array.from(new Uint8Array(digest))
-                        .map((b) => b.toString(16).padStart(2, "0"))
-                        .join("")
-                        .slice(0, 32);
-                } catch {
-                    return null;
-                }
-            };
+            const processOne = async (file: File, index: number) => {
+                updateItem(index, { status: "working" });
 
-            const processOne = async (file: File) => {
-                // AI reads the local copy while the full-quality original uploads
-                const aiPromise = queueAi(async () => {
+                // Upload (full quality) and AI read (local copy) in parallel —
+                // concurrent reads land on different keys server-side
+                const aiPromise = (async () => {
                     const dataUrl = await toAiDataUrl(file);
                     const res = await client.api["pending-transactions"]["extract-image"].$post({
                         json: { image: dataUrl, text: meta.text || null },
                     });
                     return res.ok ? (await res.json()).data : null;
-                }).catch(() => null).finally(() => { doneSteps += 1; tick(); });
+                })().catch(() => null);
 
                 const uploadPromise = (async () => {
                     const [url, preview] = await Promise.all([
@@ -128,25 +130,24 @@ const ShareClaimHandler = () => {
                         makeImagePreview(file).catch(() => undefined),
                     ]);
                     return { url, preview };
-                })().catch(() => null).finally(() => { doneSteps += 1; tick(); });
+                })().catch(() => null);
 
                 const [initialExtract, hosted, clientKey] = await Promise.all([
-                    aiPromise,
-                    uploadPromise,
-                    contentHash(file),
+                    aiPromise, uploadPromise, contentHash(file),
                 ]);
                 let extracted = initialExtract;
-                if (!extracted && !hosted) return; // both halves failed
 
-                // Local-copy read failed but the upload landed — from here on
-                // the AI works off the hosted ImgBB URL
+                // Local read failed but upload landed — retry from hosted URL
                 if (!extracted && hosted) {
-                    const res = await queueAi(() =>
-                        client.api["pending-transactions"]["extract-image"].$post({
-                            json: { image: hosted.url, text: meta.text || null },
-                        }),
-                    ).catch(() => null);
+                    const res = await client.api["pending-transactions"]["extract-image"]
+                        .$post({ json: { image: hosted.url, text: meta.text || null } })
+                        .catch(() => null);
                     if (res?.ok) extracted = (await res.json()).data;
+                }
+
+                if (!extracted && !hosted) {
+                    updateItem(index, { status: "error" });
+                    return;
                 }
 
                 const res = await client.api["pending-transactions"]["create-detected"].$post({
@@ -164,53 +165,41 @@ const ShareClaimHandler = () => {
                 });
                 if (res.ok) {
                     const { data } = await res.json();
-                    if (data) rows.push(data);
-                    else duplicates += 1; // same screenshot already pending
+                    if (data) created += 1;
+                    const hasData = data?.amount != null || !!data?.payee;
+                    updateItem(index, {
+                        status: hasData ? "done" : "empty",
+                        amount: data?.amount ?? null,
+                        payee: data?.payee ?? null,
+                    });
+                } else {
+                    updateItem(index, { status: "error" });
                 }
             };
 
-            // Worker pool: up to 5 screenshots in flight at once
-            const queue = [...files];
+            const queue = files.map((f, i) => ({ f, i }));
             await Promise.all(
-                Array.from({ length: Math.min(5, queue.length) }, async () => {
+                Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
                     while (queue.length > 0) {
-                        const file = queue.shift()!;
-                        await processOne(file).catch(() => {});
-                        doneItems += 1;
-                        tick();
+                        const { f, i } = queue.shift()!;
+                        await processOne(f, i).catch(() => updateItem(i, { status: "error" }));
                     }
                 }),
             );
 
-            // Text-only share (no images survived or none were sent)
-            if (rows.length === 0 && meta.text) {
-                setState({ phase: "reading", detail: "Reading the message…" });
-                const res = await client.api["pending-transactions"]["from-share"].$post({
-                    json: { text: meta.text, images: [] },
-                });
-                if (!res.ok) throw new Error("extraction failed");
-                const { data } = await res.json();
-                rows.push(...(Array.isArray(data) ? data : [data]));
-            }
-
-            // Everything was a re-delivered duplicate — nothing new to show
-            if (rows.length === 0 && duplicates > 0) {
-                router.replace("/transactions");
-                return;
-            }
-
-            if (rows.length === 0) throw new Error("nothing to read");
-            finish(rows);
+            queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
+            setPhase("done");
+            // Longer dwell for bigger batches so the user can scan the results
+            setTimeout(() => router.replace("/transactions"), Math.min(6000, 2000 + created * 400));
         };
 
         // Server-stash path (fallback when the service worker isn't active)
         const claimToken = async (t: string) => {
-            const res = await client.api["pending-transactions"]["claim-share"].$post({
-                json: { token: t },
-            });
+            setSimple(true);
+            const res = await client.api["pending-transactions"]["claim-share"].$post({ json: { token: t } });
             if (!res.ok) throw new Error("claim failed");
-            const { data } = await res.json();
-            finish(Array.isArray(data) ? data : [data]);
+            queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
+            router.replace("/transactions");
         };
 
         (async () => {
@@ -218,110 +207,125 @@ const ShareClaimHandler = () => {
                 if (localId) await claimLocal(localId);
                 else await claimToken(token!);
             } catch {
-                setState({ phase: "error" });
+                setPhase("error");
                 setTimeout(() => router.replace("/transactions"), 3000);
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const doneCount = items.filter((i) => i.status !== "queued" && i.status !== "working").length;
+    const progress = items.length ? Math.round((doneCount / items.length) * 100) : 0;
+
     return (
         // Same shell as every dashboard page: the card rises over the gradient
         <div className="max-w-screen-2xl mx-auto w-full pb-16 -mt-24">
             <Card className="border-none drop-shadow-sm">
-                <CardContent className="flex min-h-[420px] items-center justify-center">
-                    <div className="w-full max-w-sm p-4 text-center">
-                {state.phase === "reading" && (
-                    <div className="space-y-5">
-                        <div className="relative mx-auto size-16">
-                            <span className="absolute inset-0 animate-ping rounded-full bg-primary/10" aria-hidden />
-                            <div className="relative flex size-16 items-center justify-center rounded-full bg-primary/10">
-                                <ScanText className="size-7 animate-pulse text-primary" />
+                <CardContent className="flex min-h-[420px] items-center justify-center py-6">
+                    <div className="w-full max-w-md">
+                        {phase === "error" ? (
+                            <div className="space-y-5 text-center animate-in fade-in zoom-in-95 duration-300">
+                                <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-destructive/10">
+                                    <XCircle className="size-8 text-destructive" />
+                                </div>
+                                <div className="space-y-1">
+                                    <h2 className="text-base font-semibold">Couldn&apos;t read that</h2>
+                                    <p className="text-sm text-muted-foreground">
+                                        The share didn&apos;t come through. Try sharing it again.
+                                    </p>
+                                </div>
+                                <Button size="sm" onClick={() => router.replace("/transactions")}>
+                                    Go to transactions
+                                </Button>
                             </div>
-                        </div>
-                        <div className="space-y-1">
-                            <h2 className="text-base font-semibold">Reading what you shared</h2>
-                            <p className="text-sm text-muted-foreground">
-                                {state.detail ?? "Picking out the amount, name, and date…"}
-                            </p>
-                        </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
-                            {state.progress !== undefined ? (
-                                // Determinate: upload + AI steps across the whole batch
-                                <div
-                                    className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-                                    style={{ width: `${Math.max(4, state.progress)}%` }}
-                                />
-                            ) : (
-                                <div className="h-full w-1/3 rounded-full bg-primary animate-[progress-sweep_1.4s_ease-in-out_infinite] motion-reduce:animate-pulse" />
-                            )}
-                        </div>
-                        {state.progress !== undefined && (
-                            <p className="text-xs text-muted-foreground tabular-nums">{state.progress}%</p>
-                        )}
-                    </div>
-                )}
-
-                {state.phase === "done" && (
-                    <div className="space-y-5 animate-in fade-in zoom-in-95 duration-300">
-                        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-500/15">
-                            <Check className="size-8 text-emerald-500" strokeWidth={3} />
-                        </div>
-                        <div className="space-y-1">
-                            <h2 className="text-base font-semibold">
-                                {state.count > 1 ? `${state.count} transactions detected` : "Got it!"}
-                            </h2>
-                            <p className="text-sm text-muted-foreground">
-                                {state.count > 1
-                                    ? "Each screenshot is saved separately for review."
-                                    : state.amount !== null || state.payee
-                                        ? "Here's what was detected:"
-                                        : "Saved for your review."}
-                            </p>
-                        </div>
-                        {(state.amount !== null || state.payee) && (
-                            <div className="flex flex-wrap items-center justify-center gap-2">
-                                {state.amount !== null && (
-                                    <Badge
-                                        variant={state.amount < 0 ? "destructive" : "primary"}
-                                        className="px-3 py-1 text-sm tabular-nums"
-                                    >
-                                        {formatCurrency(state.amount / 1000)}
-                                    </Badge>
-                                )}
-                                {state.payee && (
-                                    <span className="text-sm font-medium">{state.payee}</span>
-                                )}
-                                {state.count > 1 && (
-                                    <span className="text-xs text-muted-foreground">
-                                        +{state.count - 1} more
+                        ) : simple || items.length === 0 ? (
+                            <div className="flex flex-col items-center gap-3 py-8 text-center text-muted-foreground">
+                                <Loader2 className="size-6 animate-spin text-primary" />
+                                <span className="text-sm">Reading what you shared…</span>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {/* Header + overall progress */}
+                                <div className="flex items-center justify-between gap-3">
+                                    <h2 className="text-base font-semibold">
+                                        {phase === "done"
+                                            ? `${items.length} screenshot${items.length > 1 ? "s" : ""} processed`
+                                            : `Reading ${items.length} screenshot${items.length > 1 ? "s" : ""}…`}
+                                    </h2>
+                                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                                        {doneCount}/{items.length}
                                     </span>
+                                </div>
+                                <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
+                                    <div
+                                        className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                                        style={{ width: `${Math.max(3, progress)}%` }}
+                                    />
+                                </div>
+
+                                {/* Per-screenshot rows */}
+                                <ul className="max-h-[46vh] space-y-1.5 overflow-y-auto">
+                                    {items.map((item, i) => (
+                                        <li
+                                            key={i}
+                                            className="flex items-center gap-3 rounded-lg border bg-card/50 p-2"
+                                        >
+                                            <div className="relative size-10 shrink-0 overflow-hidden rounded-md border bg-muted">
+                                                {item.preview && (
+                                                    <img src={item.preview} alt="" className="size-full object-cover" />
+                                                )}
+                                                {(item.status === "queued" || item.status === "working") && (
+                                                    <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                                        <Loader2 className={cn("size-4 text-white", item.status === "working" && "animate-spin")} />
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div className="min-w-0 flex-1">
+                                                {item.status === "done" ? (
+                                                    <div className="flex items-center gap-2">
+                                                        {item.amount != null && (
+                                                            <Badge
+                                                                variant={item.amount < 0 ? "destructive" : "primary"}
+                                                                className="shrink-0 tabular-nums"
+                                                            >
+                                                                {formatCurrency(item.amount / 1000)}
+                                                            </Badge>
+                                                        )}
+                                                        <span className="truncate text-sm font-medium">
+                                                            {item.payee ?? "Detected"}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <p className={cn(
+                                                        "truncate text-sm",
+                                                        item.status === "error" ? "text-destructive" : "text-muted-foreground",
+                                                    )}>
+                                                        {item.status === "queued" && "Waiting…"}
+                                                        {item.status === "working" && "Reading…"}
+                                                        {item.status === "empty" && "Saved — add details manually"}
+                                                        {item.status === "error" && "Couldn't read this one"}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            <div className="shrink-0">
+                                                {item.status === "done" && <Check className="size-4 text-emerald-500" strokeWidth={3} />}
+                                                {item.status === "empty" && <Check className="size-4 text-muted-foreground" />}
+                                                {item.status === "error" && <XCircle className="size-4 text-destructive" />}
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+
+                                {phase === "done" && (
+                                    <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                                        <Loader2 className="size-3 animate-spin" />
+                                        Taking you to review…
+                                    </p>
                                 )}
                             </div>
                         )}
-                        <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                            <Loader2 className="size-3 animate-spin" />
-                            Taking you to review…
-                        </p>
-                    </div>
-                )}
-
-                {state.phase === "error" && (
-                    <div className="space-y-5 animate-in fade-in zoom-in-95 duration-300">
-                        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-destructive/10">
-                            <XCircle className="size-8 text-destructive" />
-                        </div>
-                        <div className="space-y-1">
-                            <h2 className="text-base font-semibold">Couldn&apos;t read that</h2>
-                            <p className="text-sm text-muted-foreground">
-                                The share didn&apos;t come through. Try sharing it again.
-                            </p>
-                        </div>
-                        <Button size="sm" onClick={() => router.replace("/transactions")}>
-                            Go to transactions
-                        </Button>
-                    </div>
-                )}
                     </div>
                 </CardContent>
             </Card>

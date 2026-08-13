@@ -24,11 +24,12 @@ self.addEventListener("fetch", (event) => {
     const fallbackRequest = event.request.clone();
     try {
       const formData = await event.request.formData();
-      // Gemini Flash (primary vision) handles 10+ images/min on its free tier
+      // The rotating Groq key pool + client queue handle large batches; extra
+      // images past the cap are skipped with a toast
       const allImages = formData
         .getAll("media")
         .filter((f) => f && typeof f === "object" && f.type && f.type.startsWith("image/"));
-      const files = allImages.slice(0, 10);
+      const files = allImages.slice(0, 25);
       const dropped = allImages.length - files.length;
       const text = ["title", "text", "url"]
         .map((k) => formData.get(k))
