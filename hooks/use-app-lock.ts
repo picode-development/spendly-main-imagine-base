@@ -63,15 +63,38 @@ export const useAppLockStore = create<AppLockState>((set, get) => ({
   enable: async () => {
     const { userId } = get();
     if (!userId) throw new Error("Not signed in");
+    // A credential may already exist from a previous enable — reuse it with a
+    // verify prompt instead of enrolling a duplicate (Windows Hello rejects
+    // duplicates with InvalidStateError)
+    const record = readRecord(userId);
+    if (record?.credentialId) {
+      try {
+        await verify(userId);
+        writeRecord(userId, { ...record, enabled: true });
+        set({ enabled: true, enrolled: true, isLocked: false });
+        return;
+      } catch {
+        // Stored credential no longer usable (deleted from the device) —
+        // fall through to a fresh enrollment
+      }
+    }
     await enroll(userId);
     set({ enabled: true, enrolled: true, isLocked: false });
   },
 
   disable: () => {
     const { userId } = get();
-    // Persist an explicit "off" record so a reload doesn't revert to default-on.
-    if (userId) writeRecord(userId, { enabled: false, credentialId: "" });
-    set({ enabled: false, enrolled: false, isLocked: false });
+    // Persist an explicit "off" record, KEEPING the credential id so a later
+    // re-enable reuses it instead of enrolling a duplicate.
+    if (userId) {
+      const record = readRecord(userId);
+      writeRecord(userId, {
+        enabled: false,
+        credentialId: record?.credentialId ?? "",
+        transports: record?.transports,
+      });
+    }
+    set({ enabled: false, isLocked: false });
   },
 
   unlock: async () => {

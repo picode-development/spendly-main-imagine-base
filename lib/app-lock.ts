@@ -140,7 +140,10 @@ export async function enroll(userId: string): Promise<AppLockRecord> {
       challenge,
       rp: { name: "Spendly", id: window.location.hostname },
       user: {
-        id: new TextEncoder().encode(userId),
+        // Unique per enrollment: re-enrolling with a previously used user.id
+        // makes Windows Hello reject the duplicate with InvalidStateError
+        // (Android tolerates it) — a fresh id always succeeds
+        id: new TextEncoder().encode(`${userId}:${Date.now()}`),
         // Shown by passkey managers and OS prompts — keep it the product name,
         // not the raw Clerk userId
         name: "Spendly",
