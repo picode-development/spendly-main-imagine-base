@@ -41,6 +41,11 @@ const TransactionsPage = () => {
     const [variant, setVariant] = useState<VARIENTS>(VARIENTS.LIST);
     const [importResult, setImportResults] = useState (INITIAL_IMPORT_RESULTS);
 
+    // Widget 🔍 deep link (/transactions?search=1) — focus the search box
+    const [autoFocusSearch] = useState(() =>
+        typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).has("search"));
+
     const onUpload = (results: typeof INITIAL_IMPORT_RESULTS) => {
         console.log({ results });
         setImportResults(results);
@@ -148,6 +153,7 @@ const TransactionsPage = () => {
                     <DataTable
                         filterKey="payee"
                         searchPlaceholder="Search..."
+                        autoFocusSearch={autoFocusSearch}
                         columns={columns}
                         data={transactions}
                         onDelete={(row) => {

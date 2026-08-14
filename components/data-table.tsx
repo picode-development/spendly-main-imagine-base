@@ -69,6 +69,8 @@ interface DataTableProps<TData, TValue> {
   disabled?: boolean;
   onRowClick?: (row: Row<TData>) => void;
   searchPlaceholder?: string;
+  /** Focus the search box on mount (widget 🔍 deep link) */
+  autoFocusSearch?: boolean;
 }
 
 export function DataTable<TData, TValue>({
@@ -79,6 +81,7 @@ export function DataTable<TData, TValue>({
   disabled,
   onRowClick,
   searchPlaceholder,
+  autoFocusSearch,
 }: DataTableProps<TData, TValue>) {
 
     const [ConfirmDialog, confirm] = useConfirm(
@@ -123,6 +126,7 @@ export function DataTable<TData, TValue>({
         <div className="flex items-center py-4">
         <Input
           placeholder={searchPlaceholder ?? `Filter ${filterKey}...`}
+          autoFocus={autoFocusSearch}
           value={globalFilter}
           onChange={(event) => setGlobalFilter(event.target.value)}
           className="max-w-sm"

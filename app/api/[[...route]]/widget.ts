@@ -97,12 +97,25 @@ const app = new Hono()
                 return c.json({ error: "Invalid pairing code" }, 401);
             }
 
-            const userAccounts = await db
-                .select({ id: accounts.id, name: accounts.name })
-                .from(accounts)
-                .where(eq(accounts.userId, row.userId));
+            const [userAccounts, userCategories] = await Promise.all([
+                db
+                    .select({ id: accounts.id, name: accounts.name })
+                    .from(accounts)
+                    .where(eq(accounts.userId, row.userId)),
+                db
+                    .select({ id: categories.id, name: categories.name })
+                    .from(categories)
+                    .where(eq(categories.userId, row.userId)),
+            ]);
 
-            return c.json({ data: { paired: true, currency: "INR", accounts: userAccounts } });
+            return c.json({
+                data: {
+                    paired: true,
+                    currency: "INR",
+                    accounts: userAccounts,
+                    categories: userCategories,
+                },
+            });
         },
     )
 
@@ -113,9 +126,16 @@ const app = new Hono()
         zValidator("query", z.object({
             token: z.string().min(8).max(32),
             tzOffset: z.coerce.number().int().min(-840).max(840).optional(),
+            // Per-widget-instance scope: a custom range (from/to), all time,
+            // or the default last-7-days; optionally filtered to one account
+            from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            allDates: z.enum(["true"]).optional(),
+            accountId: z.string().optional(),
+            categoryId: z.string().optional(),
         })),
         async (c) => {
-            const { token, tzOffset } = c.req.valid("query");
+            const { token, tzOffset, from, to, allDates, accountId, categoryId } = c.req.valid("query");
 
             const [tokenRow] = await db
                 .select({ id: widgetTokens.id, userId: widgetTokens.userId })
@@ -133,9 +153,37 @@ const app = new Hono()
             const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
             const monthStart = new Date(Date.UTC(dayStart.getUTCFullYear(), dayStart.getUTCMonth(), 1));
 
-            const weekStart = new Date(dayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+            const DAY = 24 * 60 * 60 * 1000;
+            const weekStart = new Date(dayStart.getTime() - 6 * DAY);
 
-            const flows = (from: Date, to: Date) =>
+            // Optional per-instance filters
+            const accountCond = accountId ? eq(transactions.accountId, accountId) : undefined;
+            const categoryCond = categoryId ? eq(transactions.categoryId, categoryId) : undefined;
+            const parseDay = (s: string) => new Date(`${s}T00:00:00.000Z`);
+
+            // The instance's scope window: custom range, all time, or last 7 days
+            const isAllDates = allDates === "true";
+            const rangeStart = isAllDates
+                ? null
+                : from && to
+                    ? parseDay(from)
+                    : weekStart;
+            const rangeEnd = isAllDates
+                ? dayEnd
+                : from && to
+                    ? new Date(parseDay(to).getTime() + DAY)
+                    : dayEnd;
+            const fmtDay = (d: Date) =>
+                `${d.getUTCDate()} ${d.toLocaleString("en", { month: "short", timeZone: "UTC" })}`;
+            const scopedLabel = isAllDates
+                ? "All time"
+                : from && to
+                    ? from === to
+                        ? fmtDay(parseDay(from))
+                        : `${fmtDay(parseDay(from))} – ${fmtDay(parseDay(to))}`
+                    : "Last 7 days";
+
+            const flows = (fromDate: Date | null, toDate: Date) =>
                 db
                     .select({
                         income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
@@ -146,13 +194,23 @@ const app = new Hono()
                     .where(and(
                         eq(accounts.userId, userId),
                         isNull(transactions.transferId),
-                        gte(transactions.date, from),
-                        lt(transactions.date, to),
+                        accountCond,
+                        categoryCond,
+                        ...(fromDate ? [gte(transactions.date, fromDate)] : []),
+                        lt(transactions.date, toDate),
                     ));
 
-            const [[today], [month], accountBalances, dailyRows, categoryRows] = await Promise.all([
+            // Daily series window: the scope range, capped to the last 31
+            // days so the chart stays readable (all-time → last 31 days)
+            const seriesStart = new Date(Math.max(
+                rangeStart?.getTime() ?? 0,
+                rangeEnd.getTime() - 31 * DAY,
+            ));
+
+            const [[today], [month], [scopedFlows], accountBalances, dailyRows, categoryRows] = await Promise.all([
                 flows(dayStart, dayEnd),
                 flows(monthStart, dayEnd),
+                flows(rangeStart, rangeEnd),
                 db
                     .select({
                         name: accounts.name,
@@ -160,7 +218,7 @@ const app = new Hono()
                     })
                     .from(transactions)
                     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-                    .where(eq(accounts.userId, userId))
+                    .where(and(eq(accounts.userId, userId), accountCond))
                     .groupBy(accounts.name),
                 db
                     .select({
@@ -172,8 +230,10 @@ const app = new Hono()
                     .where(and(
                         eq(accounts.userId, userId),
                         isNull(transactions.transferId),
-                        gte(transactions.date, weekStart),
-                        lt(transactions.date, dayEnd),
+                        accountCond,
+                        categoryCond,
+                        gte(transactions.date, seriesStart),
+                        lt(transactions.date, rangeEnd),
                     ))
                     .groupBy(transactions.date),
                 db
@@ -187,6 +247,8 @@ const app = new Hono()
                     .where(and(
                         eq(accounts.userId, userId),
                         isNull(transactions.transferId),
+                        accountCond,
+                        categoryCond,
                         lt(transactions.amount, 0),
                         gte(transactions.date, monthStart),
                         lt(transactions.date, dayEnd),
@@ -202,12 +264,13 @@ const app = new Hono()
             const fromMiliunits = (v: number | null) => (v ?? 0) / 1000;
             const totalBalance = accountBalances.reduce((acc, a) => acc + (a.balance ?? 0), 0);
 
-            // Dense 7-day series ending today (user's calendar), zero-filled
+            // Dense zero-filled series over the (capped) scope window
             const byDay = new Map(
                 dailyRows.map((r) => [r.date.toISOString().slice(0, 10), r.expenses ?? 0]),
             );
-            const days = Array.from({ length: 7 }, (_, i) => {
-                const d = new Date(weekStart.getTime() + i * 24 * 60 * 60 * 1000);
+            const seriesDays = Math.max(1, Math.round((rangeEnd.getTime() - seriesStart.getTime()) / DAY));
+            const days = Array.from({ length: seriesDays }, (_, i) => {
+                const d = new Date(seriesStart.getTime() + i * DAY);
                 const key = d.toISOString().slice(0, 10);
                 return { date: key, expenses: fromMiliunits(byDay.get(key) ?? 0) };
             });
@@ -235,6 +298,14 @@ const app = new Hono()
                     })),
                     days,
                     topCategories,
+                    scoped: {
+                        label: scopedLabel,
+                        expenses: fromMiliunits(scopedFlows?.expenses),
+                        income: fromMiliunits(scopedFlows?.income),
+                    },
+                    accountName: accountId
+                        ? accountBalances[0]?.name ?? null
+                        : null,
                     asOf: new Date().toISOString(),
                 },
             });
@@ -247,9 +318,16 @@ const app = new Hono()
         zValidator("query", z.object({
             token: z.string().min(8).max(32),
             limit: z.coerce.number().int().min(1).max(20).optional(),
+            accountId: z.string().optional(),
+            categoryId: z.string().optional(),
+            from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+            direction: z.enum(["income", "expense"]).optional(),
+            sort: z.enum(["date", "amount"]).optional(),
         })),
         async (c) => {
-            const { token, limit } = c.req.valid("query");
+            const { token, limit, accountId, categoryId, from, to, direction, sort } =
+                c.req.valid("query");
 
             const [tokenRow] = await db
                 .select({ id: widgetTokens.id, userId: widgetTokens.userId })
@@ -273,8 +351,20 @@ const app = new Hono()
                 .from(transactions)
                 .innerJoin(accounts, eq(transactions.accountId, accounts.id))
                 .leftJoin(categories, eq(transactions.categoryId, categories.id))
-                .where(eq(accounts.userId, tokenRow.userId))
-                .orderBy(desc(transactions.date), desc(transactions.id))
+                .where(and(
+                    eq(accounts.userId, tokenRow.userId),
+                    accountId ? eq(transactions.accountId, accountId) : undefined,
+                    categoryId ? eq(transactions.categoryId, categoryId) : undefined,
+                    from ? gte(transactions.date, new Date(`${from}T00:00:00.000Z`)) : undefined,
+                    to ? lt(transactions.date, new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000)) : undefined,
+                    direction === "income" ? gte(transactions.amount, 0) : undefined,
+                    direction === "expense" ? lt(transactions.amount, 0) : undefined,
+                ))
+                .orderBy(
+                    ...(sort === "amount"
+                        ? [desc(sql`ABS(${transactions.amount})`)]
+                        : [desc(transactions.date), desc(transactions.id)]),
+                )
                 .limit(limit ?? 10);
 
             return c.json({
