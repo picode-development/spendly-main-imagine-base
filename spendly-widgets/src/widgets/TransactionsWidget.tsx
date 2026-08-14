@@ -75,7 +75,7 @@ export const TransactionsWidget = ({
                     <FlexWidget
                         key={t.id}
                         clickAction="OPEN_URI"
-                        clickActionData={{ uri: `${baseUrl}/transactions` }}
+                        clickActionData={{ uri: `${baseUrl}/transactions?edit=${t.id}` }}
                         style={{
                             flexDirection: "row",
                             width: "match_parent",
