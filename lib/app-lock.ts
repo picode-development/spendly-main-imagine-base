@@ -88,16 +88,6 @@ export function isEnrolled(userId: string): boolean {
   return !!readRecord(userId)?.credentialId;
 }
 
-/**
- * Whether the app should lock for this user. App Lock is ON by default: a user
- * who has never made a choice (no stored record) is treated as enabled. Only an
- * explicit "disabled" record turns it off.
- */
-export function isLockedByDefault(userId: string): boolean {
-  const record = readRecord(userId);
-  return record ? record.enabled : true;
-}
-
 // ---------------------------------------------------------------------------
 // Capability detection
 // ---------------------------------------------------------------------------
