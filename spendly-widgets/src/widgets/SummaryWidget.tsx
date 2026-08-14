@@ -23,8 +23,8 @@ const isScopedConfig = (config?: WidgetInstanceConfig | null) =>
     !!config && (config.scope !== "week" || !!config.accountId || !!config.categoryId);
 
 const changeText = (change?: number) => {
-    if (change == null || change === 0) return "±0% from last period";
-    return `${change > 0 ? "+" : ""}${Math.round(change)}% from last period`;
+    if (change == null || change === 0) return "±0% vs last";
+    return `${change > 0 ? "+" : ""}${Math.round(change)}% vs last`;
 };
 
 // The dashboard's DataCard, in widget form: tinted icon tile, title,
@@ -38,6 +38,7 @@ const DataCard = ({
     goodWhenUp,
     scale,
     fill,
+    narrow,
     COLORS,
 }: {
     icon: LucideIconName;
@@ -48,10 +49,12 @@ const DataCard = ({
     goodWhenUp: boolean;
     scale: number;
     fill: boolean;
+    narrow: boolean;
     COLORS: WidgetTheme;
 }) => {
     const changeGood = (change ?? 0) === 0 ? null : ((change ?? 0) > 0) === goodWhenUp;
     const f = (n: number) => Math.round(n * scale);
+    const tile = narrow ? 18 : f(24);
     return (
         <FlexWidget
             style={{
@@ -60,44 +63,46 @@ const DataCard = ({
                 justifyContent: "center",
                 backgroundColor: COLORS.cardOnGradient,
                 borderRadius: 14,
-                padding: f(10),
+                padding: narrow ? 8 : f(10),
                 marginHorizontal: 3,
                 ...(fill ? { height: "match_parent" as const } : {}),
             }}
         >
-            <FlexWidget style={{ flexDirection: "row", alignItems: "center" }}>
+            <FlexWidget style={{ flexDirection: "row", alignItems: "center", width: "match_parent" }}>
                 <FlexWidget
                     style={{
-                        height: f(24),
-                        width: f(24),
-                        borderRadius: f(7),
+                        height: tile,
+                        width: tile,
+                        borderRadius: narrow ? 5 : f(7),
                         backgroundColor: COLORS.tileOnGradient,
                         justifyContent: "center",
                         alignItems: "center",
-                        marginRight: 6,
+                        marginRight: narrow ? 4 : 6,
                     }}
                 >
-                    <SvgWidget svg={lucideSvg(icon, tint)} style={{ height: f(14), width: f(14) }} />
+                    <SvgWidget svg={lucideSvg(icon, tint)} style={{ height: narrow ? 11 : f(14), width: narrow ? 11 : f(14) }} />
                 </FlexWidget>
-                <TextWidget
-                    text={title}
-                    truncate="END"
-                    maxLines={1}
-                    style={{ fontSize: f(11), color: COLORS.label }}
-                />
+                <FlexWidget style={{ flex: 1, flexDirection: "column" }}>
+                    <TextWidget
+                        text={title}
+                        truncate="END"
+                        maxLines={1}
+                        style={{ fontSize: narrow ? 9 : f(11), color: COLORS.label }}
+                    />
+                </FlexWidget>
             </FlexWidget>
             <TextWidget
                 text={value}
                 truncate="END"
                 maxLines={1}
-                style={{ fontSize: f(17), fontWeight: "bold", color: COLORS.value, marginTop: f(6) }}
+                style={{ fontSize: narrow ? 14 : f(17), fontWeight: "bold", color: COLORS.value, marginTop: narrow ? 4 : f(6) }}
             />
             <TextWidget
                 text={changeText(change)}
                 truncate="END"
                 maxLines={1}
                 style={{
-                    fontSize: f(9),
+                    fontSize: narrow ? 8 : f(9),
                     color: changeGood == null ? COLORS.label : changeGood ? COLORS.income : COLORS.expense,
                     marginTop: 2,
                 }}
@@ -142,10 +147,18 @@ export const SummaryWidget = ({
     const scoped = isScopedConfig(config);
     const style = config?.style ?? "cards";
     const scale = Math.max(1, Math.min(1.35, width / 330));
+    // Each card's real width decides whether it renders the compact variant
+    const cardWidth = (width - 20 - 18) / 3;
+    const narrow = cardWidth < 112;
     // Tall widgets get a mini spending chart under the cards so the extra
     // space carries information instead of sitting empty
     const showMiniChart = style === "cards" && !!summary && height >= 190;
     const cardsAreaFill = style === "cards" && height >= 130;
+    // Deterministic vertical split so the chart SVG is generated at the
+    // exact height it renders at (no stretching)
+    const headerH = 24;
+    const cardsH = Math.round(Math.min(120, Math.max(84, height * 0.34)));
+    const miniChartH = showMiniChart ? Math.max(50, height - 20 - headerH - cardsH - 8) : 0;
 
     const header = (
         <FlexWidget
@@ -174,8 +187,8 @@ export const SummaryWidget = ({
         const s = summary.scoped;
         const useScopedNumbers = scoped && s;
         const chartDims = {
-            w: Math.max(60, width - 28),
-            h: Math.max(40, Math.round((height - 60) * 0.45)),
+            w: Math.max(60, width - 26),
+            h: miniChartH,
             mode,
         };
         return (
@@ -185,7 +198,9 @@ export const SummaryWidget = ({
                     style={{
                         flexDirection: "row",
                         width: "match_parent",
-                        ...(cardsAreaFill ? { flex: showMiniChart ? 55 : 1 } : {}),
+                        ...(showMiniChart
+                            ? { height: cardsH }
+                            : cardsAreaFill ? { flex: 1 } : {}),
                     }}
                 >
                     <DataCard
@@ -198,7 +213,8 @@ export const SummaryWidget = ({
                         change={useScopedNumbers ? s?.remainingChange : undefined}
                         goodWhenUp
                         scale={scale}
-                        fill={cardsAreaFill}
+                        fill={cardsAreaFill || showMiniChart}
+                        narrow={narrow}
                         COLORS={COLORS}
                     />
                     <DataCard
@@ -209,7 +225,8 @@ export const SummaryWidget = ({
                         change={useScopedNumbers ? s?.incomeChange : undefined}
                         goodWhenUp
                         scale={scale}
-                        fill={cardsAreaFill}
+                        fill={cardsAreaFill || showMiniChart}
+                        narrow={narrow}
                         COLORS={COLORS}
                     />
                     <DataCard
@@ -220,15 +237,16 @@ export const SummaryWidget = ({
                         change={useScopedNumbers ? s?.expensesChange : undefined}
                         goodWhenUp={false}
                         scale={scale}
-                        fill={cardsAreaFill}
+                        fill={cardsAreaFill || showMiniChart}
+                        narrow={narrow}
                         COLORS={COLORS}
                     />
                 </FlexWidget>
                 {showMiniChart && (
-                    <FlexWidget style={{ flex: 45, width: "match_parent", marginTop: 8, paddingHorizontal: 3 }}>
+                    <FlexWidget style={{ height: miniChartH, width: "match_parent", marginTop: 8, paddingHorizontal: 3 }}>
                         <SvgWidget
                             svg={barChartSvg(summary.days, chartDims)}
-                            style={{ width: "match_parent", height: "match_parent" }}
+                            style={{ width: "match_parent", height: miniChartH }}
                         />
                     </FlexWidget>
                 )}
