@@ -43,7 +43,7 @@ import {
     setMetrics as storeMetrics,
     setToken as storeToken,
 } from "./src/storage";
-import { Button, Card, CardTitle, Field, Hint, UI } from "./src/ui";
+import { AmountPill, Button, Card, CardTitle, Field, Hint, IconBox, UI } from "./src/ui";
 import { useOtaUpdateCheck } from "./src/useOtaUpdateCheck";
 import { VoiceScreen } from "./src/VoiceScreen";
 import { ActionsWidget } from "./src/widgets/ActionsWidget";
@@ -293,8 +293,11 @@ export default function App() {
 
     return (
         <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-            <StatusBar barStyle="light-content" backgroundColor={UI.bg} />
-            <Text style={styles.title}>Spendly Widgets</Text>
+            <StatusBar barStyle="light-content" backgroundColor={UI.heroFrom} />
+            <View style={styles.hero}>
+                <Text style={styles.title}>Spendly Widgets</Text>
+                <Text style={styles.heroSubtitle}>Home-screen widgets & quick actions</Text>
+            </View>
 
             {!token ? (
                 <Card>
@@ -334,20 +337,19 @@ export default function App() {
             ) : (
                 <>
                     <Card>
-                        <CardTitle>Paired</CardTitle>
+                        <View style={styles.titleRow}>
+                            <IconBox color={UI.green}>✓</IconBox>
+                            <CardTitle>Paired</CardTitle>
+                        </View>
                         {summary ? (
                             <View style={styles.statsRow}>
                                 <View style={styles.stat}>
                                     <Text style={styles.statLabel}>Spent today</Text>
-                                    <Text style={[styles.statValue, { color: UI.danger }]}>
-                                        {formatINR(summary.todayExpenses)}
-                                    </Text>
+                                    <AmountPill amount={-summary.todayExpenses} />
                                 </View>
                                 <View style={styles.stat}>
                                     <Text style={styles.statLabel}>This month</Text>
-                                    <Text style={[styles.statValue, { color: UI.danger }]}>
-                                        {formatINR(summary.monthExpenses)}
-                                    </Text>
+                                    <AmountPill amount={-summary.monthExpenses} />
                                 </View>
                                 <View style={styles.stat}>
                                     <Text style={styles.statLabel}>Balance</Text>
@@ -363,7 +365,10 @@ export default function App() {
                     </Card>
 
                     <Card>
-                        <CardTitle>Your widgets</CardTitle>
+                        <View style={styles.titleRow}>
+                            <IconBox color={UI.accent}>⊞</IconBox>
+                            <CardTitle>Your widgets</CardTitle>
+                        </View>
                         <Hint>
                             Add them from your launcher's widget picker. Long-press a widget →
                             Reconfigure to give it its own dates, account, category, and style.
@@ -439,7 +444,7 @@ export default function App() {
                         </Hint>
                         {latest && latest.versionCode > installedVersionCode() ? (
                             <Button
-                                variant="gold"
+                                variant="accent"
                                 onPress={() => Linking.openURL(`${baseUrl}${latest.apkUrl}`)}
                             >
                                 Download latest APK
@@ -466,12 +471,23 @@ export default function App() {
 const styles = StyleSheet.create({
     screen: { flex: 1, backgroundColor: UI.bg },
     center: { alignItems: "center", justifyContent: "center" },
-    content: { padding: 20, paddingTop: 64, gap: 16, paddingBottom: 48 },
-    title: { color: UI.text, fontSize: 26, fontWeight: "700", marginBottom: 4 },
+    content: { paddingHorizontal: 20, paddingBottom: 48, gap: 16 },
+    hero: {
+        marginHorizontal: -20,
+        paddingHorizontal: 20,
+        paddingTop: 56,
+        paddingBottom: 28,
+        backgroundColor: UI.heroFrom,
+        borderBottomLeftRadius: 28,
+        borderBottomRightRadius: 28,
+    },
+    title: { color: UI.text, fontSize: 26, fontWeight: "700" },
+    heroSubtitle: { color: "#89b6fd", fontSize: 14, marginTop: 4 },
+    titleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
     error: { color: UI.danger, fontSize: 13 },
     advancedToggle: { color: UI.label, fontSize: 13, textAlign: "center", paddingVertical: 4 },
     statsRow: { flexDirection: "row", gap: 12 },
-    stat: { flex: 1 },
+    stat: { flex: 1, gap: 5 },
     statLabel: { color: UI.label, fontSize: 12 },
     statValue: { color: UI.text, fontSize: 17, fontWeight: "700", marginTop: 2 },
     switchRow: {

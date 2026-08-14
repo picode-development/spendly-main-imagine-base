@@ -10,8 +10,7 @@ import {
 } from "react-native";
 import { fetchTransactions } from "./api";
 import { WidgetTransaction } from "./config";
-import { formatINR } from "./format";
-import { Button, Field, Hint, UI } from "./ui";
+import { AmountPill, Button, Field, Hint, UI } from "./ui";
 
 type Props = {
     baseUrl: string;
@@ -90,9 +89,7 @@ export const SearchScreen = ({ baseUrl, token, onClose }: Props) => {
                                                 {item.date}{item.category ? ` · ${item.category}` : ""} · {item.account}
                                             </Text>
                                         </View>
-                                        <Text style={[styles.amount, { color: item.amount < 0 ? UI.danger : UI.green }]}>
-                                            {item.amount < 0 ? "-" : "+"}{formatINR(Math.abs(item.amount))}
-                                        </Text>
+                                        <AmountPill amount={item.amount} />
                                     </Pressable>
                                 )}
                             />
@@ -142,5 +139,4 @@ const styles = StyleSheet.create({
     },
     payee: { color: UI.text, fontSize: 15, fontWeight: "500" },
     sub: { color: UI.label, fontSize: 12, marginTop: 1 },
-    amount: { fontSize: 15, fontWeight: "700" },
 });

@@ -8,8 +8,7 @@ import {
     useAudioRecorderState,
 } from "expo-audio";
 import { uploadVoice, VoiceResult } from "./api";
-import { formatINR } from "./format";
-import { Button, Hint, UI } from "./ui";
+import { AmountPill, Button, Hint, UI } from "./ui";
 
 // Mirrors the web app's silence auto-stop: once the user has spoken,
 // sustained quiet ends the recording; never-spoke bails out sooner.
@@ -154,7 +153,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                         </Hint>
                         <View style={styles.row}>
                             <Button
-                                variant={locked ? "gold" : "outline"}
+                                variant={locked ? "accent" : "outline"}
                                 onPress={() => setLocked((l) => !l)}
                             >
                                 {locked ? "🔒 Locked" : "Lock (pause freely)"}
@@ -175,7 +174,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                     <>
                         <View style={styles.resultCard}>
                             {result.parsed?.amount != null && (
-                                <Text style={styles.amount}>{formatINR(Math.abs(result.parsed.amount))}</Text>
+                                <AmountPill amount={result.parsed.amount} size="lg" />
                             )}
                             {result.parsed?.payee && <Text style={styles.payee}>{result.parsed.payee}</Text>}
                             <Text style={styles.sub}>
@@ -248,7 +247,6 @@ const styles = StyleSheet.create({
         padding: 14,
         gap: 4,
     },
-    amount: { color: UI.danger, fontSize: 26, fontWeight: "800" },
     payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
     sub: { color: UI.label, fontSize: 13 },
     transcript: { color: UI.label, fontSize: 12, fontStyle: "italic", marginTop: 6 },

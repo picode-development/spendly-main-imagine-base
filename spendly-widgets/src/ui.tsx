@@ -9,9 +9,12 @@ import {
     TextInputProps,
     View,
 } from "react-native";
+import { formatINR } from "./format";
 
 // shadcn/ui-flavored primitives for the companion app, matching the main
-// site's dark theme: slate surfaces, subtle borders, the site's gold accent.
+// site's actual dark-mode tokens (app/globals.css) and component motifs
+// (rounded amount pills, colored icon boxes, elevated cards) — not just its
+// color values.
 export const UI = {
     bg: "#0f172a",
     card: "#1e293b",
@@ -20,13 +23,47 @@ export const UI = {
     label: "#94a3b8",
     text: "#f8fafc",
     accent: "#3b82f6",
-    gold: "#e3b27a",
     danger: "#f87171",
     green: "#4ade80",
+    // Dark end of the site's header gradient (components/Header.tsx) — used
+    // as a solid hero band here rather than a true gradient, since neither
+    // expo-linear-gradient nor react-native-svg is in this app yet.
+    heroFrom: "#172554",
+    heroTo: "#1e3a8a",
 } as const;
 
 export const Card = ({ children, style }: { children: React.ReactNode; style?: object }) => (
     <View style={[styles.card, style]}>{children}</View>
+);
+
+// The site's signature rounded-full amount badge (transaction list, columns.tsx):
+// soft-tinted background, full-strength text in the same hue.
+export const AmountPill = ({
+    amount,
+    size = "md",
+    style,
+}: {
+    amount: number;
+    size?: "md" | "lg";
+    style?: object;
+}) => {
+    const positive = amount >= 0;
+    const color = positive ? UI.green : UI.danger;
+    return (
+        <View style={[styles.pill, size === "lg" && styles.pillLg, { backgroundColor: `${color}26` }, style]}>
+            <Text style={[styles.pillText, size === "lg" && styles.pillTextLg, { color }]}>
+                {positive ? "+" : ""}{formatINR(amount)}
+            </Text>
+        </View>
+    );
+};
+
+// Colored rounded-square icon container (dashboard stat-card motif) —
+// wraps a short glyph/emoji so icons read as deliberate UI, not bare text.
+export const IconBox = ({ children, color = UI.accent }: { children: React.ReactNode; color?: string }) => (
+    <View style={[styles.iconBox, { backgroundColor: `${color}26` }]}>
+        <Text style={[styles.iconGlyph, { color }]}>{children}</Text>
+    </View>
 );
 
 export const CardTitle = ({ children }: { children: React.ReactNode }) => (
@@ -58,7 +95,7 @@ export const Button = ({
     children: React.ReactNode;
     onPress: () => void;
     disabled?: boolean;
-    variant?: "default" | "outline" | "ghost" | "gold";
+    variant?: "default" | "outline" | "ghost" | "accent";
 }) => (
     <Pressable
         onPress={onPress}
@@ -67,7 +104,7 @@ export const Button = ({
             styles.button,
             variant === "outline" && styles.buttonOutline,
             variant === "ghost" && styles.buttonGhost,
-            variant === "gold" && styles.buttonGold,
+            variant === "accent" && styles.buttonAccent,
             (disabled || pressed) && { opacity: disabled ? 0.5 : 0.8 },
         ]}
     >
@@ -75,7 +112,7 @@ export const Button = ({
             style={[
                 styles.buttonText,
                 variant === "default" && { color: "#0f172a" },
-                variant === "gold" && { color: "#111111" },
+                variant === "accent" && { color: UI.text },
                 (variant === "outline" || variant === "ghost") && { color: UI.text },
             ]}
         >
@@ -127,10 +164,10 @@ export const Select = ({
                                         setOpen(false);
                                     }}
                                 >
-                                    <Text style={[styles.optionText, item.value === value && { color: UI.gold, fontWeight: "600" }]}>
+                                    <Text style={[styles.optionText, item.value === value && { color: UI.accent, fontWeight: "600" }]}>
                                         {item.label}
                                     </Text>
-                                    {item.value === value && <Text style={{ color: UI.gold }}>✓</Text>}
+                                    {item.value === value && <Text style={{ color: UI.accent }}>✓</Text>}
                                 </Pressable>
                             )}
                         />
@@ -149,7 +186,30 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         padding: 16,
         gap: 10,
+        // Real elevation (site's card `shadow-sm`) instead of a flat hairline box
+        elevation: 3,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
     },
+    pill: {
+        alignSelf: "flex-start",
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+    },
+    pillText: { fontSize: 14, fontWeight: "700" },
+    pillLg: { paddingHorizontal: 18, paddingVertical: 10 },
+    pillTextLg: { fontSize: 24, fontWeight: "800" },
+    iconBox: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    iconGlyph: { fontSize: 17 },
     cardTitle: { color: UI.text, fontSize: 16, fontWeight: "600" },
     sectionLabel: {
         color: UI.label,
@@ -182,7 +242,7 @@ const styles = StyleSheet.create({
         borderColor: UI.border,
     },
     buttonGhost: { backgroundColor: "transparent" },
-    buttonGold: { backgroundColor: UI.gold },
+    buttonAccent: { backgroundColor: UI.accent },
     buttonText: { fontSize: 15, fontWeight: "600" },
     selectTrigger: {
         flexDirection: "row",
