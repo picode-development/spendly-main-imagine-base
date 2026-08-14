@@ -236,6 +236,7 @@ const app = new Hono()
                     .select({
                         date: transactions.date,
                         expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 THEN ABS(${transactions.amount}) ELSE 0 END)`.mapWith(Number),
+                        income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
                     })
                     .from(transactions)
                     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
@@ -278,13 +279,18 @@ const app = new Hono()
 
             // Dense zero-filled series over the (capped) scope window
             const byDay = new Map(
-                dailyRows.map((r) => [r.date.toISOString().slice(0, 10), r.expenses ?? 0]),
+                dailyRows.map((r) => [r.date.toISOString().slice(0, 10), { expenses: r.expenses ?? 0, income: r.income ?? 0 }]),
             );
             const seriesDays = Math.max(1, Math.round((rangeEnd.getTime() - seriesStart.getTime()) / DAY));
             const days = Array.from({ length: seriesDays }, (_, i) => {
                 const d = new Date(seriesStart.getTime() + i * DAY);
                 const key = d.toISOString().slice(0, 10);
-                return { date: key, expenses: fromMiliunits(byDay.get(key) ?? 0) };
+                const row = byDay.get(key);
+                return {
+                    date: key,
+                    expenses: fromMiliunits(row?.expenses ?? 0),
+                    income: fromMiliunits(row?.income ?? 0),
+                };
             });
 
             const topCategories = categoryRows.slice(0, 3).map((r) => ({

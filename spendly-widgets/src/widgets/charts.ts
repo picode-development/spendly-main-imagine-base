@@ -1,8 +1,11 @@
 import { WidgetSummary } from "../config";
-import { getTheme, WidgetMode } from "./theme";
+import { neutralCardText, WidgetMode } from "./theme";
 
-// SVG chart builders mirroring the dashboard's recharts variants (bar /
-// line / area over time, donut for the category split).
+// SVG chart builders that pixel-match the dashboard's real recharts
+// variants: bar-variant.tsx, line-variant.tsx, area-variant.tsx,
+// radial-variant.tsx. Same colors, same gradient stops, same curve
+// treatment (linear for bar/line, Catmull-Rom smoothed for area to mirror
+// recharts' type="monotone").
 //
 // The native SvgWidget renderer (react-native-android-widget) calls
 // AndroidSVG's renderToPicture() with NO target size, so the rasterized
@@ -11,12 +14,21 @@ import { getTheme, WidgetMode } from "./theme";
 // pixel density are both ignored. To compensate, every builder here bakes
 // the actual device-PIXEL size (dp * density) into the viewBox instead of
 // dp, so the mis-rasterization coincidentally lands at the correct size.
-// Every other absolute constant (font size, stroke width, dot radius...)
-// is scaled by the same density so proportions stay correct.
+// Every other absolute constant (font size, stroke width...) is scaled by
+// the same density so proportions stay correct.
+
+// Hardcoded theme-invariant in bar-variant.tsx / area-variant.tsx — the
+// dashboard doesn't branch these by light/dark, so neither do we.
+export const CHART_INCOME = "#3d82f6" as const;
+export const CHART_EXPENSE = "#f43f5e" as const;
+
+// Same order as radial-variant.tsx's COLORS
+export const CATEGORY_COLORS = ["#0062FF", "#12c6ff", "#ff647f", "#ff9354"] as const;
 
 const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 
 type Dims = { w: number; h: number; mode?: WidgetMode; density?: number };
+type Point = { x: number; y: number };
 
 const layout = ({ w, h, density = 1 }: Dims) => ({
     W: Math.round(w * density),
@@ -27,16 +39,16 @@ const layout = ({ w, h, density = 1 }: Dims) => ({
 });
 
 const xLabels = (days: WidgetSummary["days"], dims: Dims) => {
-    const C = getTheme(dims.mode);
+    const { label } = neutralCardText(dims.mode);
     const { W, H, d } = layout(dims);
     const slot = W / days.length;
     const every = days.length <= 7 ? 1 : Math.ceil(days.length / 6);
     return days
-        .map((d2, i) => {
+        .map((day, i) => {
             if (i % every !== 0) return "";
-            const date = new Date(`${d2.date}T00:00:00Z`);
-            const label = days.length <= 7 ? DAY_LETTERS[date.getUTCDay()] : String(date.getUTCDate());
-            return `<text x="${(slot * i + slot / 2).toFixed(1)}" y="${H - Math.round(6 * d)}" text-anchor="middle" font-size="${(11 * d).toFixed(1)}" fill="${C.label}" font-family="sans-serif">${label}</text>`;
+            const date = new Date(`${day.date}T00:00:00Z`);
+            const text = days.length <= 7 ? DAY_LETTERS[date.getUTCDay()] : String(date.getUTCDate());
+            return `<text x="${(slot * i + slot / 2).toFixed(1)}" y="${H - Math.round(6 * d)}" text-anchor="middle" font-size="${(11 * d).toFixed(1)}" fill="${label}" font-family="sans-serif">${text}</text>`;
         })
         .join("");
 };
@@ -44,87 +56,143 @@ const xLabels = (days: WidgetSummary["days"], dims: Dims) => {
 const wrap = (inner: string, { w, h, density = 1 }: Dims) =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.round(w * density)} ${Math.round(h * density)}" preserveAspectRatio="none">${inner}</svg>`;
 
+// Points for one series (income or expenses), scaled against the max of
+// BOTH series — matches the dashboard's single shared Y axis.
+const seriesPoints = (days: WidgetSummary["days"], dims: Dims, key: "income" | "expenses"): Point[] => {
+    const { W, TOP, BOTTOM } = layout(dims);
+    const slot = W / days.length;
+    const max = Math.max(...days.flatMap((day) => [day.income, day.expenses]), 1);
+    return days.map((day, i) => ({
+        x: slot * i + slot / 2,
+        y: BOTTOM - (day[key] / max) * (BOTTOM - TOP),
+    }));
+};
+
+const linearPath = (pts: Point[]) =>
+    pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+
+// Catmull-Rom → cubic Bezier: smooth curve through every point, the same
+// visual character as recharts' type="monotone" (area-variant.tsx only —
+// bar/line variants use straight/discrete strokes, so those stay linear).
+const smoothPath = (pts: Point[]) => {
+    if (pts.length < 2) return pts[0] ? `M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}` : "";
+    if (pts.length === 2) return linearPath(pts);
+    let d = `M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i === 0 ? i : i - 1];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
+        const c1x = p1.x + (p2.x - p0.x) / 6;
+        const c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6;
+        const c2y = p2.y - (p3.y - p1.y) / 6;
+        d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+    return d;
+};
+
+// bar-variant.tsx: two grouped bars per day, square corners, no highlight.
 export const barChartSvg = (days: WidgetSummary["days"], dims: Dims) => {
-    const C = getTheme(dims.mode);
     const { W, TOP, BOTTOM, d } = layout(dims);
     const slot = W / days.length;
-    const barWidth = Math.max(3 * d, Math.min(34 * d, slot * 0.6));
-    const max = Math.max(...days.map((day) => day.expenses), 1);
+    const groupW = Math.min(slot * 0.7, 40 * d);
+    const barW = Math.max(2 * d, groupW / 2 - d);
+    const gap = Math.max(d, groupW - barW * 2);
+    const max = Math.max(...days.flatMap((day) => [day.income, day.expenses]), 1);
     const bars = days
         .map((day, i) => {
-            const h = day.expenses > 0 ? Math.max(6 * d, Math.round((day.expenses / max) * (BOTTOM - TOP))) : 3 * d;
-            const x = slot * i + (slot - barWidth) / 2;
-            const fill = day.expenses > 0 ? (i === days.length - 1 ? C.gold : C.accent) : C.border;
-            return `<rect x="${x.toFixed(1)}" y="${(BOTTOM - h).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(4 * d, barWidth / 2).toFixed(1)}" fill="${fill}"/>`;
+            const groupX = slot * i + (slot - groupW) / 2;
+            const incomeH = day.income > 0 ? Math.max(2 * d, Math.round((day.income / max) * (BOTTOM - TOP))) : 0;
+            const expenseH = day.expenses > 0 ? Math.max(2 * d, Math.round((day.expenses / max) * (BOTTOM - TOP))) : 0;
+            const incomeRect = incomeH > 0
+                ? `<rect x="${groupX.toFixed(1)}" y="${(BOTTOM - incomeH).toFixed(1)}" width="${barW.toFixed(1)}" height="${incomeH.toFixed(1)}" fill="${CHART_INCOME}"/>`
+                : "";
+            const expenseX = groupX + barW + gap;
+            const expenseRect = expenseH > 0
+                ? `<rect x="${expenseX.toFixed(1)}" y="${(BOTTOM - expenseH).toFixed(1)}" width="${barW.toFixed(1)}" height="${expenseH.toFixed(1)}" fill="${CHART_EXPENSE}"/>`
+                : "";
+            return incomeRect + expenseRect;
         })
         .join("");
     return wrap(bars + xLabels(days, dims), dims);
 };
 
-const linePoints = (days: WidgetSummary["days"], dims: Dims) => {
-    const { W, TOP, BOTTOM } = layout(dims);
-    const slot = W / days.length;
-    const max = Math.max(...days.map((day) => day.expenses), 1);
-    return days.map((day, i) => ({
-        x: slot * i + slot / 2,
-        y: BOTTOM - (day.expenses / max) * (BOTTOM - TOP),
-    }));
-};
-
+// line-variant.tsx: straight linear segments, no dots, stroke-width 2.
 export const lineChartSvg = (days: WidgetSummary["days"], dims: Dims) => {
-    const C = getTheme(dims.mode);
     const { d } = layout(dims);
-    const pts = linePoints(days, dims);
-    const path = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-    const last = pts[pts.length - 1];
+    const incomePts = seriesPoints(days, dims, "income");
+    const expensePts = seriesPoints(days, dims, "expenses");
     return wrap(
-        `<path d="${path}" fill="none" stroke="${C.accent}" stroke-width="${(2.5 * d).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>` +
-        `<circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="${(4 * d).toFixed(1)}" fill="${C.gold}"/>` +
+        `<path d="${linearPath(incomePts)}" fill="none" stroke="${CHART_INCOME}" stroke-width="${(2 * d).toFixed(1)}"/>` +
+        `<path d="${linearPath(expensePts)}" fill="none" stroke="${CHART_EXPENSE}" stroke-width="${(2 * d).toFixed(1)}"/>` +
         xLabels(days, dims),
         dims,
     );
 };
 
+// area-variant.tsx: monotone-smoothed gradient fills, 2%/98% stops at
+// 0.8→0 opacity, stroke-width 2. Income renders first (behind), expenses
+// on top — same z-order as the JSX.
 export const areaChartSvg = (days: WidgetSummary["days"], dims: Dims) => {
-    const C = getTheme(dims.mode);
     const { BOTTOM, d } = layout(dims);
-    const pts = linePoints(days, dims);
-    const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-    const area = `${line} L${pts[pts.length - 1].x.toFixed(1)} ${BOTTOM} L${pts[0].x.toFixed(1)} ${BOTTOM} Z`;
-    const last = pts[pts.length - 1];
+    const incomePts = seriesPoints(days, dims, "income");
+    const expensePts = seriesPoints(days, dims, "expenses");
+    const incomeLine = smoothPath(incomePts);
+    const expenseLine = smoothPath(expensePts);
+    const closeArea = (line: string, pts: Point[]) =>
+        `${line} L${pts[pts.length - 1].x.toFixed(1)} ${BOTTOM} L${pts[0].x.toFixed(1)} ${BOTTOM} Z`;
+    const gradient = (id: string, color: string) =>
+        `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">` +
+        `<stop offset="2%" stop-color="${color}" stop-opacity="0.8"/>` +
+        `<stop offset="98%" stop-color="${color}" stop-opacity="0"/>` +
+        `</linearGradient>`;
     return wrap(
-        `<path d="${area}" fill="${C.accent}" fill-opacity="0.25"/>` +
-        `<path d="${line}" fill="none" stroke="${C.accent}" stroke-width="${(2.5 * d).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>` +
-        `<circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="${(4 * d).toFixed(1)}" fill="${C.gold}"/>` +
+        `<defs>${gradient("incomeFill", CHART_INCOME)}${gradient("expenseFill", CHART_EXPENSE)}</defs>` +
+        `<path d="${closeArea(incomeLine, incomePts)}" fill="url(#incomeFill)"/>` +
+        `<path d="${incomeLine}" fill="none" stroke="${CHART_INCOME}" stroke-width="${(2 * d).toFixed(1)}"/>` +
+        `<path d="${closeArea(expenseLine, expensePts)}" fill="url(#expenseFill)"/>` +
+        `<path d="${expenseLine}" fill="none" stroke="${CHART_EXPENSE}" stroke-width="${(2 * d).toFixed(1)}"/>` +
         xLabels(days, dims),
         dims,
     );
 };
 
-// Same palette order as the dashboard's category pie
-export const CATEGORY_COLORS = ["#60a5fa", "#22c55e", "#f59e0b", "#a855f7"] as const;
-
-// Donut is always called with matching viewBox/container sizes already
-// (both use the same `size` value), so it isn't affected by the
-// renderToPicture() bug — no density compensation needed here.
-export const donutSvg = (categories: { name: string; value: number }[], size = 130) => {
+// radial-variant.tsx: one concentric ring PER category (not a donut split
+// into arc segments) — each ring's sweep is proportional to its value
+// relative to the MAX category value (recharts' default RadialBarChart
+// domain), not to the total. innerRadius="90%"/outerRadius="40%" band,
+// barSize~10, cornerRadius rounding via stroke-linecap.
+//
+// Always called with matching viewBox/container sizes (like the old
+// donut), so it isn't affected by the renderToPicture() bug.
+export const radialSvg = (categories: { name: string; value: number }[], size = 130, mode: WidgetMode = "dark") => {
+    const { track } = neutralCardText(mode);
     const cx = size / 2;
     const cy = size / 2;
-    const r = size * 0.37;
-    const stroke = size * 0.14;
-    const total = categories.reduce((a, c) => a + c.value, 0) || 1;
-    const circumference = 2 * Math.PI * r;
+    const maxR = size / 2;
+    const outerR = maxR * 0.9;
+    const innerR = maxR * 0.4;
+    const n = Math.max(1, categories.length);
+    const band = outerR - innerR;
+    const gap = Math.min(3, band / (n * 4));
+    const thickness = Math.max(3, band / n - gap);
+    const maxValue = Math.max(...categories.map((c) => c.value), 1);
 
-    let offset = 0;
-    const arcs = categories
+    const rings = categories
         .map((cat, i) => {
-            const frac = cat.value / total;
+            const r = outerR - thickness / 2 - i * (thickness + gap);
+            const circumference = 2 * Math.PI * r;
+            const frac = Math.min(1, cat.value / maxValue);
             const len = frac * circumference;
-            const arc = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${CATEGORY_COLORS[i % CATEGORY_COLORS.length]}" stroke-width="${stroke.toFixed(1)}" stroke-dasharray="${len.toFixed(1)} ${(circumference - len).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`;
-            offset += len;
-            return arc;
+            const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+            const bg = `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none" stroke="${track}" stroke-width="${thickness.toFixed(1)}"/>`;
+            const arc = frac > 0
+                ? `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none" stroke="${color}" stroke-width="${thickness.toFixed(1)}" stroke-linecap="round" stroke-dasharray="${len.toFixed(1)} ${(circumference - len).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`
+                : "";
+            return bg + arc;
         })
         .join("");
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">${arcs}</svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">${rings}</svg>`;
 };

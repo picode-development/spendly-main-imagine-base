@@ -53,7 +53,7 @@ export const TransactionsWidget = ({
                     text={config ? configLabel(config) : "Recent transactions"}
                     truncate="END"
                     maxLines={1}
-                    style={{ fontSize: 12, fontWeight: "bold", color: C.accent }}
+                    style={{ fontSize: 11, fontWeight: "bold", color: C.label, letterSpacing: 0.5 }}
                 />
             </FlexWidget>
             <FlexWidget
@@ -84,6 +84,15 @@ export const TransactionsWidget = ({
                             paddingVertical: config?.style === "compact" ? 4 : 7,
                         }}
                     >
+                        <FlexWidget
+                            style={{
+                                height: 7,
+                                width: 7,
+                                borderRadius: 4,
+                                backgroundColor: t.amount < 0 ? C.expense : C.income,
+                                marginRight: 8,
+                            }}
+                        />
                         <FlexWidget style={{ flexDirection: "column", flex: 1, marginRight: 8 }}>
                             <TextWidget
                                 text={t.payee}
@@ -106,6 +115,7 @@ export const TransactionsWidget = ({
                                 fontSize: 13,
                                 fontWeight: "bold",
                                 color: t.amount < 0 ? C.expense : C.income,
+                                textAlign: "right",
                             }}
                         />
                     </FlexWidget>

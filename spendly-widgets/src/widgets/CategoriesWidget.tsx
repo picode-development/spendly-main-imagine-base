@@ -2,8 +2,8 @@ import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
-import { CATEGORY_COLORS, donutSvg } from "./charts";
-import { getTheme, WidgetMode } from "./theme";
+import { CATEGORY_COLORS, radialSvg } from "./charts";
+import { chartCardStyle, getTheme, neutralCardText, WidgetMode } from "./theme";
 import { WidgetShell } from "./WidgetShell";
 
 type Props = {
@@ -21,6 +21,7 @@ type Props = {
 // ranked horizontal bars — sized to the widget's real dimensions.
 export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri }: Props) => {
     const C = getTheme(mode);
+    const nc = neutralCardText(mode);
     const style = config?.style ?? "donut";
     const cats = summary?.topCategories ?? [];
     const total = cats.reduce((a, c) => a + c.value, 0) || 1;
@@ -46,7 +47,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                     ].filter(Boolean).join(" · ")}
                     truncate="END"
                     maxLines={1}
-                    style={{ fontSize: 12, fontWeight: "bold", color: C.accent }}
+                    style={{ fontSize: 11, fontWeight: "bold", color: C.label, letterSpacing: 0.5 }}
                 />
             </FlexWidget>
 
@@ -107,10 +108,19 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                     ))}
                 </FlexWidget>
             ) : (
-                <FlexWidget style={{ flexDirection: "row", width: "match_parent", flex: 1, alignItems: "center" }}>
+                <FlexWidget
+                    style={{
+                        flexDirection: "row",
+                        width: "match_parent",
+                        flex: 1,
+                        alignItems: "center",
+                        padding: 10,
+                        ...chartCardStyle(mode),
+                    }}
+                >
                     <FlexWidget style={{ height: donutSize, width: donutSize }}>
                         <SvgWidget
-                            svg={donutSvg(cats, donutSize)}
+                            svg={radialSvg(cats, donutSize, mode)}
                             style={{ height: donutSize, width: donutSize }}
                         />
                     </FlexWidget>
@@ -131,7 +141,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                                         text={`${cat.name.trim()} · ${formatINR(cat.value)}`}
                                         truncate="END"
                                         maxLines={1}
-                                        style={{ fontSize: legendFont, color: C.value }}
+                                        style={{ fontSize: legendFont, color: nc.value }}
                                     />
                                 </FlexWidget>
                             </FlexWidget>

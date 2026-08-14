@@ -9,7 +9,9 @@ import { BackgroundStyle, blurGradientSvg, getTheme, nativeBackgroundStyle, Widg
 // bug (native renderToPicture() ignores container size and device pixel
 // density) can't affect them. Only "blurGradient" (soft aurora blobs) has
 // no native equivalent and still needs an SVG layer, density-compensated.
-const RADIUS = 20;
+// Android 12+ System widget corners read as native OS chrome, not an
+// embedded card — matches the "widget IS the card" finance-app-native look
+const RADIUS = 24;
 
 type Props = {
     width: number;

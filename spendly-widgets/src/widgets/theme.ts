@@ -54,6 +54,27 @@ const LIGHT: WidgetTheme = {
 export const getTheme = (mode: WidgetMode = "dark"): WidgetTheme =>
     mode === "light" ? LIGHT : DARK;
 
+// Dashboard-exact chart colors (income/expense blue+rose, category ring)
+// only read correctly against a neutral card surface — the same reason the
+// real dashboard always renders charts inside a plain white/near-black
+// Card, never directly on a colored background. WidgetTheme.label/value
+// above are calibrated for text sitting ON the site's colored gradient
+// (LIGHT mode = white text for contrast on blue), so they're the wrong
+// polarity for a neutral chart card and need this separate pair.
+const NEUTRAL_CARD_TEXT: Record<WidgetMode, { label: HexColor; value: HexColor; track: HexColor }> = {
+    dark: { label: "#94a3b8", value: "#f8fafc", track: "#ffffff26" },
+    light: { label: "#64748b", value: "#0f172a", track: "#0f172a1f" },
+};
+export const neutralCardText = (mode: WidgetMode = "dark") => NEUTRAL_CARD_TEXT[mode];
+
+// Card surface for chart content — reuses the existing on-gradient scrim
+// tokens (already correctly dark-slate / near-white) so charts always sit
+// on a neutral backdrop regardless of the widget's overall background style.
+export const chartCardStyle = (mode: WidgetMode = "dark", radius = 16) => ({
+    backgroundColor: getTheme(mode).cardOnGradient,
+    borderRadius: radius,
+} as const);
+
 // Android picks the right variant with the system theme
 export const themedPair = <T,>(render: (mode: WidgetMode) => T): { light: T; dark: T } => ({
     light: render("light"),

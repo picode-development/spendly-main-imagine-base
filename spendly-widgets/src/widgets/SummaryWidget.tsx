@@ -2,10 +2,17 @@ import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { configLabel, DEFAULT_BASE_URL, MetricKey, WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR, formatTime } from "../format";
-import { barChartSvg } from "./charts";
+import { areaChartSvg } from "./charts";
 import { lucideSvg, LucideIconName } from "./icons";
-import { getTheme, HexColor, WidgetMode, WidgetTheme } from "./theme";
+import { chartCardStyle, getTheme, HexColor, neutralCardText, WidgetMode, WidgetTheme } from "./theme";
 import { WidgetShell } from "./WidgetShell";
+
+// Dashboard's actual DataCard variant palette (data-card.tsx: boxVariant/
+// iconVariant) — default=blue, success=emerald, danger=rose. The widget's
+// WidgetTheme.income/expense are pastel tones tuned for legibility ON the
+// raw gradient background; DataCard tiles sit on a neutral card surface
+// instead, so they use the dashboard's real semantic colors directly.
+const TINT = { default: "#3b82f6", success: "#10b981", danger: "#f43f5e" } as const;
 
 type Props = {
     summary: WidgetSummary | null;
@@ -41,6 +48,7 @@ const DataCard = ({
     fill,
     narrow,
     COLORS,
+    mode,
 }: {
     icon: LucideIconName;
     tint: HexColor;
@@ -52,10 +60,15 @@ const DataCard = ({
     fill: boolean;
     narrow: boolean;
     COLORS: WidgetTheme;
+    mode: WidgetMode;
 }) => {
     const changeGood = (change ?? 0) === 0 ? null : ((change ?? 0) > 0) === goodWhenUp;
     const f = (n: number) => Math.round(n * scale);
     const tile = narrow ? 18 : f(24);
+    // DataCard sits on its own neutral card surface (cardOnGradient), not
+    // the raw gradient — so its text needs the neutral-card palette, not
+    // the on-gradient one (see theme.ts neutralCardText for why).
+    const nc = neutralCardText(mode);
     return (
         <FlexWidget
             style={{
@@ -88,7 +101,7 @@ const DataCard = ({
                         text={title}
                         truncate="END"
                         maxLines={1}
-                        style={{ fontSize: narrow ? 9 : f(11), color: COLORS.label }}
+                        style={{ fontSize: narrow ? 9 : f(11), color: nc.label }}
                     />
                 </FlexWidget>
             </FlexWidget>
@@ -96,7 +109,7 @@ const DataCard = ({
                 text={value}
                 truncate="END"
                 maxLines={1}
-                style={{ fontSize: narrow ? 14 : f(17), fontWeight: "bold", color: COLORS.value, marginTop: narrow ? 4 : f(6) }}
+                style={{ fontSize: narrow ? 15 : f(19), fontWeight: "bold", color: nc.value, marginTop: narrow ? 4 : f(6) }}
             />
             {change !== undefined && (
                 <TextWidget
@@ -105,7 +118,7 @@ const DataCard = ({
                     maxLines={1}
                     style={{
                         fontSize: narrow ? 8 : f(9),
-                        color: changeGood == null ? COLORS.label : changeGood ? COLORS.income : COLORS.expense,
+                        color: changeGood == null ? nc.label : changeGood ? TINT.success : TINT.danger,
                         marginTop: 2,
                     }}
                 />
@@ -178,7 +191,7 @@ export const SummaryWidget = ({
                 text={scoped ? `Spendly · ${configLabel(config ?? null)}` : "Spendly"}
                 truncate="END"
                 maxLines={1}
-                style={{ fontSize: 12, fontWeight: "bold", color: COLORS.accent }}
+                style={{ fontSize: 11, fontWeight: "bold", color: COLORS.label, letterSpacing: 0.5 }}
             />
             <TextWidget
                 text={summary ? `as of ${formatTime(summary.asOf)}` : "offline"}
@@ -214,7 +227,7 @@ export const SummaryWidget = ({
                 >
                     <DataCard
                         icon="piggyBank"
-                        tint={COLORS.accent}
+                        tint={TINT.default}
                         title="Remaining"
                         value={formatINR(useScopedNumbers
                             ? (s?.remaining ?? (s?.income ?? 0) - (s?.expenses ?? 0))
@@ -225,10 +238,11 @@ export const SummaryWidget = ({
                         fill={cardsAreaFill || showMiniChart}
                         narrow={narrow}
                         COLORS={COLORS}
+                        mode={mode}
                     />
                     <DataCard
                         icon="trendingUp"
-                        tint={COLORS.income}
+                        tint={TINT.success}
                         title="Income"
                         value={formatINR(useScopedNumbers ? (s?.income ?? 0) : summary.monthIncome)}
                         change={showChange ? s?.incomeChange ?? 0 : undefined}
@@ -237,10 +251,11 @@ export const SummaryWidget = ({
                         fill={cardsAreaFill || showMiniChart}
                         narrow={narrow}
                         COLORS={COLORS}
+                        mode={mode}
                     />
                     <DataCard
                         icon="trendingDown"
-                        tint={COLORS.expense}
+                        tint={TINT.danger}
                         title="Expenses"
                         value={formatINR(useScopedNumbers ? (s?.expenses ?? 0) : summary.monthExpenses)}
                         change={showChange ? s?.expensesChange ?? 0 : undefined}
@@ -249,13 +264,14 @@ export const SummaryWidget = ({
                         fill={cardsAreaFill || showMiniChart}
                         narrow={narrow}
                         COLORS={COLORS}
+                        mode={mode}
                     />
                 </FlexWidget>
                 {showMiniChart && (
-                    <FlexWidget style={{ height: miniChartH, width: "match_parent", marginTop: 8, paddingHorizontal: 3 }}>
+                    <FlexWidget style={{ height: miniChartH, width: "match_parent", marginTop: 8, padding: 8, ...chartCardStyle(mode, 14) }}>
                         <SvgWidget
-                            svg={barChartSvg(summary.days, chartDims)}
-                            style={{ width: chartDims.w, height: miniChartH }}
+                            svg={areaChartSvg(summary.days, { ...chartDims, w: chartDims.w - 16, h: miniChartH - 16 })}
+                            style={{ width: chartDims.w - 16, height: miniChartH - 16 }}
                         />
                     </FlexWidget>
                 )}

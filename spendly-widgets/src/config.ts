@@ -52,7 +52,7 @@ export type WidgetSummary = {
     totalBalance: number;
     accounts: { name: string; balance: number }[];
     /** Daily series over the scope window (oldest first), zero-filled */
-    days: { date: string; expenses: number }[];
+    days: { date: string; expenses: number; income: number }[];
     /** This month's top spending categories + "Other" */
     topCategories: { name: string; value: number }[];
     /** Totals for the instance's scope window */
