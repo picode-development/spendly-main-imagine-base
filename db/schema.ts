@@ -111,6 +111,17 @@ export const sharedStash = pgTable("shared_stash", {
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+// Pairing tokens for the Spendly Widgets companion app (Settings → Widgets).
+// The token is shown once as a pairing code; the app sends it on every
+// /api/widget/summary call. One row per user — regenerating replaces it.
+export const widgetTokens = pgTable("widget_tokens", {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    token: text("token").notNull().unique(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { mode: "date" }),
+});
+
 // Per-field "before/after" anchors — the value sits between them.
 // See lib/sms-parser.ts FieldAnchor / SmsRule.
 export type SmsRuleAnchors = {

@@ -5,7 +5,8 @@ import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { BellRing, Check, Download, Loader2, MonitorSmartphone } from "lucide-react";
+import { BellRing, Check, Copy, Download, Loader2, MonitorSmartphone, RefreshCw, Smartphone, Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardHeader,
@@ -37,6 +38,10 @@ const csvEscape = (value: string) => {
     return `"${defused.replace(/"/g, '""')}"`;
 };
 
+// XXXX-XXXX-XXXX — codes are stored undashed
+const formatPairingCode = (token: string) =>
+    token.replace(/^(.{4})(.{4})(.{4})$/, "$1-$2-$3");
+
 const SettingsPage = () => {
   const router = useRouter();
   const { theme = "system", setTheme } = useTheme(); // Default to system
@@ -50,6 +55,48 @@ const SettingsPage = () => {
   const { data: pending } = useGetPendingTransactions();
 
   const [isExporting, setIsExporting] = useState(false);
+
+  const queryClient = useQueryClient();
+  const widgetTokenQuery = useQuery({
+    queryKey: ["widget-token"],
+    queryFn: async () => {
+      const response = await client.api.widget.token.$get();
+      if (!response.ok) throw new Error("Failed to fetch widget token");
+      const { data } = await response.json();
+      return data;
+    },
+  });
+  const generateToken = useMutation({
+    mutationFn: async () => {
+      const response = await client.api.widget.token.$post();
+      if (!response.ok) throw new Error("Failed to generate pairing code");
+      const { data } = await response.json();
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["widget-token"] });
+      toast.success("Pairing code ready — enter it in the Spendly Widgets app");
+    },
+    onError: () => toast.error("Couldn't generate a pairing code"),
+  });
+  const revokeToken = useMutation({
+    mutationFn: async () => {
+      const response = await client.api.widget.token.$delete();
+      if (!response.ok) throw new Error("Failed to revoke pairing code");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["widget-token"] });
+      toast.success("Pairing code revoked — widgets will stop updating");
+    },
+    onError: () => toast.error("Couldn't revoke the pairing code"),
+  });
+  const widgetToken = widgetTokenQuery.data;
+
+  const handleCopyCode = async () => {
+    if (!widgetToken) return;
+    await navigator.clipboard.writeText(formatPairingCode(widgetToken.token));
+    toast.success("Pairing code copied");
+  };
 
   const handleToggleLock = async (next: boolean) => {
     if (next) {
@@ -225,6 +272,80 @@ const SettingsPage = () => {
                 ? `Review ${pending.length}`
                 : "None waiting"}
             </Button>
+          </div>
+
+          <Separator className="my-2" />
+
+          <p className="pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Widgets
+          </p>
+
+          <div className="relative flex items-center justify-between py-2 px-1">
+            <div className="flex flex-col pr-4">
+              <Label className="text-md font-medium">
+                Spendly Widgets app
+              </Label>
+              <span className="text-sm text-muted-foreground">
+                Home-screen widgets for Android and iOS. Download the app, then
+                pair it with the code below.
+              </span>
+            </div>
+            <Button size="sm" className="shrink-0" asChild>
+              <a href="/spendly-widgets.apk" download>
+                <Smartphone className="size-4 mr-2" />
+                Android APK
+              </a>
+            </Button>
+          </div>
+
+          <Separator className="my-2" />
+
+          <div className="relative flex items-center justify-between py-2 px-1">
+            <div className="flex flex-col pr-4">
+              <Label className="text-md font-medium">
+                Widget pairing code
+              </Label>
+              <span className="text-sm text-muted-foreground">
+                {widgetToken
+                  ? "Enter this code in the Spendly Widgets app. Regenerating unpairs existing devices."
+                  : "Generate a code to connect the Spendly Widgets app to your account."}
+              </span>
+              {widgetToken && (
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="mt-2 inline-flex w-fit items-center gap-2 rounded-md border bg-muted px-3 py-1.5 font-mono text-sm tracking-widest hover:bg-muted/70"
+                  title="Copy pairing code"
+                >
+                  {formatPairingCode(widgetToken.token)}
+                  <Copy className="size-3.5 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => generateToken.mutate()}
+                disabled={generateToken.isPending || widgetTokenQuery.isLoading}
+              >
+                {generateToken.isPending
+                  ? <Loader2 className="size-4 mr-2 animate-spin" />
+                  : <RefreshCw className="size-4 mr-2" />}
+                {widgetToken ? "Regenerate" : "Generate"}
+              </Button>
+              {widgetToken && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => revokeToken.mutate()}
+                  disabled={revokeToken.isPending}
+                  title="Revoke pairing code"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
+            </div>
           </div>
 
           <Separator className="my-2" />

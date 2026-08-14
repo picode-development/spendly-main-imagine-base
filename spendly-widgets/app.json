@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Spendly Widgets",
+    "slug": "picode-development",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0f172a",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.spendly.widgets"
+    },
+    "android": {
+      "package": "com.spendly.widgets",
+      "adaptiveIcon": {
+        "backgroundColor": "#0f172a",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "SpendlySummary",
+              "label": "Spendly",
+              "description": "Today's spend, month total, and balance from Spendly",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "78f05329-5676-4306-becb-ce80c19d9f93"
+      }
+    },
+    "owner": "picodedevelopments-team"
+  }
+}

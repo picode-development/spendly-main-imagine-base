@@ -7,6 +7,7 @@ import transactions from "./transactions";
 import summary from "./summary";
 import pendingTransactions from "./pending-transactions";
 import smsRules from "./sms-rules";
+import widget from "./widget";
 
 
 
@@ -23,6 +24,7 @@ const routes = app
   .route("/transactions", transactions)
   .route("/pending-transactions", pendingTransactions)
   .route("/sms-rules", smsRules)
+  .route("/widget", widget)
 
 export const GET = handle(app);
 export const POST = handle(app);
