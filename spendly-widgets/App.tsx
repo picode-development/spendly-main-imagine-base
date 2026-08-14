@@ -12,6 +12,7 @@ import {
     View,
 } from "react-native";
 import { requestWidgetUpdate, WidgetPreview } from "react-native-android-widget";
+import * as Updates from "expo-updates";
 import { fetchSummary, fetchTransactions, pair } from "./src/api";
 import {
     ALL_METRICS,
@@ -161,6 +162,7 @@ const refreshHomeScreenWidgets = async (
 
 export default function App() {
     useOtaUpdateCheck();
+    const { currentlyRunning } = Updates.useUpdates();
     const [screen, setScreen] = useState<Screen>("home");
     // Launched straight into a popup (widget button → overlay activity):
     // closing should dismiss the overlay, not navigate to the app home
@@ -424,6 +426,11 @@ export default function App() {
                         <Hint>
                             {`Installed: v${installedVersionName()} (build ${installedVersionCode()})`}
                             {latest ? ` · Latest: v${latest.version} (build ${latest.versionCode})` : ""}
+                        </Hint>
+                        <Hint>
+                            {currentlyRunning.isEmbeddedLaunch
+                                ? "Running the build's embedded code (no OTA update applied yet)"
+                                : `Running OTA update ${currentlyRunning.updateId?.slice(0, 8)} · published ${currentlyRunning.createdAt?.toLocaleString() ?? "unknown"}`}
                         </Hint>
                         {latest && latest.versionCode > installedVersionCode() ? (
                             <Button
