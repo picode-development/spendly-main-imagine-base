@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    BackHandler,
     Linking,
     Pressable,
     ScrollView,
@@ -22,6 +23,13 @@ import {
 import { formatINR } from "./src/format";
 import { SearchScreen } from "./src/SearchScreen";
 import {
+    fetchLatestVersion,
+    installedVersionCode,
+    installedVersionName,
+    LatestVersion,
+    updateUriIfNewer,
+} from "./src/version";
+import {
     clearAll,
     getBaseUrl,
     getInstanceConfig,
@@ -39,6 +47,7 @@ import { ActionsWidget } from "./src/widgets/ActionsWidget";
 import { CategoriesWidget } from "./src/widgets/CategoriesWidget";
 import { ChartWidget } from "./src/widgets/ChartWidget";
 import { SummaryWidget } from "./src/widgets/SummaryWidget";
+import { themedPair } from "./src/widgets/theme";
 import { TransactionsWidget } from "./src/widgets/TransactionsWidget";
 
 type Screen = "home" | "search" | "voice";
@@ -61,6 +70,7 @@ const refreshHomeScreenWidgets = async (
     baseUrl: string,
 ) => {
     const token = await getToken();
+    const updateUri = updateUriIfNewer(baseUrl, await fetchLatestVersion(baseUrl));
 
     const scopedSummary = async (widgetId: number) => {
         const config = await getInstanceConfig(widgetId);
@@ -68,33 +78,71 @@ const refreshHomeScreenWidgets = async (
         return { config, summary: await fetchSummary(baseUrl, token, config) };
     };
 
-    const renderers: Record<string, (info: { widgetId: number }) => Promise<React.JSX.Element> | React.JSX.Element> = {
+    type Info = { widgetId: number; width: number; height: number };
+    type Rendered = ReturnType<typeof themedPair<React.JSX.Element>>;
+    const renderers: Record<string, (info: Info) => Promise<Rendered> | Rendered> = {
         SpendlySummary: async (info) => {
             const scoped = await scopedSummary(info.widgetId);
-            return (
+            return themedPair((mode) => (
                 <SummaryWidget
                     summary={scoped.summary}
                     metrics={paired ? metrics : []}
                     paired={paired}
                     config={scoped.config}
+                    width={info.width}
+                    height={info.height}
+                    mode={mode}
+                    updateUri={updateUri}
                 />
-            );
+            ));
         },
-        SpendlyActions: () => <ActionsWidget baseUrl={baseUrl} />,
+        SpendlyActions: (info) => themedPair((mode) => (
+            <ActionsWidget baseUrl={baseUrl} width={info.width} height={info.height} mode={mode} updateUri={updateUri} />
+        )),
         SpendlyChart: async (info) => {
             const scoped = await scopedSummary(info.widgetId);
-            return <ChartWidget summary={scoped.summary} baseUrl={baseUrl} config={scoped.config} />;
+            return themedPair((mode) => (
+                <ChartWidget
+                    summary={scoped.summary}
+                    baseUrl={baseUrl}
+                    config={scoped.config}
+                    width={info.width}
+                    height={info.height}
+                    mode={mode}
+                    updateUri={updateUri}
+                />
+            ));
         },
         SpendlyCategories: async (info) => {
             const scoped = await scopedSummary(info.widgetId);
-            return <CategoriesWidget summary={scoped.summary} baseUrl={baseUrl} config={scoped.config} />;
+            return themedPair((mode) => (
+                <CategoriesWidget
+                    summary={scoped.summary}
+                    baseUrl={baseUrl}
+                    config={scoped.config}
+                    width={info.width}
+                    height={info.height}
+                    mode={mode}
+                    updateUri={updateUri}
+                />
+            ));
         },
         SpendlyTransactions: async (info) => {
             const config = await getInstanceConfig(info.widgetId);
             const rows = config && token && paired
-                ? await fetchTransactions(baseUrl, token, config)
+                ? await fetchTransactions(baseUrl, token, config, 30)
                 : (paired ? transactions : null);
-            return <TransactionsWidget transactions={rows} baseUrl={baseUrl} config={config} />;
+            return themedPair((mode) => (
+                <TransactionsWidget
+                    transactions={rows}
+                    baseUrl={baseUrl}
+                    config={config}
+                    width={info.width}
+                    height={info.height}
+                    mode={mode}
+                    updateUri={updateUri}
+                />
+            ));
         },
     };
     return Promise.all(
@@ -112,6 +160,9 @@ const refreshHomeScreenWidgets = async (
 
 export default function App() {
     const [screen, setScreen] = useState<Screen>("home");
+    // Launched straight into a popup (widget button → overlay activity):
+    // closing should dismiss the overlay, not navigate to the app home
+    const [popupLaunch, setPopupLaunch] = useState(false);
     const [loading, setLoading] = useState(true);
     const [token, setToken] = useState<string | null>(null);
     const [code, setCode] = useState("");
@@ -122,11 +173,12 @@ export default function App() {
     const [metrics, setMetrics] = useState<MetricKey[]>(["today", "month", "balance"]);
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
+    const [latest, setLatest] = useState<LatestVersion | null>(null);
 
     const loadSummary = useCallback(async (url: string, tok: string) => {
         const [data, rows] = await Promise.all([
             fetchSummary(url, tok),
-            fetchTransactions(url, tok),
+            fetchTransactions(url, tok, null, 30),
         ]);
         if (data) {
             setSummary(data);
@@ -150,9 +202,12 @@ export default function App() {
             setMetrics(storedMetrics);
             setBaseUrl(storedUrl);
             setToken(storedToken);
-            setScreen(screenFromUrl(initialUrl));
+            const initialScreen = screenFromUrl(initialUrl);
+            setScreen(initialScreen);
+            setPopupLaunch(initialScreen !== "home");
             setLoading(false);
             if (storedToken) void loadSummary(storedUrl, storedToken);
+            void fetchLatestVersion(storedUrl).then(setLatest);
         })();
         const sub = Linking.addEventListener("url", ({ url }) => setScreen(screenFromUrl(url)));
         return () => sub.remove();
@@ -216,11 +271,15 @@ export default function App() {
         );
     }
 
+    const closePopup = () => {
+        if (popupLaunch) BackHandler.exitApp();
+        else setScreen("home");
+    };
     if (screen === "search") {
-        return <SearchScreen baseUrl={baseUrl} token={token} onClose={() => setScreen("home")} />;
+        return <SearchScreen baseUrl={baseUrl} token={token} onClose={closePopup} />;
     }
     if (screen === "voice") {
-        return <VoiceScreen baseUrl={baseUrl} token={token} onClose={() => setScreen("home")} />;
+        return <VoiceScreen baseUrl={baseUrl} token={token} onClose={closePopup} />;
     }
 
     return (
@@ -303,38 +362,38 @@ export default function App() {
                         <View style={styles.previewList}>
                             <Text style={styles.previewLabel}>Summary</Text>
                             <WidgetPreview
-                                renderWidget={() => (
-                                    <SummaryWidget summary={summary} metrics={metrics} paired config={null} />
+                                renderWidget={(d) => (
+                                    <SummaryWidget summary={summary} metrics={metrics} paired config={null} width={d.width} height={d.height} />
                                 )}
                                 width={320}
                                 height={140}
                             />
                             <Text style={styles.previewLabel}>Quick actions</Text>
                             <WidgetPreview
-                                renderWidget={() => <ActionsWidget baseUrl={baseUrl} />}
+                                renderWidget={(d) => <ActionsWidget baseUrl={baseUrl} width={d.width} height={d.height} />}
                                 width={320}
                                 height={86}
                             />
                             <Text style={styles.previewLabel}>Chart</Text>
                             <WidgetPreview
-                                renderWidget={() => (
-                                    <ChartWidget summary={summary} baseUrl={baseUrl} config={null} />
+                                renderWidget={(d) => (
+                                    <ChartWidget summary={summary} baseUrl={baseUrl} config={null} width={d.width} height={d.height} />
                                 )}
                                 width={320}
                                 height={150}
                             />
                             <Text style={styles.previewLabel}>Categories</Text>
                             <WidgetPreview
-                                renderWidget={() => (
-                                    <CategoriesWidget summary={summary} baseUrl={baseUrl} config={null} />
+                                renderWidget={(d) => (
+                                    <CategoriesWidget summary={summary} baseUrl={baseUrl} config={null} width={d.width} height={d.height} />
                                 )}
                                 width={320}
                                 height={150}
                             />
                             <Text style={styles.previewLabel}>Transactions</Text>
                             <WidgetPreview
-                                renderWidget={() => (
-                                    <TransactionsWidget transactions={transactions} baseUrl={baseUrl} config={null} />
+                                renderWidget={(d) => (
+                                    <TransactionsWidget transactions={transactions} baseUrl={baseUrl} config={null} width={d.width} height={d.height} />
                                 )}
                                 width={320}
                                 height={200}
@@ -356,6 +415,24 @@ export default function App() {
                             </View>
                         ))}
                         <Hint>Applies to Summary widgets in the compact style without their own settings.</Hint>
+                    </Card>
+
+                    <Card>
+                        <CardTitle>App version</CardTitle>
+                        <Hint>
+                            {`Installed: v${installedVersionName()} (build ${installedVersionCode()})`}
+                            {latest ? ` · Latest: v${latest.version} (build ${latest.versionCode})` : ""}
+                        </Hint>
+                        {latest && latest.versionCode > installedVersionCode() ? (
+                            <Button
+                                variant="gold"
+                                onPress={() => Linking.openURL(`${baseUrl}${latest.apkUrl}`)}
+                            >
+                                Download latest APK
+                            </Button>
+                        ) : (
+                            <Hint>You're up to date.</Hint>
+                        )}
                     </Card>
 
                     <Card>

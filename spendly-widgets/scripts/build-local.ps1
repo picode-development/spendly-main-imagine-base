@@ -77,10 +77,23 @@ Set-Location "android"
 if ($LASTEXITCODE -ne 0) { Set-Location $appDir; throw "gradle build failed" }
 Set-Location $buildDir
 
-# 6. Ship the APK back into the repo
+# 6. Ship the APK + version manifest back into the repo. Widgets poll the
+# manifest and show their update bar when a newer build is published.
 $apk = "android\app\build\outputs\apk\release\app-release.apk"
 if (-not (Test-Path $apk)) { throw "APK not found at $apk" }
 Copy-Item $apk (Join-Path $appDir "..\public\spendly-widgets.apk") -Force
 Set-Location $appDir
+
+$appJson = Get-Content "app.json" -Raw | ConvertFrom-Json
+$manifest = @{
+    version = $appJson.expo.version
+    versionCode = $appJson.expo.android.versionCode
+    apkUrl = "/spendly-widgets.apk"
+} | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText(
+    (Join-Path (Resolve-Path "..\public") "spendly-widgets-version.json"),
+    $manifest,
+    (New-Object System.Text.UTF8Encoding $false))
+
 $size = [Math]::Round((Get-Item "..\public\spendly-widgets.apk").Length / 1MB, 1)
-Write-Host "==> Done: public/spendly-widgets.apk - $size MB"
+Write-Host "==> Done: public/spendly-widgets.apk - $size MB (v$($appJson.expo.version), build $($appJson.expo.android.versionCode))"

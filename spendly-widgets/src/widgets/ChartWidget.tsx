@@ -3,33 +3,36 @@ import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
 import { areaChartSvg, barChartSvg, lineChartSvg } from "./charts";
-import { WIDGET_COLORS as C } from "./theme";
+import { getTheme, WidgetMode } from "./theme";
+import { WidgetShell } from "./WidgetShell";
 
 type Props = {
     summary: WidgetSummary | null;
     baseUrl: string;
     config?: WidgetInstanceConfig | null;
+    width?: number;
+    height?: number;
+    mode?: WidgetMode;
+    updateUri?: string;
 };
 
 // Spending-over-time chart with the dashboard's variants: bar (default),
-// area, or line — chosen per instance in the widget settings.
-export const ChartWidget = ({ summary, baseUrl, config }: Props) => {
+// area, or line. The SVG is sized to the widget's real dimensions so it
+// fills the whole card and re-adapts when the widget is resized.
+export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", updateUri }: Props) => {
+    const C = getTheme(mode);
     const style = config?.style ?? "bar";
     const buildSvg = style === "line" ? lineChartSvg : style === "area" ? areaChartSvg : barChartSvg;
+    const padding = 14;
+    const headerHeight = 22;
+    const chartDims = {
+        w: Math.max(60, width - padding * 2),
+        h: Math.max(50, height - padding * 2 - headerHeight),
+        mode,
+    };
 
     return (
-        <FlexWidget
-            clickAction="OPEN_URI"
-            clickActionData={{ uri: baseUrl }}
-            style={{
-                height: "match_parent",
-                width: "match_parent",
-                backgroundColor: C.bg,
-                borderRadius: 20,
-                padding: 14,
-                flexDirection: "column",
-            }}
-        >
+        <WidgetShell width={width} height={height} mode={mode} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
             <FlexWidget
                 style={{
                     flexDirection: "row",
@@ -56,9 +59,9 @@ export const ChartWidget = ({ summary, baseUrl, config }: Props) => {
             </FlexWidget>
 
             {summary ? (
-                <FlexWidget style={{ flex: 1, width: "match_parent", marginTop: 6 }}>
+                <FlexWidget style={{ flex: 1, width: "match_parent", marginTop: 4 }}>
                     <SvgWidget
-                        svg={buildSvg(summary.days)}
+                        svg={buildSvg(summary.days, chartDims)}
                         style={{ width: "match_parent", height: "match_parent" }}
                     />
                 </FlexWidget>
@@ -68,6 +71,6 @@ export const ChartWidget = ({ summary, baseUrl, config }: Props) => {
                     style={{ fontSize: 12, color: C.label, marginTop: 12 }}
                 />
             )}
-        </FlexWidget>
+        </WidgetShell>
     );
 };

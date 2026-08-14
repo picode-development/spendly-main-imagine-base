@@ -342,7 +342,7 @@ const app = new Hono()
         "/transactions",
         zValidator("query", z.object({
             token: z.string().min(8).max(32),
-            limit: z.coerce.number().int().min(1).max(20).optional(),
+            limit: z.coerce.number().int().min(1).max(100).optional(),
             accountId: z.string().optional(),
             categoryId: z.string().optional(),
             from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

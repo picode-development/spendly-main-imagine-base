@@ -207,7 +207,8 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
-        backgroundColor: "rgba(2, 6, 23, 0.92)",
+        // Semi-transparent: the launcher stays visible behind the popup
+        backgroundColor: "rgba(2, 6, 23, 0.55)",
         justifyContent: "center",
         padding: 18,
     },

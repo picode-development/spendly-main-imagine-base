@@ -1,9 +1,10 @@
 import React from "react";
 import { FlexWidget, ListWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { configLabel, WidgetInstanceConfig, WidgetTransaction } from "../config";
-import { lucideSvg } from "./icons";
 import { formatINR } from "../format";
-import { WIDGET_COLORS as C } from "./theme";
+import { lucideSvg } from "./icons";
+import { getTheme, WidgetMode } from "./theme";
+import { WidgetShell } from "./WidgetShell";
 
 const formatDay = (iso: string) => {
     const d = new Date(`${iso}T00:00:00`);
@@ -14,19 +15,24 @@ type Props = {
     transactions: WidgetTransaction[] | null;
     baseUrl: string;
     config?: WidgetInstanceConfig | null;
+    width?: number;
+    height?: number;
+    mode?: WidgetMode;
+    updateUri?: string;
 };
 
-export const TransactionsWidget = ({ transactions, baseUrl, config }: Props) => (
-    <FlexWidget
-        style={{
-            height: "match_parent",
-            width: "match_parent",
-            backgroundColor: C.bg,
-            borderRadius: 20,
-            padding: 12,
-            flexDirection: "column",
-        }}
-    >
+export const TransactionsWidget = ({
+    transactions,
+    baseUrl,
+    config,
+    width = 320,
+    height = 200,
+    mode = "dark",
+    updateUri,
+}: Props) => {
+    const C = getTheme(mode);
+    return (
+    <WidgetShell width={width} height={height} mode={mode} padding={12} updateUri={updateUri}>
         <FlexWidget
             style={{
                 flexDirection: "row",
@@ -106,9 +112,10 @@ export const TransactionsWidget = ({ transactions, baseUrl, config }: Props) => 
             </FlexWidget>
         ) : (
             <TextWidget
-                text={transactions ? "No transactions yet" : "Open the app to refresh"}
+                text={transactions ? "No transactions in this view" : "Open the app to refresh"}
                 style={{ fontSize: 12, color: C.label, marginTop: 8 }}
             />
         )}
-    </FlexWidget>
-);
+    </WidgetShell>
+    );
+};

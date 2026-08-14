@@ -12,10 +12,12 @@ import {
     setCachedSummary,
     setCachedTransactions,
 } from "./storage";
+import { fetchLatestVersion, updateUriIfNewer } from "./version";
 import { ActionsWidget } from "./widgets/ActionsWidget";
 import { CategoriesWidget } from "./widgets/CategoriesWidget";
 import { ChartWidget } from "./widgets/ChartWidget";
 import { SummaryWidget } from "./widgets/SummaryWidget";
+import { themedPair } from "./widgets/theme";
 import { TransactionsWidget } from "./widgets/TransactionsWidget";
 
 export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
@@ -33,16 +35,26 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
     }
 
     const widgetName = props.widgetInfo.widgetName;
+    // Real widget size in dp — layouts fill it and adapt on resize
+    const { width, height } = props.widgetInfo;
     const [token, baseUrl] = await Promise.all([getToken(), getBaseUrl()]);
+
+    // Newer APK published? Every widget shows the gold update bar
+    const latest = await fetchLatestVersion(baseUrl);
+    const updateUri = updateUriIfNewer(baseUrl, latest);
 
     // The actions widget needs no data or pairing — just the deep links
     if (widgetName === "SpendlyActions") {
-        props.renderWidget(<ActionsWidget baseUrl={baseUrl} />);
+        props.renderWidget(themedPair((mode) => (
+            <ActionsWidget baseUrl={baseUrl} width={width} height={height} mode={mode} updateUri={updateUri} />
+        )));
         return;
     }
 
     if (!token) {
-        props.renderWidget(<SummaryWidget summary={null} metrics={[]} paired={false} />);
+        props.renderWidget(themedPair((mode) => (
+            <SummaryWidget summary={null} metrics={[]} paired={false} width={width} height={height} mode={mode} updateUri={updateUri} />
+        )));
         return;
     }
 
@@ -51,16 +63,20 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
 
     if (widgetName === "SpendlyTransactions") {
         const cached = await getCachedTransactions();
-        const fresh = await fetchTransactions(baseUrl, token, config);
+        const fresh = await fetchTransactions(baseUrl, token, config, 30);
         // Only the unfiltered default feeds the shared offline cache
         if (fresh && !config) await setCachedTransactions(fresh);
-        props.renderWidget(
+        props.renderWidget(themedPair((mode) => (
             <TransactionsWidget
                 transactions={fresh ?? (config ? null : cached)}
                 baseUrl={baseUrl}
                 config={config}
-            />,
-        );
+                width={width}
+                height={height}
+                mode={mode}
+                updateUri={updateUri}
+            />
+        )));
         return;
     }
 
@@ -70,14 +86,20 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
     const summary = freshSummary ?? (config ? null : cachedSummary);
 
     if (widgetName === "SpendlyChart") {
-        props.renderWidget(<ChartWidget summary={summary} baseUrl={baseUrl} config={config} />);
+        props.renderWidget(themedPair((mode) => (
+            <ChartWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} updateUri={updateUri} />
+        )));
         return;
     }
 
     if (widgetName === "SpendlyCategories") {
-        props.renderWidget(<CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} />);
+        props.renderWidget(themedPair((mode) => (
+            <CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} updateUri={updateUri} />
+        )));
         return;
     }
 
-    props.renderWidget(<SummaryWidget summary={summary} metrics={metrics} paired config={config} />);
+    props.renderWidget(themedPair((mode) => (
+        <SummaryWidget summary={summary} metrics={metrics} paired config={config} width={width} height={height} mode={mode} updateUri={updateUri} />
+    )));
 }

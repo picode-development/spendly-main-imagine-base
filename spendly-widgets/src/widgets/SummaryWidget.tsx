@@ -2,14 +2,20 @@ import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { configLabel, DEFAULT_BASE_URL, MetricKey, WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR, formatTime } from "../format";
+import { barChartSvg } from "./charts";
 import { lucideSvg, LucideIconName } from "./icons";
-import { HexColor, WIDGET_COLORS as COLORS } from "./theme";
+import { getTheme, HexColor, WidgetMode, WidgetTheme } from "./theme";
+import { WidgetShell } from "./WidgetShell";
 
 type Props = {
     summary: WidgetSummary | null;
     metrics: MetricKey[];
     paired: boolean;
     config?: WidgetInstanceConfig | null;
+    width?: number;
+    height?: number;
+    mode?: WidgetMode;
+    updateUri?: string;
 };
 
 // A configured instance shows its scoped view instead of the metric toggles
@@ -30,6 +36,9 @@ const DataCard = ({
     value,
     change,
     goodWhenUp,
+    scale,
+    fill,
+    COLORS,
 }: {
     icon: LucideIconName;
     tint: HexColor;
@@ -37,52 +46,58 @@ const DataCard = ({
     value: string;
     change?: number;
     goodWhenUp: boolean;
+    scale: number;
+    fill: boolean;
+    COLORS: WidgetTheme;
 }) => {
     const changeGood = (change ?? 0) === 0 ? null : ((change ?? 0) > 0) === goodWhenUp;
+    const f = (n: number) => Math.round(n * scale);
     return (
         <FlexWidget
             style={{
                 flex: 1,
                 flexDirection: "column",
-                backgroundColor: COLORS.card,
+                justifyContent: "center",
+                backgroundColor: COLORS.cardOnGradient,
                 borderRadius: 14,
-                padding: 10,
+                padding: f(10),
                 marginHorizontal: 3,
+                ...(fill ? { height: "match_parent" as const } : {}),
             }}
         >
             <FlexWidget style={{ flexDirection: "row", alignItems: "center" }}>
                 <FlexWidget
                     style={{
-                        height: 24,
-                        width: 24,
-                        borderRadius: 7,
-                        backgroundColor: COLORS.bg,
+                        height: f(24),
+                        width: f(24),
+                        borderRadius: f(7),
+                        backgroundColor: COLORS.tileOnGradient,
                         justifyContent: "center",
                         alignItems: "center",
                         marginRight: 6,
                     }}
                 >
-                    <SvgWidget svg={lucideSvg(icon, tint)} style={{ height: 14, width: 14 }} />
+                    <SvgWidget svg={lucideSvg(icon, tint)} style={{ height: f(14), width: f(14) }} />
                 </FlexWidget>
                 <TextWidget
                     text={title}
                     truncate="END"
                     maxLines={1}
-                    style={{ fontSize: 11, color: COLORS.label }}
+                    style={{ fontSize: f(11), color: COLORS.label }}
                 />
             </FlexWidget>
             <TextWidget
                 text={value}
                 truncate="END"
                 maxLines={1}
-                style={{ fontSize: 17, fontWeight: "bold", color: COLORS.value, marginTop: 6 }}
+                style={{ fontSize: f(17), fontWeight: "bold", color: COLORS.value, marginTop: f(6) }}
             />
             <TextWidget
                 text={changeText(change)}
                 truncate="END"
                 maxLines={1}
                 style={{
-                    fontSize: 9,
+                    fontSize: f(9),
                     color: changeGood == null ? COLORS.label : changeGood ? COLORS.income : COLORS.expense,
                     marginTop: 2,
                 }}
@@ -91,33 +106,46 @@ const DataCard = ({
     );
 };
 
-export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
+export const SummaryWidget = ({
+    summary,
+    metrics,
+    paired,
+    config,
+    width = 320,
+    height = 150,
+    mode = "dark",
+    updateUri,
+}: Props) => {
+    const COLORS = getTheme(mode);
     if (!paired) {
         return (
-            <FlexWidget
-                clickAction="OPEN_APP"
-                style={{
-                    height: "match_parent",
-                    width: "match_parent",
-                    backgroundColor: COLORS.bg,
-                    borderRadius: 20,
-                    padding: 16,
-                    flexDirection: "column",
-                    justifyContent: "center",
-                    alignItems: "center",
-                }}
-            >
-                <TextWidget text="Spendly" style={{ fontSize: 14, fontWeight: "bold", color: COLORS.accent }} />
-                <TextWidget
-                    text="Tap to pair with your account"
-                    style={{ fontSize: 12, color: COLORS.label, marginTop: 4 }}
-                />
-            </FlexWidget>
+            <WidgetShell width={width} height={height} mode={mode} clickUri={DEFAULT_BASE_URL} updateUri={updateUri}>
+                <FlexWidget
+                    style={{
+                        flex: 1,
+                        width: "match_parent",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        alignItems: "center",
+                    }}
+                >
+                    <TextWidget text="Spendly" style={{ fontSize: 14, fontWeight: "bold", color: COLORS.accent }} />
+                    <TextWidget
+                        text="Tap to pair with your account"
+                        style={{ fontSize: 12, color: COLORS.label, marginTop: 4 }}
+                    />
+                </FlexWidget>
+            </WidgetShell>
         );
     }
 
     const scoped = isScopedConfig(config);
     const style = config?.style ?? "cards";
+    const scale = Math.max(1, Math.min(1.35, width / 330));
+    // Tall widgets get a mini spending chart under the cards so the extra
+    // space carries information instead of sitting empty
+    const showMiniChart = style === "cards" && !!summary && height >= 190;
+    const cardsAreaFill = style === "cards" && height >= 130;
 
     const header = (
         <FlexWidget
@@ -145,22 +173,21 @@ export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
     if (summary && style === "cards") {
         const s = summary.scoped;
         const useScopedNumbers = scoped && s;
+        const chartDims = {
+            w: Math.max(60, width - 28),
+            h: Math.max(40, Math.round((height - 60) * 0.45)),
+            mode,
+        };
         return (
-            <FlexWidget
-                clickAction="OPEN_URI"
-                clickActionData={{ uri: DEFAULT_BASE_URL }}
-                style={{
-                    height: "match_parent",
-                    width: "match_parent",
-                    backgroundColor: COLORS.bg,
-                    borderRadius: 20,
-                    padding: 10,
-                    flexDirection: "column",
-                    justifyContent: "center",
-                }}
-            >
+            <WidgetShell width={width} height={height} mode={mode} clickUri={DEFAULT_BASE_URL} padding={10} updateUri={updateUri}>
                 {header}
-                <FlexWidget style={{ flexDirection: "row", width: "match_parent" }}>
+                <FlexWidget
+                    style={{
+                        flexDirection: "row",
+                        width: "match_parent",
+                        ...(cardsAreaFill ? { flex: showMiniChart ? 55 : 1 } : {}),
+                    }}
+                >
                     <DataCard
                         icon="piggyBank"
                         tint={COLORS.accent}
@@ -170,6 +197,9 @@ export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
                             : summary.totalBalance)}
                         change={useScopedNumbers ? s?.remainingChange : undefined}
                         goodWhenUp
+                        scale={scale}
+                        fill={cardsAreaFill}
+                        COLORS={COLORS}
                     />
                     <DataCard
                         icon="trendingUp"
@@ -178,6 +208,9 @@ export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
                         value={formatINR(useScopedNumbers ? (s?.income ?? 0) : summary.monthIncome)}
                         change={useScopedNumbers ? s?.incomeChange : undefined}
                         goodWhenUp
+                        scale={scale}
+                        fill={cardsAreaFill}
+                        COLORS={COLORS}
                     />
                     <DataCard
                         icon="trendingDown"
@@ -186,13 +219,24 @@ export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
                         value={formatINR(useScopedNumbers ? (s?.expenses ?? 0) : summary.monthExpenses)}
                         change={useScopedNumbers ? s?.expensesChange : undefined}
                         goodWhenUp={false}
+                        scale={scale}
+                        fill={cardsAreaFill}
+                        COLORS={COLORS}
                     />
                 </FlexWidget>
-            </FlexWidget>
+                {showMiniChart && (
+                    <FlexWidget style={{ flex: 45, width: "match_parent", marginTop: 8, paddingHorizontal: 3 }}>
+                        <SvgWidget
+                            svg={barChartSvg(summary.days, chartDims)}
+                            style={{ width: "match_parent", height: "match_parent" }}
+                        />
+                    </FlexWidget>
+                )}
+            </WidgetShell>
         );
     }
 
-    // Compact style: label/value rows like the v1 widget
+    // Compact style: label/value rows
     const rows: { label: string; value: string; color?: HexColor }[] = [];
     if (summary && scoped) {
         rows.push({ label: "Spent", value: formatINR(summary.scoped?.expenses ?? 0), color: COLORS.expense });
@@ -211,28 +255,23 @@ export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
     }
 
     return (
-        <FlexWidget
-            clickAction="OPEN_URI"
-            clickActionData={{ uri: DEFAULT_BASE_URL }}
-            style={{
-                height: "match_parent",
-                width: "match_parent",
-                backgroundColor: COLORS.bg,
-                borderRadius: 20,
-                padding: 16,
-                flexDirection: "column",
-                justifyContent: "space-between",
-            }}
-        >
+        <WidgetShell width={width} height={height} mode={mode} clickUri={DEFAULT_BASE_URL} padding={16} updateUri={updateUri}>
             {header}
             {rows.length > 0 ? (
-                <FlexWidget style={{ flexDirection: "row", width: "match_parent", marginTop: 4 }}>
+                <FlexWidget
+                    style={{
+                        flexDirection: "row",
+                        width: "match_parent",
+                        flex: 1,
+                        alignItems: "center",
+                    }}
+                >
                     {rows.map((row) => (
                         <FlexWidget key={row.label} style={{ flexDirection: "column", flex: 1 }}>
-                            <TextWidget text={row.label} style={{ fontSize: 11, color: COLORS.label }} />
+                            <TextWidget text={row.label} style={{ fontSize: Math.round(11 * scale), color: COLORS.label }} />
                             <TextWidget
                                 text={row.value}
-                                style={{ fontSize: 20, fontWeight: "bold", color: row.color ?? COLORS.value }}
+                                style={{ fontSize: Math.round(20 * scale), fontWeight: "bold", color: row.color ?? COLORS.value }}
                             />
                         </FlexWidget>
                     ))}
@@ -243,6 +282,6 @@ export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
                     style={{ fontSize: 12, color: COLORS.label, marginTop: 8 }}
                 />
             )}
-        </FlexWidget>
+        </WidgetShell>
     );
 };

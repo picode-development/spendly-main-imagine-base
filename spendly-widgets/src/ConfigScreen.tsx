@@ -20,6 +20,7 @@ import { Button, Card, CardTitle, Field, Hint, Select, UI } from "./ui";
 import { CategoriesWidget } from "./widgets/CategoriesWidget";
 import { ChartWidget } from "./widgets/ChartWidget";
 import { SummaryWidget } from "./widgets/SummaryWidget";
+import { themedPair } from "./widgets/theme";
 import { TransactionsWidget } from "./widgets/TransactionsWidget";
 
 const SCOPE_OPTIONS = [
@@ -140,37 +141,38 @@ export const ConfigScreen = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [token, baseUrl, scope, from, to, accountId, categoryId, direction, sort, customValid]);
 
-    const renderPreviewWidget = useCallback(() => {
+    const renderPreviewWidget = useCallback((d: { width: number; height: number }) => {
         switch (widgetName) {
             case "SpendlyChart":
-                return <ChartWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} />;
+                return <ChartWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} />;
             case "SpendlyCategories":
-                return <CategoriesWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} />;
+                return <CategoriesWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} />;
             case "SpendlyTransactions":
-                return <TransactionsWidget transactions={previewRows} baseUrl={baseUrl} config={draftConfig} />;
+                return <TransactionsWidget transactions={previewRows} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} />;
             default:
-                return <SummaryWidget summary={previewSummary} metrics={metrics} paired config={draftConfig} />;
+                return <SummaryWidget summary={previewSummary} metrics={metrics} paired config={draftConfig} width={d.width} height={d.height} />;
         }
     }, [widgetName, previewSummary, previewRows, baseUrl, draftConfig, metrics]);
 
     const handleSave = async () => {
         setSaving(true);
         await setInstanceConfig(widgetInfo.widgetId, draftConfig);
+        const dims = { width: widgetInfo.width, height: widgetInfo.height };
         if (token) {
             if (isTransactionsWidget) {
-                const rows = await fetchTransactions(baseUrl, token, draftConfig);
-                renderWidget(
-                    <TransactionsWidget transactions={rows} baseUrl={baseUrl} config={draftConfig} />,
-                );
+                const rows = await fetchTransactions(baseUrl, token, draftConfig, 30);
+                renderWidget(themedPair((mode) => (
+                    <TransactionsWidget transactions={rows} baseUrl={baseUrl} config={draftConfig} mode={mode} {...dims} />
+                )));
             } else {
                 const summary = await fetchSummary(baseUrl, token, draftConfig);
-                renderWidget(
+                renderWidget(themedPair((mode) =>
                     widgetName === "SpendlyChart"
-                        ? <ChartWidget summary={summary} baseUrl={baseUrl} config={draftConfig} />
+                        ? <ChartWidget summary={summary} baseUrl={baseUrl} config={draftConfig} mode={mode} {...dims} />
                         : widgetName === "SpendlyCategories"
-                            ? <CategoriesWidget summary={summary} baseUrl={baseUrl} config={draftConfig} />
-                            : <SummaryWidget summary={summary} metrics={metrics} paired config={draftConfig} />,
-                );
+                            ? <CategoriesWidget summary={summary} baseUrl={baseUrl} config={draftConfig} mode={mode} {...dims} />
+                            : <SummaryWidget summary={summary} metrics={metrics} paired config={draftConfig} mode={mode} {...dims} />,
+                ));
             }
         }
         setResult("ok");

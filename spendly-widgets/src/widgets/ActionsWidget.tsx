@@ -1,12 +1,12 @@
 import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { lucideSvg, LucideIconName } from "./icons";
-import { WIDGET_COLORS as C } from "./theme";
+import { getTheme, WidgetMode } from "./theme";
+import { WidgetShell } from "./WidgetShell";
 
-// Paytm/GPay-style quick action row: each button deep-links straight into
-// the matching Spendly flow. Icons are the app's own library (Lucide).
-// Voice and Search open the companion app's popup screens (app scheme);
-// the rest deep-link into the Spendly web app.
+// Paytm/GPay-style quick action row. Voice and Search open the overlay
+// popups (app scheme); the rest deep-link into the Spendly web app.
+// Icons are the app's own library (Lucide).
 const ACTIONS: { icon: LucideIconName; label: string; uri: (baseUrl: string) => string }[] = [
     { icon: "plus", label: "Add", uri: (b) => `${b}/?widget-action=new` },
     { icon: "mic", label: "Voice", uri: () => "spendlywidgets://voice" },
@@ -15,61 +15,57 @@ const ACTIONS: { icon: LucideIconName; label: string; uri: (baseUrl: string) => 
     { icon: "arrowUpRight", label: "Open", uri: (b) => b },
 ];
 
-type Props = { baseUrl: string };
+type Props = { baseUrl: string; width?: number; height?: number; mode?: WidgetMode; updateUri?: string };
 
-export const ActionsWidget = ({ baseUrl }: Props) => (
-    <FlexWidget
-        style={{
-            height: "match_parent",
-            width: "match_parent",
-            backgroundColor: C.bg,
-            borderRadius: 20,
-            paddingHorizontal: 8,
-            paddingVertical: 10,
-            flexDirection: "column",
-            justifyContent: "center",
-        }}
-    >
-        <FlexWidget
-            style={{
-                flexDirection: "row",
-                width: "match_parent",
-                justifyContent: "space-between",
-            }}
-        >
-            {ACTIONS.map((a) => (
-                <FlexWidget
-                    key={a.label}
-                    clickAction="OPEN_URI"
-                    clickActionData={{ uri: a.uri(baseUrl) }}
-                    style={{
-                        flex: 1,
-                        flexDirection: "column",
-                        alignItems: "center",
-                        paddingVertical: 6,
-                    }}
-                >
+export const ActionsWidget = ({ baseUrl, width = 320, height = 86, mode = "dark", updateUri }: Props) => {
+    const C = getTheme(mode);
+    const scale = Math.max(1, Math.min(1.5, height / 90));
+    const circle = Math.round(42 * scale);
+    return (
+        <WidgetShell width={width} height={height} mode={mode} padding={8} updateUri={updateUri}>
+            <FlexWidget
+                style={{
+                    flexDirection: "row",
+                    width: "match_parent",
+                    flex: 1,
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                }}
+            >
+                {ACTIONS.map((a) => (
                     <FlexWidget
+                        key={a.label}
+                        clickAction="OPEN_URI"
+                        clickActionData={{ uri: a.uri(baseUrl) }}
                         style={{
-                            height: 42,
-                            width: 42,
-                            borderRadius: 21,
-                            backgroundColor: C.card,
-                            justifyContent: "center",
+                            flex: 1,
+                            flexDirection: "column",
                             alignItems: "center",
+                            paddingVertical: 6,
                         }}
                     >
-                        <SvgWidget
-                            svg={lucideSvg(a.icon, C.value)}
-                            style={{ height: 20, width: 20 }}
+                        <FlexWidget
+                            style={{
+                                height: circle,
+                                width: circle,
+                                borderRadius: Math.round(circle / 2),
+                                backgroundColor: C.tileOnGradient,
+                                justifyContent: "center",
+                                alignItems: "center",
+                            }}
+                        >
+                            <SvgWidget
+                                svg={lucideSvg(a.icon, C.value)}
+                                style={{ height: Math.round(20 * scale), width: Math.round(20 * scale) }}
+                            />
+                        </FlexWidget>
+                        <TextWidget
+                            text={a.label}
+                            style={{ fontSize: Math.round(11 * scale), color: C.label, marginTop: 4 }}
                         />
                     </FlexWidget>
-                    <TextWidget
-                        text={a.label}
-                        style={{ fontSize: 11, color: C.label, marginTop: 4 }}
-                    />
-                </FlexWidget>
-            ))}
-        </FlexWidget>
-    </FlexWidget>
-);
+                ))}
+            </FlexWidget>
+        </WidgetShell>
+    );
+};
