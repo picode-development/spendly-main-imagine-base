@@ -11,7 +11,13 @@ import widget from "./widget";
 
 
 
-export const runtime = 'edge';
+// Node.js runtime, not Edge: Edge Functions must begin sending a response
+// within 25s (hard platform cap, not configurable), and Hermes-backed
+// extraction (voice/SMS/vision) routinely takes longer than that once
+// transcription + retries are included. Node functions default to a much
+// lower cap on Hobby plans, so it's raised explicitly below.
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 const app = new Hono().basePath('/api');
 
