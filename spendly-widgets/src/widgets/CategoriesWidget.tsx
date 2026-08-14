@@ -2,7 +2,7 @@ import React from "react";
 import { FlexWidget, OverlapWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
-import { CATEGORY_COLORS, donutSvg, radialSvg } from "./charts";
+import { CATEGORY_COLORS, donutSvg, radarSvg, radialSvg } from "./charts";
 import { chartCardStyle, getTheme, neutralCardText, WidgetMode } from "./theme";
 import { WidgetShell } from "./WidgetShell";
 
@@ -15,28 +15,21 @@ type Props = {
     mode?: WidgetMode;
     density?: number;
     updateUri?: string;
-    /** Tapped legend row (chart/radial styles only) — highlights that category. */
+    /** Tapped legend row (chart/radial/radar styles only) — highlights that category. */
     selectedIndex?: number | null;
 };
 
 // The dashboard's category split as a widget: radial rings (Google Fit-
-// style concentric progress, one ring per category), true donut, or
-// ranked horizontal bars — sized to the widget's real dimensions.
+// style concentric progress, one ring per category), true donut, radar
+// polygon, or ranked horizontal bars — matching every chart style the
+// dashboard itself offers, sized to the widget's real dimensions.
 export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri, selectedIndex = null }: Props) => {
     const C = getTheme(mode);
     const nc = neutralCardText(mode);
     // Default preserves the pre-existing look for widgets placed before
     // this option existed (their unset style used to fall through to what
-    // is now explicitly the "radial" chart). "radar" is a retired option —
-    // radar/spider charts compare multiple entities across shared axes;
-    // this is one entity's category breakdown, a part-of-whole/magnitude
-    // shape, not what a radar chart is for. Its value/max spoke math
-    // mechanically collapses to an unreadable single spike whenever one
-    // category dominates (the normal case for real spending data), so
-    // existing instances still configured for it fall back to radial
-    // rings rather than keep rendering something structurally broken.
-    const rawStyle = config?.style ?? "radial";
-    const style = rawStyle === "radar" ? "radial" : rawStyle;
+    // is now explicitly the "radial" chart).
+    const style = config?.style ?? "radial";
     const cats = summary?.topCategories ?? [];
     const total = cats.reduce((a, c) => a + c.value, 0) || 1;
     const scale = Math.max(1, Math.min(1.5, height / 150));
@@ -53,6 +46,37 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     const chartSize = stacked
         ? Math.max(90, Math.min(Math.floor(width * 0.6), Math.floor(height * 0.42)))
         : Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 320));
+
+    // Radar's polygon renders smaller than chartSize, leaving a label
+    // margin around it (see the OverlapWidget comment below for why a
+    // fixed compass grid, not per-vertex coordinates).
+    const radarSize = Math.round(chartSize * 0.64);
+    type CompassSlot = "top" | "right" | "bottom" | "left";
+    const compassSlot = (index: number, count: number): CompassSlot => {
+        const a = -Math.PI / 2 + (index * 2 * Math.PI) / count;
+        const cos = Math.cos(a);
+        const sin = Math.sin(a);
+        return Math.abs(cos) > Math.abs(sin) ? (cos > 0 ? "right" : "left") : (sin > 0 ? "bottom" : "top");
+    };
+    const radarSlots: Partial<Record<CompassSlot, { name: string; color: `#${string}` }>> = {};
+    if (style === "radar") {
+        cats.forEach((cat, i) => {
+            radarSlots[compassSlot(i, cats.length)] = {
+                name: cat.name.trim().length > 11 ? `${cat.name.trim().slice(0, 10)}…` : cat.name.trim(),
+                color: CATEGORY_COLORS[i % CATEGORY_COLORS.length] as `#${string}`,
+            };
+        });
+    }
+    const radarLabel = (slot: CompassSlot) => {
+        const entry = radarSlots[slot];
+        return entry ? (
+            <TextWidget
+                text={entry.name}
+                maxLines={1}
+                style={{ fontSize: Math.max(8, Math.round(chartSize * 0.055)), fontWeight: "600", color: entry.color }}
+            />
+        ) : <FlexWidget />;
+    };
 
     return (
         <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} updateUri={updateUri}>
@@ -146,13 +170,51 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                     }}
                 >
                     <OverlapWidget style={{ height: chartSize, width: chartSize }}>
-                        <SvgWidget
-                            svg={
-                                style === "donut" ? donutSvg(cats, chartSize, mode)
-                                    : radialSvg(cats, chartSize, mode)
-                            }
-                            style={{ height: chartSize, width: chartSize }}
-                        />
+                        {/* Radar's own shape (polygon + grid rings) shrinks
+                            inside the same chartSize box, leaving a margin
+                            ring for the compass-position name labels below —
+                            topCategories is always 3 or 4 entries (see
+                            widget.ts's slice(0,3)+"Other"), and with radar's
+                            vertices evenly spaced starting at 12 o'clock,
+                            each one lands cleanly on a compass point (N=4:
+                            top/right/bottom/left; N=3: top/right/left, never
+                            colliding), so a fixed flexbox grid can label
+                            every vertex without needing arbitrary (x,y)
+                            positioning, which this style-prop set doesn't
+                            support (no absolute position, just relative
+                            margins). */}
+                        <FlexWidget style={{ height: "match_parent", width: "match_parent", alignItems: "center", justifyContent: "center" }}>
+                            <SvgWidget
+                                svg={
+                                    style === "donut" ? donutSvg(cats, chartSize, mode)
+                                        : style === "radar" ? radarSvg(cats, radarSize, mode)
+                                            : radialSvg(cats, chartSize, mode)
+                                }
+                                style={{ height: style === "radar" ? radarSize : chartSize, width: style === "radar" ? radarSize : chartSize }}
+                            />
+                        </FlexWidget>
+                        {style === "radar" && cats.length >= 3 && (
+                            <FlexWidget
+                                style={{
+                                    height: "match_parent",
+                                    width: "match_parent",
+                                    flexDirection: "column",
+                                    justifyContent: "space-between",
+                                }}
+                            >
+                                <FlexWidget style={{ width: "match_parent", flexDirection: "row", justifyContent: "center" }}>
+                                    {radarLabel("top")}
+                                </FlexWidget>
+                                <FlexWidget style={{ width: "match_parent", flex: 1, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                                    {radarLabel("left")}
+                                    <FlexWidget style={{ flex: 1 }} />
+                                    {radarLabel("right")}
+                                </FlexWidget>
+                                <FlexWidget style={{ width: "match_parent", flexDirection: "row", justifyContent: "center" }}>
+                                    {radarLabel("bottom")}
+                                </FlexWidget>
+                            </FlexWidget>
+                        )}
                         {/* Both donut (hole ~2/3 of chartSize — inner/outer
                             radius ratio 60/90, see charts.ts) and radial
                             rings (hole ~40% — innerR = maxR*0.4) have real
