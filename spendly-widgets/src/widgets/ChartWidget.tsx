@@ -62,7 +62,7 @@ export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 15
                 <FlexWidget style={{ flex: 1, width: "match_parent", marginTop: 4 }}>
                     <SvgWidget
                         svg={buildSvg(summary.days, chartDims)}
-                        style={{ width: "match_parent", height: "match_parent" }}
+                        style={{ width: chartDims.w, height: chartDims.h }}
                     />
                 </FlexWidget>
             ) : (

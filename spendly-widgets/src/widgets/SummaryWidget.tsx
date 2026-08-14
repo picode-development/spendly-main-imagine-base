@@ -252,7 +252,7 @@ export const SummaryWidget = ({
                     <FlexWidget style={{ height: miniChartH, width: "match_parent", marginTop: 8, paddingHorizontal: 3 }}>
                         <SvgWidget
                             svg={barChartSvg(summary.days, chartDims)}
-                            style={{ width: "match_parent", height: miniChartH }}
+                            style={{ width: chartDims.w, height: miniChartH }}
                         />
                     </FlexWidget>
                 )}

@@ -39,7 +39,7 @@ export const WidgetShell = ({
         >
             <SvgWidget
                 svg={backgroundSvg(width, height, mode, background)}
-                style={{ height: "match_parent", width: "match_parent" }}
+                style={{ height, width }}
             />
             <FlexWidget
                 style={{
