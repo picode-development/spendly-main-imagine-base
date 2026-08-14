@@ -2,7 +2,7 @@ import React from "react";
 import { FlexWidget, OverlapWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
-import { CATEGORY_COLORS, donutSvg, radarSvg, radialSvg } from "./charts";
+import { CATEGORY_COLORS, donutSvg, radialSvg } from "./charts";
 import { chartCardStyle, getTheme, neutralCardText, WidgetMode } from "./theme";
 import { WidgetShell } from "./WidgetShell";
 
@@ -15,20 +15,28 @@ type Props = {
     mode?: WidgetMode;
     density?: number;
     updateUri?: string;
-    /** Tapped legend row (chart/radial/radar styles only) — highlights that category. */
+    /** Tapped legend row (chart/radial styles only) — highlights that category. */
     selectedIndex?: number | null;
 };
 
-// The dashboard's category split as a widget: radial rings, true donut,
-// radar polygon (all with a legend), or ranked horizontal bars — sized to
-// the widget's real dimensions.
+// The dashboard's category split as a widget: radial rings (Google Fit-
+// style concentric progress, one ring per category), true donut, or
+// ranked horizontal bars — sized to the widget's real dimensions.
 export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri, selectedIndex = null }: Props) => {
     const C = getTheme(mode);
     const nc = neutralCardText(mode);
     // Default preserves the pre-existing look for widgets placed before
     // this option existed (their unset style used to fall through to what
-    // is now explicitly the "radial" chart).
-    const style = config?.style ?? "radial";
+    // is now explicitly the "radial" chart). "radar" is a retired option —
+    // radar/spider charts compare multiple entities across shared axes;
+    // this is one entity's category breakdown, a part-of-whole/magnitude
+    // shape, not what a radar chart is for. Its value/max spoke math
+    // mechanically collapses to an unreadable single spike whenever one
+    // category dominates (the normal case for real spending data), so
+    // existing instances still configured for it fall back to radial
+    // rings rather than keep rendering something structurally broken.
+    const rawStyle = config?.style ?? "radial";
+    const style = rawStyle === "radar" ? "radial" : rawStyle;
     const cats = summary?.topCategories ?? [];
     const total = cats.reduce((a, c) => a + c.value, 0) || 1;
     const scale = Math.max(1, Math.min(1.5, height / 150));
@@ -141,17 +149,19 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                         <SvgWidget
                             svg={
                                 style === "donut" ? donutSvg(cats, chartSize, mode)
-                                    : style === "radar" ? radarSvg(cats, chartSize, mode)
-                                        : radialSvg(cats, chartSize, mode)
+                                    : radialSvg(cats, chartSize, mode)
                             }
                             style={{ height: chartSize, width: chartSize }}
                         />
-                        {/* Donut's hole (inner/outer radius ratio 60/90, see
-                            charts.ts) is ~2/3 of chartSize wide — plenty of
-                            room for the total, giving a bigger chart on a
-                            tall resize an actual payoff instead of just
-                            more empty ring. */}
-                        {style === "donut" && (
+                        {/* Both donut (hole ~2/3 of chartSize — inner/outer
+                            radius ratio 60/90, see charts.ts) and radial
+                            rings (hole ~40% — innerR = maxR*0.4) have real
+                            empty space in the middle; glanceable-widget
+                            design leads with the number over the chart
+                            decoration, so both get the total there instead
+                            of just one. Radial's tighter hole gets a
+                            smaller font so it still fits. */}
+                        {(style === "donut" || style === "radial") && (
                             <FlexWidget
                                 style={{
                                     height: "match_parent",
@@ -165,7 +175,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                                     text={formatINR(total)}
                                     maxLines={1}
                                     style={{
-                                        fontSize: Math.max(11, Math.round(chartSize * 0.1)),
+                                        fontSize: Math.max(10, Math.round(chartSize * (style === "donut" ? 0.1 : 0.075))),
                                         fontWeight: "bold",
                                         color: nc.value,
                                     }}
@@ -173,7 +183,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                                 <TextWidget
                                     text="Total"
                                     style={{
-                                        fontSize: Math.max(9, Math.round(chartSize * 0.045)),
+                                        fontSize: Math.max(8, Math.round(chartSize * (style === "donut" ? 0.045 : 0.035))),
                                         color: nc.label,
                                         marginTop: 2,
                                     }}
