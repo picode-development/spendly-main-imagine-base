@@ -9,6 +9,8 @@ import { BackgroundStyle, blurGradientSvg, getTheme, nativeBackgroundStyle, Widg
 // bug (native renderToPicture() ignores container size and device pixel
 // density) can't affect them. Only "blurGradient" (soft aurora blobs) has
 // no native equivalent and still needs an SVG layer, density-compensated.
+const RADIUS = 20;
+
 type Props = {
     width: number;
     height: number;
@@ -34,6 +36,9 @@ export const WidgetShell = ({
     children,
 }: Props) => {
     const t = getTheme(mode);
+    const clickAction = clickUri
+        ? { clickAction: "OPEN_URI" as const, clickActionData: { uri: clickUri } }
+        : {};
     const updateBar = updateUri && (
         <FlexWidget
             clickAction="OPEN_URI"
@@ -59,22 +64,42 @@ export const WidgetShell = ({
         </FlexWidget>
     );
 
+    // On any translucent/glass/blurred background, text needs its own
+    // opaque-enough surface behind it — the shell alone can't guarantee
+    // legibility over an arbitrary wallpaper. Solid "gradient" doesn't
+    // need this since it's fully opaque already.
+    const needsScrim = background !== "gradient";
+    const content = needsScrim ? (
+        <FlexWidget
+            style={{
+                flex: 1,
+                width: "match_parent",
+                flexDirection: "column",
+                backgroundColor: t.cardOnGradient,
+                borderRadius: RADIUS - 6,
+                padding: 8,
+            }}
+        >
+            {children}
+        </FlexWidget>
+    ) : (
+        <FlexWidget style={{ flex: 1, width: "match_parent", flexDirection: "column" }}>
+            {children}
+        </FlexWidget>
+    );
+
     if (background === "blurGradient") {
         return (
             <OverlapWidget
-                {...(clickUri
-                    ? { clickAction: "OPEN_URI" as const, clickActionData: { uri: clickUri } }
-                    : {})}
-                style={{ height: "match_parent", width: "match_parent" }}
+                {...clickAction}
+                style={{ height: "match_parent", width: "match_parent", borderRadius: RADIUS, overflow: "hidden" }}
             >
                 <SvgWidget
                     svg={blurGradientSvg(width, height, mode, density)}
                     style={{ height: "match_parent", width: "match_parent" }}
                 />
                 <FlexWidget style={{ height: "match_parent", width: "match_parent", padding, flexDirection: "column" }}>
-                    <FlexWidget style={{ flex: 1, width: "match_parent", flexDirection: "column" }}>
-                        {children}
-                    </FlexWidget>
+                    {content}
                     {updateBar}
                 </FlexWidget>
             </OverlapWidget>
@@ -83,20 +108,16 @@ export const WidgetShell = ({
 
     return (
         <FlexWidget
-            {...(clickUri
-                ? { clickAction: "OPEN_URI" as const, clickActionData: { uri: clickUri } }
-                : {})}
+            {...clickAction}
             style={{
                 height: "match_parent",
                 width: "match_parent",
                 padding,
                 flexDirection: "column",
-                ...nativeBackgroundStyle(mode, background),
+                ...nativeBackgroundStyle(mode, background, RADIUS),
             }}
         >
-            <FlexWidget style={{ flex: 1, width: "match_parent", flexDirection: "column" }}>
-                {children}
-            </FlexWidget>
+            {content}
             {updateBar}
         </FlexWidget>
     );

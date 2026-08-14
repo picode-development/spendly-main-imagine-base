@@ -21,8 +21,8 @@ export type WidgetTheme = {
 // content, dark #172554→#1e3a8a with slate content.
 const DARK: WidgetTheme = {
     card: "#1e293b",
-    cardOnGradient: "#1e293bcc",
-    tileOnGradient: "#0f172a99",
+    cardOnGradient: "#1e293bdb",
+    tileOnGradient: "#0f172ac2",
     border: "#334155",
     label: "#94a3b8",
     value: "#f8fafc",
@@ -36,8 +36,10 @@ const DARK: WidgetTheme = {
 
 const LIGHT: WidgetTheme = {
     card: "#ffffff",
-    cardOnGradient: "#ffffff2e",
-    tileOnGradient: "#ffffff3d",
+    // Tuned for legibility even when the shell itself is translucent/glass
+    // (stacked on an arbitrary wallpaper) — not just on the opaque default
+    cardOnGradient: "#ffffffc2",
+    tileOnGradient: "#ffffffa3",
     border: "#ffffff59",
     label: "#dbeafe",
     value: "#ffffff",
@@ -91,8 +93,10 @@ export const nativeBackgroundStyle = (
         const tint = mode === "dark" ? ("#0f172a" as HexColor) : ("#f8fafc" as HexColor);
         const line = mode === "dark" ? ("#ffffff" as HexColor) : ("#1e3a8a" as HexColor);
         return {
-            backgroundColor: withAlpha(tint, 0.45),
-            borderColor: withAlpha(line, 0.25),
+            // Opaque enough to read over any wallpaper; still visibly
+            // "glass" against the site's default solid gradient
+            backgroundColor: withAlpha(tint, 0.72),
+            borderColor: withAlpha(line, 0.3),
             borderWidth: 1.5,
             borderRadius,
         } as const;
@@ -100,8 +104,8 @@ export const nativeBackgroundStyle = (
     if (style === "translucentGradient") {
         return {
             backgroundGradient: {
-                from: withAlpha(t.gradientFrom, 0.55),
-                to: withAlpha(t.gradientTo, 0.55),
+                from: withAlpha(t.gradientFrom, 0.78),
+                to: withAlpha(t.gradientTo, 0.78),
                 orientation: "TL_BR",
             },
             borderRadius,
@@ -117,13 +121,18 @@ export const nativeBackgroundStyle = (
 // (aurora blobs need vector drawing). Same density-compensation as the
 // chart SVGs: viewBox is baked to real device pixels since the native
 // SvgWidget renderer ignores container size and density.
-export const blurGradientSvg = (w: number, h: number, mode: WidgetMode, density = 1, radius = 20) => {
+//
+// Deliberately does NOT use <clipPath> — AndroidSVG (the renderer used by
+// SvgWidget) doesn't support it reliably on container elements. Corner
+// rounding instead comes from the native OverlapWidget's own
+// overflow:"hidden" + borderRadius in WidgetShell, which crops this whole
+// image (blobs included) using standard Android View clipping.
+export const blurGradientSvg = (w: number, h: number, mode: WidgetMode, density = 1) => {
     const t = getTheme(mode);
     const W = Math.round(w * density);
     const H = Math.round(h * density);
-    const R = Math.round(radius * density);
     const blob = (color: string, id: string) =>
-        `<radialGradient id="${id}"><stop offset="0" stop-color="${color}" stop-opacity="0.55"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>`;
+        `<radialGradient id="${id}"><stop offset="0" stop-color="${color}" stop-opacity="0.5"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>`;
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
         `<defs>` +
         `<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
@@ -132,11 +141,9 @@ export const blurGradientSvg = (w: number, h: number, mode: WidgetMode, density 
         `</linearGradient>` +
         blob(mode === "dark" ? "#3b82f6" : "#93c5fd", "b1") +
         blob(t.gold, "b2") +
-        `<clipPath id="clip"><rect x="0" y="0" width="${W}" height="${H}" rx="${R}"/></clipPath>` +
         `</defs>` +
-        `<rect x="0" y="0" width="${W}" height="${H}" rx="${R}" fill="url(#g)"/>` +
-        `<g clip-path="url(#clip)">` +
+        `<rect x="0" y="0" width="${W}" height="${H}" fill="url(#g)"/>` +
         `<circle cx="${(W * 0.22).toFixed(0)}" cy="${(H * 0.15).toFixed(0)}" r="${(Math.max(W, H) * 0.5).toFixed(0)}" fill="url(#b1)"/>` +
         `<circle cx="${(W * 0.85).toFixed(0)}" cy="${(H * 0.9).toFixed(0)}" r="${(Math.max(W, H) * 0.42).toFixed(0)}" fill="url(#b2)"/>` +
-        `</g></svg>`;
+        `</svg>`;
 };
