@@ -158,6 +158,78 @@ export const areaChartSvg = (days: WidgetSummary["days"], dims: Dims) => {
     );
 };
 
+// pie-variant.tsx: a true donut — ONE ring split into arc segments sized
+// by each category's SHARE OF THE TOTAL (not per-category rings like
+// radialSvg below). innerRadius/outerRadius ratio matches pie-variant.tsx
+// (60/90), 2° gaps between segments, no stroke, starts at 12 o'clock.
+export const donutSvg = (categories: { name: string; value: number }[], size = 130, mode: WidgetMode = "dark") => {
+    const cx = size / 2;
+    const cy = size / 2;
+    const outerR = size / 2;
+    const innerR = outerR * (60 / 90);
+    const total = categories.reduce((a, c) => a + c.value, 0) || 1;
+
+    // A single category can't be drawn as a degenerate 360° path arc —
+    // render it as a plain stroked ring instead.
+    if (categories.length === 1) {
+        const r = (outerR + innerR) / 2;
+        const color = CATEGORY_COLORS[0];
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}"><circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none" stroke="${color}" stroke-width="${(outerR - innerR).toFixed(1)}"/></svg>`;
+    }
+
+    const padAngle = 2;
+    let angle = -90; // 12 o'clock, sweeping clockwise
+    const point = (r: number, a: number) => ({ x: cx + r * Math.cos((a * Math.PI) / 180), y: cy + r * Math.sin((a * Math.PI) / 180) });
+    const arcs = categories
+        .map((cat, i) => {
+            const sweep = (cat.value / total) * 360 - padAngle;
+            if (sweep <= 0) { angle += padAngle; return ""; }
+            const large = sweep > 180 ? 1 : 0;
+            const o0 = point(outerR, angle);
+            const o1 = point(outerR, angle + sweep);
+            const i0 = point(innerR, angle);
+            const i1 = point(innerR, angle + sweep);
+            const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+            const d = `M${o0.x.toFixed(1)} ${o0.y.toFixed(1)} A${outerR.toFixed(1)} ${outerR.toFixed(1)} 0 ${large} 1 ${o1.x.toFixed(1)} ${o1.y.toFixed(1)} L${i1.x.toFixed(1)} ${i1.y.toFixed(1)} A${innerR.toFixed(1)} ${innerR.toFixed(1)} 0 ${large} 0 ${i0.x.toFixed(1)} ${i0.y.toFixed(1)} Z`;
+            angle += sweep + padAngle;
+            return `<path d="${d}" fill="${color}"/>`;
+        })
+        .join("");
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">${arcs}</svg>`;
+};
+
+// radar-variant.tsx: a polygon plot — one vertex per category, spoked
+// evenly around the circle, distance from center proportional to the
+// category's value relative to the MAX (recharts' default radar domain).
+// Grid rings + translucent blue fill/stroke mirror the dashboard's look;
+// axis labels are skipped (the widget already shows names in its legend).
+export const radarSvg = (categories: { name: string; value: number }[], size = 130, mode: WidgetMode = "dark") => {
+    const { track } = neutralCardText(mode);
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = size / 2 - 4;
+    const n = categories.length;
+    if (n < 3) {
+        // A 1-2 point "polygon" is degenerate — fall back to the donut so
+        // there's still something meaningful to look at.
+        return donutSvg(categories, size, mode);
+    }
+    const maxValue = Math.max(...categories.map((c) => c.value), 1);
+    const vertex = (i: number, frac: number) => {
+        const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+        return { x: cx + R * frac * Math.cos(a), y: cy + R * frac * Math.sin(a) };
+    };
+    const polygon = (frac: number) =>
+        Array.from({ length: n }, (_, i) => { const p = vertex(i, frac); return `${p.x.toFixed(1)},${p.y.toFixed(1)}`; }).join(" ");
+    const grid = [0.33, 0.66, 1]
+        .map((f) => `<polygon points="${polygon(f)}" fill="none" stroke="${track}" stroke-width="1"/>`)
+        .join("");
+    const dataPoints = categories
+        .map((cat, i) => { const p = vertex(i, Math.max(0.04, cat.value / maxValue)); return `${p.x.toFixed(1)},${p.y.toFixed(1)}`; })
+        .join(" ");
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">${grid}<polygon points="${dataPoints}" fill="${CHART_INCOME}" fill-opacity="0.3" stroke="${CHART_INCOME}" stroke-width="1.5" stroke-opacity="0.7"/></svg>`;
+};
+
 // radial-variant.tsx: one concentric ring PER category (not a donut split
 // into arc segments) — each ring's sweep is proportional to its value
 // relative to the MAX category value (recharts' default RadialBarChart

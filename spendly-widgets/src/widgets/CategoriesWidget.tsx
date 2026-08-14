@@ -2,7 +2,7 @@ import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
-import { CATEGORY_COLORS, radialSvg } from "./charts";
+import { CATEGORY_COLORS, donutSvg, radarSvg, radialSvg } from "./charts";
 import { chartCardStyle, getTheme, neutralCardText, WidgetMode } from "./theme";
 import { WidgetShell } from "./WidgetShell";
 
@@ -17,15 +17,19 @@ type Props = {
     updateUri?: string;
 };
 
-// The dashboard's category split as a widget: donut with legend, or
-// ranked horizontal bars — sized to the widget's real dimensions.
+// The dashboard's category split as a widget: radial rings, true donut,
+// radar polygon (all with a legend), or ranked horizontal bars — sized to
+// the widget's real dimensions.
 export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri }: Props) => {
     const C = getTheme(mode);
     const nc = neutralCardText(mode);
-    const style = config?.style ?? "donut";
+    // Default preserves the pre-existing look for widgets placed before
+    // this option existed (their unset style used to fall through to what
+    // is now explicitly the "radial" chart).
+    const style = config?.style ?? "radial";
     const cats = summary?.topCategories ?? [];
     const total = cats.reduce((a, c) => a + c.value, 0) || 1;
-    const donutSize = Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 220));
+    const donutSize = Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 320));
     const scale = Math.max(1, Math.min(1.5, height / 150));
     const legendFont = Math.round(11 * scale);
 
@@ -112,6 +116,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                     style={{
                         flexDirection: "row",
                         width: "match_parent",
+                        height: "match_parent",
                         flex: 1,
                         alignItems: "center",
                         padding: 10,
@@ -120,11 +125,15 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                 >
                     <FlexWidget style={{ height: donutSize, width: donutSize }}>
                         <SvgWidget
-                            svg={radialSvg(cats, donutSize, mode)}
+                            svg={
+                                style === "donut" ? donutSvg(cats, donutSize, mode)
+                                    : style === "radar" ? radarSvg(cats, donutSize, mode)
+                                        : radialSvg(cats, donutSize, mode)
+                            }
                             style={{ height: donutSize, width: donutSize }}
                         />
                     </FlexWidget>
-                    <FlexWidget style={{ flexDirection: "column", flex: 1, marginLeft: 12 }}>
+                    <FlexWidget style={{ flexDirection: "column", flex: 1, marginLeft: 12, justifyContent: "center" }}>
                         {cats.map((cat, i) => (
                             <FlexWidget key={cat.name} style={{ flexDirection: "row", alignItems: "center", marginTop: i === 0 ? 0 : Math.round(5 * scale) }}>
                                 <FlexWidget

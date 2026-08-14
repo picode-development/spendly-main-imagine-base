@@ -26,7 +26,9 @@ export const WIDGET_STYLES: Record<string, { key: string; label: string }[]> = {
         { key: "line", label: "Line chart" },
     ],
     SpendlyCategories: [
+        { key: "radial", label: "Radial rings" },
         { key: "donut", label: "Donut" },
+        { key: "radar", label: "Radar" },
         { key: "bars", label: "Ranked bars" },
     ],
     SpendlyTransactions: [
