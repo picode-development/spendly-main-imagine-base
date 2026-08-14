@@ -5,10 +5,19 @@ import { toast } from "sonner";
 
 export const VOICE_BARS = 12;
 
+// Auto-stop tuning: once the user has spoken, this much sustained quiet ends
+// the recording; if they never speak at all, give up sooner with a hint.
+const SPEECH_LEVEL = 0.15;      // avg bar level that counts as speech
+const SILENCE_LEVEL = 0.1;      // below this counts as quiet (hysteresis)
+const TRAILING_SILENCE_MS = 2500;
+const NO_SPEECH_TIMEOUT_MS = 8000;
+
 /**
- * Tap to record, tap again to stop. `onAudio` receives the finished clip;
- * `isProcessing` is true while it runs (transcription/extraction).
- * `levels` is a live 0..1 spectrum (VOICE_BARS buckets) for waveform UI.
+ * Tap to record, tap again to stop — or just stop talking: after speech,
+ * ~2.5s of silence ends the recording automatically. `onAudio` receives the
+ * finished clip; `isProcessing` is true while it runs (transcription/
+ * extraction). `levels` is a live 0..1 spectrum (VOICE_BARS buckets) for
+ * waveform UI.
  */
 export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
     const [isRecording, setIsRecording] = useState(false);
@@ -19,6 +28,9 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
     const chunksRef = useRef<Blob[]>([]);
     const audioCtxRef = useRef<AudioContext | null>(null);
     const rafRef = useRef<number>(0);
+    const hasSpokenRef = useRef(false);
+    const quietSinceRef = useRef<number | null>(null);
+    const startedAtRef = useRef(0);
 
     const stopMeter = () => {
         cancelAnimationFrame(rafRef.current);
@@ -57,6 +69,32 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
                     return Math.min(1, (sum / bucket) / 160);
                 });
                 setLevels(next);
+
+                // Silence auto-stop
+                const avg = next.reduce((a, v) => a + v, 0) / next.length;
+                const now = Date.now();
+                if (avg >= SPEECH_LEVEL) {
+                    hasSpokenRef.current = true;
+                    quietSinceRef.current = null;
+                } else if (avg <= SILENCE_LEVEL) {
+                    quietSinceRef.current ??= now;
+                    const quietFor = now - quietSinceRef.current;
+                    const recorder = recorderRef.current;
+                    const canStop = recorder?.state === "recording";
+                    if (canStop && hasSpokenRef.current && quietFor >= TRAILING_SILENCE_MS) {
+                        recorder.stop();
+                        return; // stop the meter loop; onstop cleans up
+                    }
+                    if (canStop && !hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
+                        toast.info("Didn't hear anything — recording stopped.");
+                        recorder.stop();
+                        return;
+                    }
+                } else {
+                    // Between thresholds — neither clear speech nor clear quiet
+                    quietSinceRef.current = null;
+                }
+
                 rafRef.current = requestAnimationFrame(tick);
             };
             rafRef.current = requestAnimationFrame(tick);
@@ -105,6 +143,9 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
             };
 
             recorderRef.current = recorder;
+            hasSpokenRef.current = false;
+            quietSinceRef.current = null;
+            startedAtRef.current = Date.now();
             recorder.start();
             startMeter(stream);
             setIsRecording(true);

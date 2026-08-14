@@ -1,9 +1,9 @@
 import { db } from "@/db/drizzle";
-import { accounts, transactions, widgetTokens } from "@/db/schema";
+import { accounts, categories, transactions, widgetTokens } from "@/db/schema";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { zValidator } from "@hono/zod-validator";
 import { createId } from "@paralleldrive/cuid2";
-import { and, eq, gte, isNull, lt, sql, sum } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -133,6 +133,8 @@ const app = new Hono()
             const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
             const monthStart = new Date(Date.UTC(dayStart.getUTCFullYear(), dayStart.getUTCMonth(), 1));
 
+            const weekStart = new Date(dayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+
             const flows = (from: Date, to: Date) =>
                 db
                     .select({
@@ -148,7 +150,7 @@ const app = new Hono()
                         lt(transactions.date, to),
                     ));
 
-            const [[today], [month], accountBalances] = await Promise.all([
+            const [[today], [month], accountBalances, dailyRows, categoryRows] = await Promise.all([
                 flows(dayStart, dayEnd),
                 flows(monthStart, dayEnd),
                 db
@@ -161,6 +163,37 @@ const app = new Hono()
                     .where(eq(accounts.userId, userId))
                     .groupBy(accounts.name),
                 db
+                    .select({
+                        date: transactions.date,
+                        expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 THEN ABS(${transactions.amount}) ELSE 0 END)`.mapWith(Number),
+                    })
+                    .from(transactions)
+                    .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+                    .where(and(
+                        eq(accounts.userId, userId),
+                        isNull(transactions.transferId),
+                        gte(transactions.date, weekStart),
+                        lt(transactions.date, dayEnd),
+                    ))
+                    .groupBy(transactions.date),
+                db
+                    .select({
+                        name: categories.name,
+                        value: sql`SUM(ABS(${transactions.amount}))`.mapWith(Number),
+                    })
+                    .from(transactions)
+                    .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+                    .innerJoin(categories, eq(transactions.categoryId, categories.id))
+                    .where(and(
+                        eq(accounts.userId, userId),
+                        isNull(transactions.transferId),
+                        lt(transactions.amount, 0),
+                        gte(transactions.date, monthStart),
+                        lt(transactions.date, dayEnd),
+                    ))
+                    .groupBy(categories.name)
+                    .orderBy(desc(sql`SUM(ABS(${transactions.amount}))`)),
+                db
                     .update(widgetTokens)
                     .set({ lastUsedAt: new Date() })
                     .where(eq(widgetTokens.id, tokenRow.id)),
@@ -168,6 +201,25 @@ const app = new Hono()
 
             const fromMiliunits = (v: number | null) => (v ?? 0) / 1000;
             const totalBalance = accountBalances.reduce((acc, a) => acc + (a.balance ?? 0), 0);
+
+            // Dense 7-day series ending today (user's calendar), zero-filled
+            const byDay = new Map(
+                dailyRows.map((r) => [r.date.toISOString().slice(0, 10), r.expenses ?? 0]),
+            );
+            const days = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(weekStart.getTime() + i * 24 * 60 * 60 * 1000);
+                const key = d.toISOString().slice(0, 10);
+                return { date: key, expenses: fromMiliunits(byDay.get(key) ?? 0) };
+            });
+
+            const topCategories = categoryRows.slice(0, 3).map((r) => ({
+                name: r.name,
+                value: fromMiliunits(r.value),
+            }));
+            const otherValue = categoryRows.slice(3).reduce((acc, r) => acc + (r.value ?? 0), 0);
+            if (otherValue > 0) {
+                topCategories.push({ name: "Other", value: fromMiliunits(otherValue) });
+            }
 
             return c.json({
                 data: {
@@ -181,8 +233,59 @@ const app = new Hono()
                         name: a.name,
                         balance: fromMiliunits(a.balance),
                     })),
+                    days,
+                    topCategories,
                     asOf: new Date().toISOString(),
                 },
+            });
+        },
+    )
+
+    // Latest transactions for the list widget — display-ready rows only
+    .get(
+        "/transactions",
+        zValidator("query", z.object({
+            token: z.string().min(8).max(32),
+            limit: z.coerce.number().int().min(1).max(20).optional(),
+        })),
+        async (c) => {
+            const { token, limit } = c.req.valid("query");
+
+            const [tokenRow] = await db
+                .select({ id: widgetTokens.id, userId: widgetTokens.userId })
+                .from(widgetTokens)
+                .where(eq(widgetTokens.token, normalizeCode(token)));
+
+            if (!tokenRow) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+
+            const rows = await db
+                .select({
+                    id: transactions.id,
+                    payee: transactions.payee,
+                    amount: transactions.amount,
+                    date: transactions.date,
+                    transferId: transactions.transferId,
+                    category: categories.name,
+                    account: accounts.name,
+                })
+                .from(transactions)
+                .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+                .leftJoin(categories, eq(transactions.categoryId, categories.id))
+                .where(eq(accounts.userId, tokenRow.userId))
+                .orderBy(desc(transactions.date), desc(transactions.id))
+                .limit(limit ?? 10);
+
+            return c.json({
+                data: rows.map((r) => ({
+                    id: r.id,
+                    payee: r.payee,
+                    amount: r.amount / 1000,
+                    date: r.date.toISOString().slice(0, 10),
+                    category: r.category ?? (r.transferId ? "Transfer" : null),
+                    account: r.account,
+                })),
             });
         },
     );

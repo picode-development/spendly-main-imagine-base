@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2, Mic, Square } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useVoiceAutostart } from "@/hooks/use-voice-autostart";
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
 import { useVoiceCreate } from "@/features/transactions/hooks/use-voice-create";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
@@ -23,6 +25,18 @@ export const VoiceFab = () => {
     const onAudio = useVoiceCreate();
     const { isRecording, isProcessing, levels, toggle } = useVoiceRecorder(onAudio);
     const popupExpanded = usePendingPopup((s) => s.expanded);
+
+    // Widget deep link (?widget-action=voice) — start recording as if the
+    // mic ball had been tapped
+    const voicePending = useVoiceAutostart((s) => s.pending);
+    const consumeVoice = useVoiceAutostart((s) => s.consume);
+    useEffect(() => {
+        if (voicePending && isSignedIn && !isRecording && !isProcessing) {
+            consumeVoice();
+            toggle();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [voicePending, isSignedIn]);
 
     // Step aside while any sheet is open — same rule as the popup
     const anySheetOpen = [
