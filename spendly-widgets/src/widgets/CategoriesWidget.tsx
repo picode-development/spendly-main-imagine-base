@@ -29,9 +29,17 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     const style = config?.style ?? "radial";
     const cats = summary?.topCategories ?? [];
     const total = cats.reduce((a, c) => a + c.value, 0) || 1;
-    const donutSize = Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 320));
     const scale = Math.max(1, Math.min(1.5, height / 150));
     const legendFont = Math.round(11 * scale);
+    // Side-by-side (chart | legend) is the right call for a short-and-wide
+    // widget, but wastes most of the extra room once a resize gives far
+    // more height than width — reflow to chart-on-top, legend-below so a
+    // tall widget actually grows the chart and spaces out the list instead
+    // of just centering a small unchanged block in empty space.
+    const stacked = height >= width * 0.85;
+    const chartSize = stacked
+        ? Math.max(90, Math.min(Math.floor(width * 0.6), Math.floor(height * 0.42), 280))
+        : Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 320));
 
     return (
         <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} updateUri={updateUri}>
@@ -114,28 +122,43 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
             ) : (
                 <FlexWidget
                     style={{
-                        flexDirection: "row",
+                        flexDirection: stacked ? "column" : "row",
                         width: "match_parent",
                         height: "match_parent",
                         flex: 1,
                         alignItems: "center",
+                        justifyContent: "center",
                         padding: 10,
                         ...chartCardStyle(mode),
                     }}
                 >
-                    <FlexWidget style={{ height: donutSize, width: donutSize }}>
+                    <FlexWidget style={{ height: chartSize, width: chartSize }}>
                         <SvgWidget
                             svg={
-                                style === "donut" ? donutSvg(cats, donutSize, mode)
-                                    : style === "radar" ? radarSvg(cats, donutSize, mode)
-                                        : radialSvg(cats, donutSize, mode)
+                                style === "donut" ? donutSvg(cats, chartSize, mode)
+                                    : style === "radar" ? radarSvg(cats, chartSize, mode)
+                                        : radialSvg(cats, chartSize, mode)
                             }
-                            style={{ height: donutSize, width: donutSize }}
+                            style={{ height: chartSize, width: chartSize }}
                         />
                     </FlexWidget>
-                    <FlexWidget style={{ flexDirection: "column", flex: 1, marginLeft: 12, justifyContent: "center" }}>
+                    <FlexWidget
+                        style={
+                            stacked
+                                ? { flexDirection: "column", width: "match_parent", marginTop: 14, justifyContent: "center" }
+                                : { flexDirection: "column", flex: 1, marginLeft: 12, justifyContent: "center" }
+                        }
+                    >
                         {cats.map((cat, i) => (
-                            <FlexWidget key={cat.name} style={{ flexDirection: "row", alignItems: "center", marginTop: i === 0 ? 0 : Math.round(5 * scale) }}>
+                            <FlexWidget
+                                key={cat.name}
+                                style={{
+                                    flexDirection: "row",
+                                    alignItems: "center",
+                                    width: "match_parent",
+                                    marginTop: i === 0 ? 0 : Math.round((stacked ? 8 : 5) * scale),
+                                }}
+                            >
                                 <FlexWidget
                                     style={{
                                         height: 8,
@@ -150,7 +173,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                                         text={`${cat.name.trim()} · ${formatINR(cat.value)}`}
                                         truncate="END"
                                         maxLines={1}
-                                        style={{ fontSize: legendFont, color: nc.value }}
+                                        style={{ fontSize: stacked ? legendFont + 1 : legendFont, color: nc.value }}
                                     />
                                 </FlexWidget>
                             </FlexWidget>
