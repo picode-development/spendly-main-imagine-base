@@ -1,7 +1,11 @@
 import { registerRootComponent } from 'expo';
-import { registerWidgetTaskHandler } from 'react-native-android-widget';
+import {
+    registerWidgetConfigurationScreen,
+    registerWidgetTaskHandler,
+} from 'react-native-android-widget';
 
 import App from './App';
+import { ConfigScreen } from './src/ConfigScreen';
 import { widgetTaskHandler } from './src/widget-task-handler';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
@@ -12,3 +16,6 @@ registerRootComponent(App);
 // Runs headless when Android asks the widget to redraw (adds, resizes,
 // periodic updates) — no UI is mounted in that case, only this handler.
 registerWidgetTaskHandler(widgetTaskHandler);
+
+// Long-press a widget → Reconfigure opens this per-instance settings screen
+registerWidgetConfigurationScreen(ConfigScreen);

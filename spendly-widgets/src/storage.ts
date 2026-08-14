@@ -1,5 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { DEFAULT_BASE_URL, MetricKey, WidgetSummary, WidgetTransaction } from "./config";
+import {
+    DEFAULT_BASE_URL,
+    MetricKey,
+    WidgetInstanceConfig,
+    WidgetSummary,
+    WidgetTransaction,
+} from "./config";
 
 const KEYS = {
     token: "spendly.token",
@@ -43,6 +49,23 @@ export const getCachedSummary = async (): Promise<WidgetSummary | null> => {
 };
 export const setCachedSummary = (summary: WidgetSummary) =>
     AsyncStorage.setItem(KEYS.summary, JSON.stringify(summary));
+
+// Per-widget-instance settings, keyed by the Android widgetId
+const instanceKey = (widgetId: number) => `spendly.widgetconfig.${widgetId}`;
+
+export const getInstanceConfig = async (widgetId: number): Promise<WidgetInstanceConfig | null> => {
+    const raw = await AsyncStorage.getItem(instanceKey(widgetId));
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw) as WidgetInstanceConfig;
+    } catch {
+        return null;
+    }
+};
+export const setInstanceConfig = (widgetId: number, config: WidgetInstanceConfig) =>
+    AsyncStorage.setItem(instanceKey(widgetId), JSON.stringify(config));
+export const removeInstanceConfig = (widgetId: number) =>
+    AsyncStorage.removeItem(instanceKey(widgetId));
 
 export const getCachedTransactions = async (): Promise<WidgetTransaction[] | null> => {
     const raw = await AsyncStorage.getItem(KEYS.transactions);

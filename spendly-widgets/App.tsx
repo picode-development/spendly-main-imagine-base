@@ -24,6 +24,7 @@ import { formatINR } from "./src/format";
 import {
     clearAll,
     getBaseUrl,
+    getInstanceConfig,
     getMetrics,
     getToken,
     setBaseUrl as storeBaseUrl,
@@ -47,23 +48,48 @@ const COLORS = {
     danger: "#f87171",
 };
 
-// Push fresh renders to every widget variant on the home screen
-const refreshHomeScreenWidgets = (
+// Push fresh renders to every widget variant on the home screen. Instances
+// with their own settings (long-press → Reconfigure) re-fetch their scoped
+// view instead of being overwritten with the default data.
+const refreshHomeScreenWidgets = async (
     summary: WidgetSummary | null,
     transactions: WidgetTransaction[] | null,
     metrics: MetricKey[],
     paired: boolean,
     baseUrl: string,
 ) => {
-    const renderers = {
-        SpendlySummary: () => (
-            <SummaryWidget summary={summary} metrics={paired ? metrics : []} paired={paired} />
-        ),
+    const token = await getToken();
+
+    const scopedSummary = async (widgetId: number) => {
+        const config = await getInstanceConfig(widgetId);
+        if (!config || !token || !paired) return { config: null, summary: paired ? summary : null };
+        return { config, summary: await fetchSummary(baseUrl, token, config) };
+    };
+
+    const renderers: Record<string, (info: { widgetId: number }) => Promise<React.JSX.Element> | React.JSX.Element> = {
+        SpendlySummary: async (info) => {
+            const scoped = await scopedSummary(info.widgetId);
+            return (
+                <SummaryWidget
+                    summary={scoped.summary}
+                    metrics={paired ? metrics : []}
+                    paired={paired}
+                    config={scoped.config}
+                />
+            );
+        },
         SpendlyActions: () => <ActionsWidget baseUrl={baseUrl} />,
-        SpendlyChart: () => <ChartWidget summary={paired ? summary : null} baseUrl={baseUrl} />,
-        SpendlyTransactions: () => (
-            <TransactionsWidget transactions={paired ? transactions : null} baseUrl={baseUrl} />
-        ),
+        SpendlyChart: async (info) => {
+            const scoped = await scopedSummary(info.widgetId);
+            return <ChartWidget summary={scoped.summary} baseUrl={baseUrl} />;
+        },
+        SpendlyTransactions: async (info) => {
+            const config = await getInstanceConfig(info.widgetId);
+            const rows = config && token && paired
+                ? await fetchTransactions(baseUrl, token, config)
+                : (paired ? transactions : null);
+            return <TransactionsWidget transactions={rows} baseUrl={baseUrl} config={config} />;
+        },
     };
     return Promise.all(
         Object.entries(renderers).map(([widgetName, renderWidget]) =>

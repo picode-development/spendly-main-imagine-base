@@ -1,6 +1,7 @@
 import React from "react";
-import { FlexWidget, ListWidget, TextWidget } from "react-native-android-widget";
-import { WidgetTransaction } from "../config";
+import { FlexWidget, ListWidget, SvgWidget, TextWidget } from "react-native-android-widget";
+import { configLabel, WidgetInstanceConfig, WidgetTransaction } from "../config";
+import { lucideSvg } from "./icons";
 import { formatINR } from "../format";
 import { WIDGET_COLORS as C } from "./theme";
 
@@ -9,9 +10,13 @@ const formatDay = (iso: string) => {
     return `${d.getDate()} ${d.toLocaleString("en", { month: "short" })}`;
 };
 
-type Props = { transactions: WidgetTransaction[] | null; baseUrl: string };
+type Props = {
+    transactions: WidgetTransaction[] | null;
+    baseUrl: string;
+    config?: WidgetInstanceConfig | null;
+};
 
-export const TransactionsWidget = ({ transactions, baseUrl }: Props) => (
+export const TransactionsWidget = ({ transactions, baseUrl, config }: Props) => (
     <FlexWidget
         style={{
             height: "match_parent",
@@ -23,20 +28,36 @@ export const TransactionsWidget = ({ transactions, baseUrl }: Props) => (
         }}
     >
         <FlexWidget
-            clickAction="OPEN_URI"
-            clickActionData={{ uri: `${baseUrl}/transactions` }}
             style={{
                 flexDirection: "row",
                 justifyContent: "space-between",
+                alignItems: "center",
                 width: "match_parent",
                 paddingBottom: 6,
             }}
         >
-            <TextWidget
-                text="Recent transactions"
-                style={{ fontSize: 12, fontWeight: "bold", color: C.accent }}
-            />
-            <TextWidget text="See all →" style={{ fontSize: 11, color: C.label }} />
+            <FlexWidget
+                clickAction="OPEN_URI"
+                clickActionData={{ uri: `${baseUrl}/transactions` }}
+                style={{ flexDirection: "column", flex: 1 }}
+            >
+                <TextWidget
+                    text={config ? configLabel(config) : "Recent transactions"}
+                    truncate="END"
+                    maxLines={1}
+                    style={{ fontSize: 12, fontWeight: "bold", color: C.accent }}
+                />
+            </FlexWidget>
+            <FlexWidget
+                clickAction="OPEN_URI"
+                clickActionData={{ uri: `${baseUrl}/transactions?search=1` }}
+                style={{ paddingHorizontal: 8, paddingVertical: 2 }}
+            >
+                <SvgWidget
+                    svg={lucideSvg("search", C.label)}
+                    style={{ height: 16, width: 16 }}
+                />
+            </FlexWidget>
         </FlexWidget>
 
         {transactions && transactions.length > 0 ? (

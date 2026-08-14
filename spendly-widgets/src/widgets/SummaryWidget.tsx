@@ -1,6 +1,6 @@
 import React from "react";
 import { FlexWidget, TextWidget } from "react-native-android-widget";
-import { DEFAULT_BASE_URL, MetricKey, WidgetSummary } from "../config";
+import { configLabel, DEFAULT_BASE_URL, MetricKey, WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR, formatTime } from "../format";
 
 const COLORS = {
@@ -16,7 +16,12 @@ type Props = {
     summary: WidgetSummary | null;
     metrics: MetricKey[];
     paired: boolean;
+    config?: WidgetInstanceConfig | null;
 };
+
+// A configured instance shows its scoped view instead of the metric toggles
+const isScopedConfig = (config?: WidgetInstanceConfig | null) =>
+    !!config && (config.scope !== "week" || !!config.accountId || !!config.categoryId);
 
 type HexColor = `#${string}`;
 
@@ -33,7 +38,7 @@ const Stat = ({ label, value, color }: { label: string; value: string; color?: H
     </FlexWidget>
 );
 
-export const SummaryWidget = ({ summary, metrics, paired }: Props) => {
+export const SummaryWidget = ({ summary, metrics, paired, config }: Props) => {
     if (!paired) {
         return (
             <FlexWidget
@@ -59,7 +64,21 @@ export const SummaryWidget = ({ summary, metrics, paired }: Props) => {
     }
 
     const rows: { label: string; value: string; color?: HexColor }[] = [];
-    if (summary) {
+    if (summary && isScopedConfig(config)) {
+        rows.push({
+            label: "Spent",
+            value: formatINR(summary.scoped?.expenses ?? 0),
+            color: COLORS.expense,
+        });
+        rows.push({
+            label: "Received",
+            value: formatINR(summary.scoped?.income ?? 0),
+            color: "#4ade80",
+        });
+        if (!config?.categoryId) {
+            rows.push({ label: "Balance", value: formatINR(summary.totalBalance) });
+        }
+    } else if (summary) {
         if (metrics.includes("today")) {
             rows.push({ label: "Spent today", value: formatINR(summary.todayExpenses), color: COLORS.expense });
         }
@@ -92,10 +111,15 @@ export const SummaryWidget = ({ summary, metrics, paired }: Props) => {
                     width: "match_parent",
                 }}
             >
-                <TextWidget text="Spendly" style={{ fontSize: 13, fontWeight: "bold", color: COLORS.accent }} />
+                <TextWidget
+                    text={isScopedConfig(config) ? `Spendly · ${configLabel(config ?? null)}` : "Spendly"}
+                    truncate="END"
+                    maxLines={1}
+                    style={{ fontSize: 13, fontWeight: "bold", color: COLORS.accent }}
+                />
                 <TextWidget
                     text={summary ? `as of ${formatTime(summary.asOf)}` : "offline"}
-                    style={{ fontSize: 10, color: COLORS.label }}
+                    style={{ fontSize: 10, color: COLORS.label, marginLeft: 6 }}
                 />
             </FlexWidget>
 

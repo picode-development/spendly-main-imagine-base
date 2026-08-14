@@ -1,14 +1,16 @@
 import React from "react";
-import { FlexWidget, TextWidget } from "react-native-android-widget";
+import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
+import { lucideSvg, LucideIconName } from "./icons";
 import { WIDGET_COLORS as C } from "./theme";
 
 // Paytm/GPay-style quick action row: each button deep-links straight into
-// the matching Spendly flow via /?widget-action=...
-const ACTIONS: { emoji: string; label: string; action: string | null }[] = [
-    { emoji: "➕", label: "Add", action: "new" },
-    { emoji: "🎤", label: "Voice", action: "voice" },
-    { emoji: "📷", label: "Photo", action: "photo" },
-    { emoji: "💰", label: "Open", action: null },
+// the matching Spendly flow. Icons are the app's own library (Lucide).
+const ACTIONS: { icon: LucideIconName; label: string; uri: (baseUrl: string) => string }[] = [
+    { icon: "plus", label: "Add", uri: (b) => `${b}/?widget-action=new` },
+    { icon: "mic", label: "Voice", uri: (b) => `${b}/?widget-action=voice` },
+    { icon: "camera", label: "Photo", uri: (b) => `${b}/?widget-action=photo` },
+    { icon: "search", label: "Search", uri: (b) => `${b}/transactions?search=1` },
+    { icon: "arrowUpRight", label: "Open", uri: (b) => b },
 ];
 
 type Props = { baseUrl: string };
@@ -37,9 +39,7 @@ export const ActionsWidget = ({ baseUrl }: Props) => (
                 <FlexWidget
                     key={a.label}
                     clickAction="OPEN_URI"
-                    clickActionData={{
-                        uri: a.action ? `${baseUrl}/?widget-action=${a.action}` : baseUrl,
-                    }}
+                    clickActionData={{ uri: a.uri(baseUrl) }}
                     style={{
                         flex: 1,
                         flexDirection: "column",
@@ -49,15 +49,18 @@ export const ActionsWidget = ({ baseUrl }: Props) => (
                 >
                     <FlexWidget
                         style={{
-                            height: 44,
-                            width: 44,
-                            borderRadius: 22,
+                            height: 42,
+                            width: 42,
+                            borderRadius: 21,
                             backgroundColor: C.card,
                             justifyContent: "center",
                             alignItems: "center",
                         }}
                     >
-                        <TextWidget text={a.emoji} style={{ fontSize: 19 }} />
+                        <SvgWidget
+                            svg={lucideSvg(a.icon, C.value)}
+                            style={{ height: 20, width: 20 }}
+                        />
                     </FlexWidget>
                     <TextWidget
                         text={a.label}

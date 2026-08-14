@@ -15,22 +15,31 @@ const buildChartSvg = (days: WidgetSummary["days"]) => {
     const chartBottom = H - 26; // room for day labels
     const maxBarHeight = chartBottom - chartTop;
     const slot = W / days.length;
-    const barWidth = Math.min(30, slot * 0.55);
+    const barWidth = Math.max(3, Math.min(30, slot * 0.55));
     const max = Math.max(...days.map((d) => d.expenses), 1);
+    // ≤7 bars → weekday letters under every bar; longer ranges → the day of
+    // the month under every few bars
+    const labelEvery = days.length <= 7 ? 1 : Math.ceil(days.length / 6);
 
     const bars = days
         .map((d, i) => {
             const h = d.expenses > 0
                 ? Math.max(6, Math.round((d.expenses / max) * maxBarHeight))
                 : 3;
-            const x = Math.round(slot * i + (slot - barWidth) / 2);
+            const x = slot * i + (slot - barWidth) / 2;
             const y = chartBottom - h;
-            const isToday = i === days.length - 1;
-            const fill = d.expenses > 0 ? (isToday ? C.gold : C.accent) : C.border;
-            const label = DAY_LETTERS[new Date(`${d.date}T00:00:00Z`).getUTCDay()];
+            const isLast = i === days.length - 1;
+            const fill = d.expenses > 0 ? (isLast ? C.gold : C.accent) : C.border;
+            const date = new Date(`${d.date}T00:00:00Z`);
+            const label = days.length <= 7
+                ? DAY_LETTERS[date.getUTCDay()]
+                : String(date.getUTCDate());
+            const labelSvg = i % labelEvery === 0
+                ? `<text x="${(slot * i + slot / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="${C.label}" font-family="sans-serif">${label}</text>`
+                : "";
             return `
-    <rect x="${x}" y="${y}" width="${Math.round(barWidth)}" height="${h}" rx="4" fill="${fill}" />
-    <text x="${Math.round(slot * i + slot / 2)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="${C.label}" font-family="sans-serif">${label}</text>`;
+    <rect x="${x.toFixed(1)}" y="${y}" width="${barWidth.toFixed(1)}" height="${h}" rx="${Math.min(4, barWidth / 2).toFixed(1)}" fill="${fill}" />
+    ${labelSvg}`;
         })
         .join("");
 
@@ -61,11 +70,16 @@ export const ChartWidget = ({ summary, baseUrl }: Props) => (
             }}
         >
             <TextWidget
-                text="Last 7 days"
+                text={[
+                    summary?.scoped?.label ?? "Last 7 days",
+                    summary?.accountName?.trim(),
+                ].filter(Boolean).join(" · ")}
                 style={{ fontSize: 12, fontWeight: "bold", color: C.accent }}
             />
             <TextWidget
-                text={summary ? `${formatINR(summary.monthExpenses)} this month` : "offline"}
+                text={summary
+                    ? `${formatINR(summary.scoped?.expenses ?? summary.monthExpenses)} spent`
+                    : "offline"}
                 style={{ fontSize: 12, color: C.label }}
             />
         </FlexWidget>

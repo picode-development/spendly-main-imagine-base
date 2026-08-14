@@ -29,11 +29,60 @@ export type WidgetSummary = {
     monthIncome: number;
     totalBalance: number;
     accounts: { name: string; balance: number }[];
-    /** Last 7 days (oldest first), zero-filled */
+    /** Daily series over the scope window (oldest first), zero-filled */
     days: { date: string; expenses: number }[];
     /** This month's top spending categories + "Other" */
     topCategories: { name: string; value: number }[];
+    /** Totals for the instance's scope window */
+    scoped?: { label: string; expenses: number; income: number };
+    /** Set when the instance is filtered to one account */
+    accountName?: string | null;
     asOf: string;
+};
+
+// Per-widget-instance settings, chosen in the Android widget config screen.
+// scope: week = last 7 days (default), month = this month so far,
+// all = all time, custom = from/to (same date = a single day).
+// direction/sort apply to the Transactions widget only.
+export type WidgetInstanceConfig = {
+    scope: "week" | "month" | "all" | "custom";
+    from?: string;
+    to?: string;
+    accountId?: string;
+    accountName?: string;
+    categoryId?: string;
+    categoryName?: string;
+    direction?: "all" | "income" | "expense";
+    sort?: "date" | "amount";
+};
+
+export const DEFAULT_INSTANCE_CONFIG: WidgetInstanceConfig = { scope: "week" };
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmtDay = (iso: string) => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+};
+
+// "12 Aug – 14 Aug · My Money · Food" — the header line widgets show so the
+// user can tell configured instances apart at a glance
+export const configLabel = (config: WidgetInstanceConfig | null): string => {
+    if (!config) return "Last 7 days";
+    const scope = config.scope === "all"
+        ? "All time"
+        : config.scope === "month"
+            ? "This month"
+            : config.scope === "custom" && config.from && config.to
+                ? config.from === config.to
+                    ? fmtDay(config.from)
+                    : `${fmtDay(config.from)} – ${fmtDay(config.to)}`
+                : "Last 7 days";
+    return [
+        scope,
+        config.accountName?.trim(),
+        config.categoryName?.trim(),
+        config.direction === "income" ? "Income" : config.direction === "expense" ? "Expenses" : undefined,
+    ].filter(Boolean).join(" · ");
 };
 
 export type WidgetTransaction = {
