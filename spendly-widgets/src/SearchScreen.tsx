@@ -4,6 +4,7 @@ import {
     FlatList,
     Linking,
     Pressable,
+    StatusBar,
     StyleSheet,
     Text,
     View,
@@ -18,8 +19,9 @@ type Props = {
     onClose: () => void;
 };
 
-// Popup-style search: opened straight from the widget's search button.
-// Queries the paired account's transactions live; a tap opens Spendly.
+// A widget button opens this as its own full-screen page (PopupActivity),
+// not a floating card — see VoiceScreen.tsx for why. Queries the paired
+// account's transactions live; a tap opens Spendly.
 export const SearchScreen = ({ baseUrl, token, onClose }: Props) => {
     const [query, setQuery] = useState("");
     const [rows, setRows] = useState<WidgetTransaction[] | null>(null);
@@ -44,96 +46,92 @@ export const SearchScreen = ({ baseUrl, token, onClose }: Props) => {
     }, [query, token, baseUrl]);
 
     return (
-        <View style={styles.backdrop}>
-            <View style={styles.sheet}>
-                <View style={styles.headerRow}>
-                    <Text style={styles.title}>Search transactions</Text>
-                    <Pressable onPress={onClose} hitSlop={12}>
-                        <Text style={styles.close}>✕</Text>
-                    </Pressable>
-                </View>
-
-                {!token ? (
-                    <>
-                        <Hint>Pair the app with Spendly first, then search from the widget.</Hint>
-                        <Button onPress={onClose}>Close</Button>
-                    </>
-                ) : (
-                    <>
-                        <Field
-                            value={query}
-                            onChangeText={setQuery}
-                            placeholder="Search payees…"
-                            autoFocus
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                        />
-                        {busy && !rows ? (
-                            <ActivityIndicator color={UI.accent} style={{ marginVertical: 16 }} />
-                        ) : (
-                            <FlatList
-                                style={{ maxHeight: 340 }}
-                                data={rows ?? []}
-                                keyExtractor={(t) => t.id}
-                                ListEmptyComponent={
-                                    <Hint>{query ? "No matches." : "Your latest transactions appear here."}</Hint>
-                                }
-                                renderItem={({ item }) => (
-                                    <Pressable
-                                        style={styles.row}
-                                        onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}
-                                    >
-                                        <View style={{ flex: 1, marginRight: 10 }}>
-                                            <Text style={styles.payee} numberOfLines={1}>{item.payee}</Text>
-                                            <Text style={styles.sub} numberOfLines={1}>
-                                                {item.date}{item.category ? ` · ${item.category}` : ""} · {item.account}
-                                            </Text>
-                                        </View>
-                                        <AmountPill amount={item.amount} />
-                                    </Pressable>
-                                )}
-                            />
-                        )}
-                        <Button variant="outline" onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}>
-                            Open in Spendly
-                        </Button>
-                    </>
-                )}
+        <View style={styles.screen}>
+            <StatusBar barStyle="light-content" backgroundColor={UI.bg} />
+            <View style={styles.header}>
+                <Text style={styles.title}>Search transactions</Text>
+                <Pressable onPress={onClose} hitSlop={12} style={styles.closeButton}>
+                    <Text style={styles.close}>✕</Text>
+                </Pressable>
             </View>
+
+            {!token ? (
+                <View style={styles.centerContent}>
+                    <Hint>Pair the app with Spendly first, then search from the widget.</Hint>
+                    <Button onPress={onClose}>Close</Button>
+                </View>
+            ) : (
+                <View style={styles.content}>
+                    <Field
+                        value={query}
+                        onChangeText={setQuery}
+                        placeholder="Search payees…"
+                        autoFocus
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                    />
+                    {busy && !rows ? (
+                        <ActivityIndicator color={UI.accent} style={{ marginTop: 24 }} />
+                    ) : (
+                        <FlatList
+                            style={styles.list}
+                            data={rows ?? []}
+                            keyExtractor={(t) => t.id}
+                            ListEmptyComponent={
+                                <Hint>{query ? "No matches." : "Your latest transactions appear here."}</Hint>
+                            }
+                            renderItem={({ item }) => (
+                                <Pressable
+                                    style={styles.row}
+                                    onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}
+                                >
+                                    <View style={{ flex: 1, marginRight: 10 }}>
+                                        <Text style={styles.payee} numberOfLines={1}>{item.payee}</Text>
+                                        <Text style={styles.sub} numberOfLines={1}>
+                                            {item.date}{item.category ? ` · ${item.category}` : ""} · {item.account}
+                                        </Text>
+                                    </View>
+                                    <AmountPill amount={item.amount} />
+                                </Pressable>
+                            )}
+                        />
+                    )}
+                    <Button variant="outline" onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}>
+                        Open in Spendly
+                    </Button>
+                </View>
+            )}
         </View>
     );
 };
 
 const styles = StyleSheet.create({
-    backdrop: {
-        flex: 1,
-        // Fully transparent: only the card floats over the launcher, no dim
-        backgroundColor: "transparent",
-        justifyContent: "center",
-        padding: 18,
+    screen: { flex: 1, backgroundColor: UI.bg },
+    header: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        paddingTop: 48,
+        paddingHorizontal: 20,
+        paddingBottom: 12,
     },
-    sheet: {
+    title: { color: UI.text, fontSize: 20, fontWeight: "700" },
+    closeButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
         backgroundColor: UI.card,
-        borderColor: UI.border,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 18,
-        padding: 18,
-        gap: 12,
-        // No backdrop dim behind it now, so the card needs its own shadow
-        // to read as floating over an arbitrary wallpaper
-        elevation: 12,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.35,
-        shadowRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
     },
-    headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-    title: { color: UI.text, fontSize: 18, fontWeight: "700" },
-    close: { color: UI.label, fontSize: 18, padding: 4 },
+    close: { color: UI.label, fontSize: 16 },
+    content: { flex: 1, paddingHorizontal: 20, paddingBottom: 20, gap: 12 },
+    centerContent: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 28, gap: 12 },
+    list: { flex: 1 },
     row: {
         flexDirection: "row",
         alignItems: "center",
-        paddingVertical: 10,
+        paddingVertical: 12,
         borderBottomColor: UI.border,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
