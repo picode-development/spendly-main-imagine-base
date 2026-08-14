@@ -1,9 +1,12 @@
 import { db } from "@/db/drizzle";
-import { accounts, categories, transactions, widgetTokens } from "@/db/schema";
+import { accounts, categories, pendingTransactions, transactions, widgetTokens } from "@/db/schema";
+import { hasGroqKey, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { getLlmContext } from "@/lib/parse-message";
+import { calculatePercentageChange } from "@/lib/utils";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { zValidator } from "@hono/zod-validator";
 import { createId } from "@paralleldrive/cuid2";
-import { and, desc, eq, gte, isNull, lt, sql, sum } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, lt, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -207,10 +210,19 @@ const app = new Hono()
                 rangeEnd.getTime() - 31 * DAY,
             ));
 
-            const [[today], [month], [scopedFlows], accountBalances, dailyRows, categoryRows] = await Promise.all([
+            // Previous period of equal length for the % change badges — like
+            // the dashboard's DataCards (all-time has no previous period)
+            const prevStart = rangeStart
+                ? new Date(rangeStart.getTime() - (rangeEnd.getTime() - rangeStart.getTime()))
+                : null;
+
+            const [[today], [month], [scopedFlows], [prevFlows], accountBalances, dailyRows, categoryRows] = await Promise.all([
                 flows(dayStart, dayEnd),
                 flows(monthStart, dayEnd),
                 flows(rangeStart, rangeEnd),
+                rangeStart && prevStart
+                    ? flows(prevStart, rangeStart)
+                    : Promise.resolve([{ income: null, expenses: null }]),
                 db
                     .select({
                         name: accounts.name,
@@ -250,8 +262,8 @@ const app = new Hono()
                         accountCond,
                         categoryCond,
                         lt(transactions.amount, 0),
-                        gte(transactions.date, monthStart),
-                        lt(transactions.date, dayEnd),
+                        ...(rangeStart ? [gte(transactions.date, rangeStart)] : []),
+                        lt(transactions.date, rangeEnd),
                     ))
                     .groupBy(categories.name)
                     .orderBy(desc(sql`SUM(ABS(${transactions.amount}))`)),
@@ -302,6 +314,19 @@ const app = new Hono()
                         label: scopedLabel,
                         expenses: fromMiliunits(scopedFlows?.expenses),
                         income: fromMiliunits(scopedFlows?.income),
+                        remaining: fromMiliunits((scopedFlows?.income ?? 0) - (scopedFlows?.expenses ?? 0)),
+                        expensesChange: rangeStart
+                            ? calculatePercentageChange(scopedFlows?.expenses ?? 0, prevFlows?.expenses ?? 0)
+                            : 0,
+                        incomeChange: rangeStart
+                            ? calculatePercentageChange(scopedFlows?.income ?? 0, prevFlows?.income ?? 0)
+                            : 0,
+                        remainingChange: rangeStart
+                            ? calculatePercentageChange(
+                                (scopedFlows?.income ?? 0) - (scopedFlows?.expenses ?? 0),
+                                (prevFlows?.income ?? 0) - (prevFlows?.expenses ?? 0),
+                            )
+                            : 0,
                     },
                     accountName: accountId
                         ? accountBalances[0]?.name ?? null
@@ -324,9 +349,10 @@ const app = new Hono()
             to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
             direction: z.enum(["income", "expense"]).optional(),
             sort: z.enum(["date", "amount"]).optional(),
+            q: z.string().max(80).optional(),
         })),
         async (c) => {
-            const { token, limit, accountId, categoryId, from, to, direction, sort } =
+            const { token, limit, accountId, categoryId, from, to, direction, sort, q } =
                 c.req.valid("query");
 
             const [tokenRow] = await db
@@ -359,6 +385,7 @@ const app = new Hono()
                     to ? lt(transactions.date, new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000)) : undefined,
                     direction === "income" ? gte(transactions.amount, 0) : undefined,
                     direction === "expense" ? lt(transactions.amount, 0) : undefined,
+                    q ? ilike(transactions.payee, `%${q}%`) : undefined,
                 ))
                 .orderBy(
                     ...(sort === "amount"
@@ -376,6 +403,85 @@ const app = new Hono()
                     category: r.category ?? (r.transferId ? "Transfer" : null),
                     account: r.account,
                 })),
+            });
+        },
+    )
+
+    // Voice capture from the widget popup: transcribe + extract like the
+    // in-app mic, then stage a pending transaction the user reviews in
+    // Spendly (same flow as SMS-detected transactions).
+    .post(
+        "/voice",
+        zValidator("query", z.object({
+            token: z.string().min(8).max(32),
+        })),
+        async (c) => {
+            const { token } = c.req.valid("query");
+
+            const [tokenRow] = await db
+                .select({ id: widgetTokens.id, userId: widgetTokens.userId })
+                .from(widgetTokens)
+                .where(eq(widgetTokens.token, normalizeCode(token)));
+
+            if (!tokenRow) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+            if (!hasGroqKey()) {
+                return c.json({ error: "Voice input needs a Groq API key" }, 501);
+            }
+
+            const body = await c.req.parseBody();
+            const audio = body["audio"];
+            if (!(audio instanceof File)) {
+                return c.json({ error: "Missing audio" }, 400);
+            }
+            if (audio.size > 15 * 1024 * 1024) {
+                return c.json({ error: "Recording too large" }, 413);
+            }
+
+            const ctx = await getLlmContext(tokenRow.userId);
+            const transcript = await llmTranscribe(
+                audio,
+                audio.name || "voice.m4a",
+                [...ctx.accounts, ...ctx.categories],
+            );
+            if (!transcript) {
+                return c.json({ error: "Couldn't understand the recording" }, 502);
+            }
+
+            let parsed = await llmExtractFromText(transcript, ctx);
+            if (!parsed || (parsed.amount == null && !parsed.payee)) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                parsed = await llmExtractFromText(transcript, ctx);
+            }
+
+            const [pending] = await db.insert(pendingTransactions).values({
+                id: createId(),
+                userId: tokenRow.userId,
+                rawMessage: transcript,
+                amount: parsed?.amount ?? null,
+                payee: parsed?.payee ?? null,
+                accountHint: parsed?.accountName ?? null,
+                categoryHint: parsed?.categoryName ?? null,
+                note: parsed?.note ?? null,
+                date: parsed?.date ? new Date(parsed.date) : new Date(),
+            }).returning({ id: pendingTransactions.id });
+
+            return c.json({
+                data: {
+                    transcript,
+                    pendingId: pending.id,
+                    parsed: parsed
+                        ? {
+                            amount: parsed.amount != null ? parsed.amount / 1000 : null,
+                            payee: parsed.payee ?? null,
+                            accountName: parsed.accountName ?? null,
+                            categoryName: parsed.categoryName ?? null,
+                            note: parsed.note ?? null,
+                            date: parsed.date ?? null,
+                        }
+                        : null,
+                },
             });
         },
     );
