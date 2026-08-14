@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { requestWidgetUpdate, WidgetPreview } from "react-native-android-widget";
 import * as Updates from "expo-updates";
-import { fetchSummary, fetchTransactions, pair } from "./src/api";
+import { fetchSummary, fetchTransactions, isTokenValid, pair } from "./src/api";
 import {
     ALL_METRICS,
     DEFAULT_BASE_URL,
@@ -200,6 +200,32 @@ export default function App() {
         return { summary: data, transactions: rows };
     }, []);
 
+    const handleUnpair = async (message: string | null = null) => {
+        await clearAll();
+        setToken(null);
+        setSummary(null);
+        setTransactions(null);
+        setCode("");
+        setError(message);
+        await refreshHomeScreenWidgets(null, null, [], false, baseUrl);
+    };
+
+    // Both fetchSummary/fetchTransactions collapse every failure (network,
+    // timeout, 401) into null so their many other callers can just treat
+    // "couldn't load" uniformly — this is the one place that needs to know
+    // WHY it failed, so a revoked pairing token actually drops back to the
+    // pairing screen instead of looping on "Refresh now" forever.
+    const checkForRevokedToken = async (
+        url: string,
+        tok: string,
+        fresh: { summary: unknown; transactions: unknown },
+    ): Promise<boolean> => {
+        if (fresh.summary || fresh.transactions) return false; // got real data — token's fine
+        if (await isTokenValid(url, tok)) return false;
+        await handleUnpair("Your pairing was removed in Spendly — pair again.");
+        return true;
+    };
+
     useEffect(() => {
         (async () => {
             const [storedToken, storedMetrics, storedUrl, initialUrl] = await Promise.all([
@@ -215,7 +241,9 @@ export default function App() {
             setScreen(initialScreen);
             setPopupLaunch(initialScreen !== "home");
             setLoading(false);
-            if (storedToken) void loadSummary(storedUrl, storedToken);
+            if (storedToken) {
+                loadSummary(storedUrl, storedToken).then((fresh) => checkForRevokedToken(storedUrl, storedToken, fresh));
+            }
             void fetchLatestVersion(storedUrl).then(setLatest);
         })();
         const sub = Linking.addEventListener("url", ({ url }) => setScreen(screenFromUrl(url)));
@@ -240,15 +268,6 @@ export default function App() {
         setBusy(false);
     };
 
-    const handleUnpair = async () => {
-        await clearAll();
-        setToken(null);
-        setSummary(null);
-        setTransactions(null);
-        setCode("");
-        await refreshHomeScreenWidgets(null, null, [], false, baseUrl);
-    };
-
     const toggleMetric = async (key: MetricKey, enabled: boolean) => {
         const next = enabled ? [...metrics, key] : metrics.filter((m) => m !== key);
         if (next.length === 0) return; // keep at least one number on the widget
@@ -262,13 +281,16 @@ export default function App() {
         if (!token) return;
         setBusy(true);
         const fresh = await loadSummary(baseUrl, token);
-        await refreshHomeScreenWidgets(
-            fresh.summary ?? summary,
-            fresh.transactions ?? transactions,
-            metrics,
-            true,
-            baseUrl,
-        );
+        const revoked = await checkForRevokedToken(baseUrl, token, fresh);
+        if (!revoked) {
+            await refreshHomeScreenWidgets(
+                fresh.summary ?? summary,
+                fresh.transactions ?? transactions,
+                metrics,
+                true,
+                baseUrl,
+            );
+        }
         setBusy(false);
     };
 
@@ -458,7 +480,7 @@ export default function App() {
                         <Pressable onPress={() => Linking.openURL(baseUrl)}>
                             <Text style={styles.link}>Open Spendly</Text>
                         </Pressable>
-                        <Pressable onPress={handleUnpair}>
+                        <Pressable onPress={() => handleUnpair()}>
                             <Text style={[styles.link, { color: UI.danger }]}>Unpair this device</Text>
                         </Pressable>
                     </Card>

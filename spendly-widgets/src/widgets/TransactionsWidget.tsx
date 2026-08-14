@@ -33,6 +33,11 @@ export const TransactionsWidget = ({
     updateUri,
 }: Props) => {
     const C = getTheme(mode);
+    // Same width-driven scale used by the other widgets — a wide resize
+    // should grow the text, not just leave it at a fixed small size while
+    // the row itself stretches to fill the extra width.
+    const scale = Math.max(1, Math.min(1.35, width / 330));
+    const f = (n: number) => Math.round(n * scale);
     return (
     <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} padding={12} updateUri={updateUri}>
         <FlexWidget
@@ -53,7 +58,7 @@ export const TransactionsWidget = ({
                     text={config ? configLabel(config) : "Recent transactions"}
                     truncate="END"
                     maxLines={1}
-                    style={{ fontSize: 11, fontWeight: "bold", color: C.label, letterSpacing: 0.5 }}
+                    style={{ fontSize: f(11), fontWeight: "bold", color: C.label, letterSpacing: 0.5 }}
                 />
             </FlexWidget>
             <FlexWidget
@@ -98,21 +103,21 @@ export const TransactionsWidget = ({
                                 text={t.payee}
                                 truncate="END"
                                 maxLines={1}
-                                style={{ fontSize: 13, fontWeight: "500", color: C.value }}
+                                style={{ fontSize: f(13), fontWeight: "500", color: C.value }}
                             />
                             {config?.style !== "compact" && (
                                 <TextWidget
                                     text={`${formatDay(t.date)}${t.category ? ` · ${t.category}` : ""}`}
                                     truncate="END"
                                     maxLines={1}
-                                    style={{ fontSize: 10, color: C.label, marginTop: 1 }}
+                                    style={{ fontSize: f(10), color: C.label, marginTop: 1 }}
                                 />
                             )}
                         </FlexWidget>
                         <TextWidget
                             text={`${t.amount < 0 ? "-" : "+"}${formatINR(Math.abs(t.amount))}`}
                             style={{
-                                fontSize: 13,
+                                fontSize: f(13),
                                 fontWeight: "bold",
                                 color: t.amount < 0 ? C.expense : C.income,
                                 textAlign: "right",
@@ -125,7 +130,7 @@ export const TransactionsWidget = ({
         ) : (
             <TextWidget
                 text={transactions ? "No transactions in this view" : "Open the app to refresh"}
-                style={{ fontSize: 12, color: C.label, marginTop: 8 }}
+                style={{ fontSize: f(12), color: C.label, marginTop: 8 }}
             />
         )}
     </WidgetShell>

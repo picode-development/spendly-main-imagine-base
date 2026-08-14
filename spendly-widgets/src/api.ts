@@ -53,6 +53,32 @@ export const pair = async (baseUrl: string, code: string) => {
     }
 };
 
+/**
+ * Whether `token` is still recognized by the server — specifically, that
+ * the widget was unpaired/its token deleted, not "the network is flaky."
+ * `fetchSummary`/`fetchTransactions` collapse every failure (401, network
+ * error, timeout, 5xx) into `null` for their many callers that just want
+ * "couldn't load, show nothing" — this is the one place that needs to tell
+ * a dead token apart from a transient failure, so it does its own request.
+ * Only a definitive 401 reports `false`; anything else (including no
+ * connection at all) reports `true` so the app never force-logs-out a user
+ * who's just offline.
+ */
+export const isTokenValid = async (baseUrl: string, token: string): Promise<boolean> => {
+    const t = withTimeout(8_000);
+    try {
+        const res = await fetch(
+            `${baseUrl}/api/widget/summary?token=${encodeURIComponent(token)}`,
+            { signal: t.signal },
+        );
+        return res.status !== 401;
+    } catch {
+        return true;
+    } finally {
+        t.done();
+    }
+};
+
 export type VoiceResult = {
     transcript: string;
     pendingId: string;
