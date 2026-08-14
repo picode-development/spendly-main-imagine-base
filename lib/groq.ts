@@ -66,6 +66,14 @@ const coolDownGroqKey = (key: string, seconds: number, scope: string) => {
     cooldownUntil.set(cdKey(scope, key), Date.now() + Math.max(1, seconds) * 1000);
 };
 
+// An account-level failure (e.g. "Organization has been restricted") is not
+// a bad request — it's a dead key that will fail on every future call too.
+// Must be treated like a revoked key (401/403): park it and rotate to the
+// next one, never a flat give-up, or one broken key/org in the pool takes
+// the whole feature down even when other keys are healthy.
+const isDeadKeyError = (errorText: string): boolean =>
+    /organization_restricted|organization has been restricted|account.*(restrict|suspend|disab)/i.test(errorText);
+
 const parseRetrySeconds = (errorText: string): number => {
     // An explicit "try again in Xs" is a short per-minute rate limit — honor it
     // exactly. (Groq's TPM message also links to /settings/billing, so we must
@@ -291,8 +299,8 @@ const chatCompletion = async (
                         coolDownGroqKey(apiKey, parseRetrySeconds(errorText), provider.model);
                         continue; // pool picks the next live key (or waits)
                     }
-                    if (response.status === 401 || response.status === 403) {
-                        coolDownGroqKey(apiKey, 3600, provider.model); // dead/revoked key — park it, rotate
+                    if (response.status === 401 || response.status === 403 || isDeadKeyError(errorText)) {
+                        coolDownGroqKey(apiKey, 3600, provider.model); // dead/revoked/restricted key — park it, rotate
                         continue;
                     }
                     if (response.status >= 500) {
@@ -387,7 +395,7 @@ export const llmTranscribe = async (
                     const errText = await response.text();
                     console.error(`Transcription failed on ${model}:`, response.status);
                     if (response.status === 429) { coolDownGroqKey(pick.key, parseRetrySeconds(errText), model); continue; }
-                    if (response.status === 401 || response.status === 403) { coolDownGroqKey(pick.key, 3600, model); continue; }
+                    if (response.status === 401 || response.status === 403 || isDeadKeyError(errText)) { coolDownGroqKey(pick.key, 3600, model); continue; }
                     break; // model unavailable — try the next model
                 }
                 const data = await response.json();
@@ -442,7 +450,9 @@ export const llmCleanFieldValue = async (
                 }),
             });
             if (!response.ok) {
-                if (response.status === 429) coolDownGroqKey(pick.key, parseRetrySeconds(await response.text()), FAST_MODEL);
+                const errText = await response.text();
+                if (response.status === 429) coolDownGroqKey(pick.key, parseRetrySeconds(errText), FAST_MODEL);
+                else if (response.status === 401 || response.status === 403 || isDeadKeyError(errText)) coolDownGroqKey(pick.key, 3600, FAST_MODEL);
                 continue; // rotate to the next key
             }
             const data = await response.json();
