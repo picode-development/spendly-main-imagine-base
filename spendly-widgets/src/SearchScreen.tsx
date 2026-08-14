@@ -9,6 +9,7 @@ import {
     Text,
     View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { fetchTransactions } from "./api";
 import { WidgetTransaction } from "./config";
 import { AmountPill, Button, Field, Hint, UI } from "./ui";
@@ -51,18 +52,22 @@ export const SearchScreen = ({ baseUrl, token, onClose }: Props) => {
             <View style={styles.header}>
                 <Text style={styles.title}>Search transactions</Text>
                 <Pressable onPress={onClose} hitSlop={12} style={styles.closeButton}>
-                    <Text style={styles.close}>✕</Text>
+                    <Feather name="x" size={18} color={UI.label} />
                 </Pressable>
             </View>
 
             {!token ? (
                 <View style={styles.centerContent}>
+                    <View style={styles.emptyIcon}>
+                        <Feather name="user-x" size={22} color={UI.label} />
+                    </View>
                     <Hint>Pair the app with Spendly first, then search from the widget.</Hint>
                     <Button onPress={onClose}>Close</Button>
                 </View>
             ) : (
                 <View style={styles.content}>
                     <Field
+                        icon="search"
                         value={query}
                         onChangeText={setQuery}
                         placeholder="Search payees…"
@@ -78,11 +83,16 @@ export const SearchScreen = ({ baseUrl, token, onClose }: Props) => {
                             data={rows ?? []}
                             keyExtractor={(t) => t.id}
                             ListEmptyComponent={
-                                <Hint>{query ? "No matches." : "Your latest transactions appear here."}</Hint>
+                                <View style={styles.emptyState}>
+                                    <View style={styles.emptyIcon}>
+                                        <Feather name={query ? "search" : "inbox"} size={22} color={UI.label} />
+                                    </View>
+                                    <Hint>{query ? "No matches." : "Your latest transactions appear here."}</Hint>
+                                </View>
                             }
                             renderItem={({ item }) => (
                                 <Pressable
-                                    style={styles.row}
+                                    style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                                     onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}
                                 >
                                     <View style={{ flex: 1, marginRight: 10 }}>
@@ -92,11 +102,12 @@ export const SearchScreen = ({ baseUrl, token, onClose }: Props) => {
                                         </Text>
                                     </View>
                                     <AmountPill amount={item.amount} />
+                                    <Feather name="chevron-right" size={16} color={UI.border} style={{ marginLeft: 6 }} />
                                 </Pressable>
                             )}
                         />
                     )}
-                    <Button variant="outline" onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}>
+                    <Button icon="external-link" variant="outline" onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}>
                         Open in Spendly
                     </Button>
                 </View>
@@ -124,17 +135,29 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    close: { color: UI.label, fontSize: 16 },
     content: { flex: 1, paddingHorizontal: 20, paddingBottom: 20, gap: 12 },
     centerContent: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 28, gap: 12 },
     list: { flex: 1 },
+    emptyState: { alignItems: "center", paddingTop: 48, gap: 10 },
+    emptyIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: UI.card,
+        alignItems: "center",
+        justifyContent: "center",
+        marginBottom: 2,
+    },
     row: {
         flexDirection: "row",
         alignItems: "center",
         paddingVertical: 12,
+        paddingHorizontal: 8,
+        borderRadius: 10,
         borderBottomColor: UI.border,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
+    rowPressed: { backgroundColor: UI.cardSubtle },
     payee: { color: UI.text, fontSize: 15, fontWeight: "500" },
     sub: { color: UI.label, fontSize: 12, marginTop: 1 },
 });

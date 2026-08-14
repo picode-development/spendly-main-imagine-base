@@ -9,6 +9,7 @@ import {
     TextInputProps,
     View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { formatINR } from "./format";
 
 // shadcn/ui-flavored primitives for the companion app, matching the main
@@ -59,10 +60,11 @@ export const AmountPill = ({
 };
 
 // Colored rounded-square icon container (dashboard stat-card motif) —
-// wraps a short glyph/emoji so icons read as deliberate UI, not bare text.
+// holds a real vector icon (e.g. from @expo/vector-icons) so it reads as
+// deliberate UI, not an emoji standing in for one.
 export const IconBox = ({ children, color = UI.accent }: { children: React.ReactNode; color?: string }) => (
     <View style={[styles.iconBox, { backgroundColor: `${color}26` }]}>
-        <Text style={[styles.iconGlyph, { color }]}>{children}</Text>
+        {children}
     </View>
 );
 
@@ -78,48 +80,62 @@ export const Hint = ({ children }: { children: React.ReactNode }) => (
     <Text style={styles.hint}>{children}</Text>
 );
 
-export const Field = (props: TextInputProps) => (
-    <TextInput
-        placeholderTextColor={UI.border}
-        {...props}
-        style={[styles.input, props.style]}
-    />
-);
+export const Field = ({
+    icon,
+    ...props
+}: TextInputProps & { icon?: React.ComponentProps<typeof Feather>["name"] }) => {
+    if (!icon) {
+        return (
+            <TextInput
+                placeholderTextColor={UI.border}
+                {...props}
+                style={[styles.input, props.style]}
+            />
+        );
+    }
+    return (
+        <View style={styles.inputIconWrap}>
+            <Feather name={icon} size={17} color={UI.label} style={styles.inputIcon} />
+            <TextInput
+                placeholderTextColor={UI.border}
+                {...props}
+                style={[styles.input, styles.inputWithIcon, props.style]}
+            />
+        </View>
+    );
+};
 
 export const Button = ({
     children,
     onPress,
     disabled,
     variant = "default",
+    icon,
 }: {
     children: React.ReactNode;
     onPress: () => void;
     disabled?: boolean;
     variant?: "default" | "outline" | "ghost" | "accent";
-}) => (
-    <Pressable
-        onPress={onPress}
-        disabled={disabled}
-        style={({ pressed }) => [
-            styles.button,
-            variant === "outline" && styles.buttonOutline,
-            variant === "ghost" && styles.buttonGhost,
-            variant === "accent" && styles.buttonAccent,
-            (disabled || pressed) && { opacity: disabled ? 0.5 : 0.8 },
-        ]}
-    >
-        <Text
-            style={[
-                styles.buttonText,
-                variant === "default" && { color: "#0f172a" },
-                variant === "accent" && { color: UI.text },
-                (variant === "outline" || variant === "ghost") && { color: UI.text },
+    icon?: React.ComponentProps<typeof Feather>["name"];
+}) => {
+    const textColor = variant === "default" ? "#0f172a" : UI.text;
+    return (
+        <Pressable
+            onPress={onPress}
+            disabled={disabled}
+            style={({ pressed }) => [
+                styles.button,
+                variant === "outline" && styles.buttonOutline,
+                variant === "ghost" && styles.buttonGhost,
+                variant === "accent" && styles.buttonAccent,
+                (disabled || pressed) && { opacity: disabled ? 0.5 : 0.8 },
             ]}
         >
-            {children}
-        </Text>
-    </Pressable>
-);
+            {icon && <Feather name={icon} size={15} color={textColor} style={{ marginRight: 7 }} />}
+            <Text style={[styles.buttonText, { color: textColor }]}>{children}</Text>
+        </Pressable>
+    );
+};
 
 export type SelectOption = { value: string; label: string };
 
@@ -209,7 +225,6 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    iconGlyph: { fontSize: 17 },
     cardTitle: { color: UI.text, fontSize: 16, fontWeight: "600" },
     sectionLabel: {
         color: UI.label,
@@ -229,12 +244,17 @@ const styles = StyleSheet.create({
         fontSize: 15,
         backgroundColor: UI.bg,
     },
+    inputIconWrap: { position: "relative", justifyContent: "center" },
+    inputIcon: { position: "absolute", left: 14, zIndex: 1 },
+    inputWithIcon: { paddingLeft: 40 },
     button: {
         backgroundColor: UI.text,
         borderRadius: 10,
         paddingVertical: 12,
         paddingHorizontal: 16,
         alignItems: "center",
+        flexDirection: "row",
+        justifyContent: "center",
     },
     buttonOutline: {
         backgroundColor: "transparent",

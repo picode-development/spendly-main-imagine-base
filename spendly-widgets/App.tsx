@@ -12,6 +12,7 @@ import {
     Text,
     View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { requestWidgetUpdate, WidgetPreview } from "react-native-android-widget";
 import * as Updates from "expo-updates";
 import { fetchSummary, fetchTransactions, isTokenValid, pair } from "./src/api";
@@ -360,7 +361,9 @@ export default function App() {
                 <>
                     <Card>
                         <View style={styles.titleRow}>
-                            <IconBox color={UI.green}>✓</IconBox>
+                            <IconBox color={UI.green}>
+                                <Feather name="check" size={18} color={UI.green} />
+                            </IconBox>
                             <CardTitle>Paired</CardTitle>
                         </View>
                         {summary ? (
@@ -388,7 +391,9 @@ export default function App() {
 
                     <Card>
                         <View style={styles.titleRow}>
-                            <IconBox color={UI.accent}>⊞</IconBox>
+                            <IconBox color={UI.accent}>
+                                <Feather name="grid" size={18} color={UI.accent} />
+                            </IconBox>
                             <CardTitle>Your widgets</CardTitle>
                         </View>
                         <Hint>

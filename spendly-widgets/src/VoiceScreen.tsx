@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Animated, Linking, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import {
     RecordingPresets,
     requestRecordingPermissionsAsync,
@@ -29,7 +30,8 @@ type Phase = "starting" | "recording" | "uploading" | "done" | "error";
 // A widget button opens this as its own full-screen page (PopupActivity),
 // not a floating card — Android can't render a truly transparent Activity
 // reliably (it showed a dark tinge instead of the launcher behind it), so
-// this owns its own solid background like any other screen.
+// this owns its own solid background and a real header like any other
+// screen in the app.
 export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const recorder = useAudioRecorder({
         ...RecordingPresets.HIGH_QUALITY,
@@ -47,6 +49,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
     const pulse = useRef(new Animated.Value(0)).current;
+    const dotBlink = useRef(new Animated.Value(1)).current;
 
     const stopAndUpload = async () => {
         if (stoppingRef.current) return;
@@ -131,12 +134,24 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
 
-    // The mic circle grows a little with speech volume — a full page has
-    // room for a real focal point instead of just a thin meter bar.
+    // The mic circle grows a little with speech volume, and the "Listening"
+    // dot breathes steadily — a full page has room for a real focal point
+    // instead of just a thin meter bar.
     useEffect(() => {
         Animated.spring(pulse, { toValue: level, useNativeDriver: true, friction: 6 }).start();
     }, [level, pulse]);
-    const micScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+    useEffect(() => {
+        if (phase !== "recording") return;
+        const loop = Animated.loop(
+            Animated.sequence([
+                Animated.timing(dotBlink, { toValue: 0.25, duration: 700, useNativeDriver: true }),
+                Animated.timing(dotBlink, { toValue: 1, duration: 700, useNativeDriver: true }),
+            ]),
+        );
+        loop.start();
+        return () => loop.stop();
+    }, [phase, dotBlink]);
+    const micScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] });
 
     return (
         <View style={styles.screen}>
@@ -144,7 +159,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             <View style={styles.header}>
                 <Text style={styles.title}>Voice note</Text>
                 <Pressable onPress={onClose} hitSlop={12} style={styles.closeButton}>
-                    <Text style={styles.close}>✕</Text>
+                    <Feather name="x" size={18} color={UI.label} />
                 </Pressable>
             </View>
 
@@ -153,24 +168,34 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
                 {phase === "recording" && (
                     <>
+                        <View style={styles.statusRow}>
+                            <Animated.View style={[styles.liveDot, { opacity: dotBlink }]} />
+                            <Text style={styles.statusText}>{locked ? "Recording" : "Listening"}</Text>
+                        </View>
                         <View style={styles.micWrap}>
                             <Animated.View style={[styles.micRing, { transform: [{ scale: micScale }] }]} />
                             <View style={styles.micCore}>
-                                <Text style={styles.micGlyph}>🎙️</Text>
+                                <Feather name="mic" size={34} color={UI.danger} />
                             </View>
                         </View>
                         <Hint>
                             Speak the transaction — it stops by itself when you go quiet.
                             {locked ? " Auto-stop is off." : ""}
                         </Hint>
-                        <View style={styles.row}>
-                            <Button
-                                variant={locked ? "accent" : "outline"}
+                        <View style={styles.actionsRow}>
+                            <Pressable
                                 onPress={() => setLocked((l) => !l)}
+                                style={[styles.iconButton, locked && styles.iconButtonActive]}
                             >
-                                {locked ? "🔒 Locked" : "Lock (pause freely)"}
-                            </Button>
-                            <Button onPress={stopAndUpload}>Stop</Button>
+                                <Feather name={locked ? "lock" : "unlock"} size={18} color={locked ? UI.accent : UI.label} />
+                                <Text style={[styles.iconButtonLabel, locked && { color: UI.accent }]}>
+                                    {locked ? "Locked" : "Lock"}
+                                </Text>
+                            </Pressable>
+                            <Pressable onPress={stopAndUpload} style={styles.stopButton}>
+                                <Feather name="square" size={20} color="#0f172a" />
+                            </Pressable>
+                            <View style={styles.iconButton} />
                         </View>
                     </>
                 )}
@@ -184,6 +209,9 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
                 {phase === "done" && result && (
                     <>
+                        <IconBox color={UI.green}>
+                            <Feather name="check" size={18} color={UI.green} />
+                        </IconBox>
                         <Card style={styles.resultCard}>
                             {result.parsed?.amount != null && (
                                 <AmountPill amount={result.parsed.amount} size="lg" />
@@ -194,19 +222,24 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                                     .filter(Boolean).join(" · ") || "Details to fill in Spendly"}
                             </Text>
                             {result.parsed?.note && <Text style={styles.sub}>{result.parsed.note}</Text>}
-                            <Text style={styles.transcript}>“{result.transcript}”</Text>
+                            <View style={styles.transcriptRow}>
+                                <Feather name="volume-2" size={12} color={UI.label} style={{ marginTop: 1 }} />
+                                <Text style={styles.transcript}>{result.transcript}</Text>
+                            </View>
                         </Card>
                         <Hint>Saved to your detected transactions — confirm it in Spendly.</Hint>
                         <View style={styles.row}>
                             <Button variant="outline" onPress={onClose}>Done</Button>
-                            <Button onPress={() => Linking.openURL(baseUrl)}>Open Spendly</Button>
+                            <Button icon="external-link" onPress={() => Linking.openURL(baseUrl)}>Open Spendly</Button>
                         </View>
                     </>
                 )}
 
                 {phase === "error" && (
                     <>
-                        <IconBox color={UI.danger}>!</IconBox>
+                        <IconBox color={UI.danger}>
+                            <Feather name="alert-circle" size={18} color={UI.danger} />
+                        </IconBox>
                         <Text style={styles.error}>{error}</Text>
                         <Button variant="outline" onPress={onClose}>Close</Button>
                     </>
@@ -235,7 +268,6 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    close: { color: UI.label, fontSize: 16 },
     content: {
         flex: 1,
         alignItems: "center",
@@ -243,7 +275,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: 28,
         gap: 14,
     },
-    micWrap: { width: 140, height: 140, alignItems: "center", justifyContent: "center", marginBottom: 6 },
+    statusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
+    liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: UI.danger },
+    statusText: { color: UI.label, fontSize: 13, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" },
+    micWrap: { width: 140, height: 140, alignItems: "center", justifyContent: "center", marginBottom: 4 },
     micRing: {
         position: "absolute",
         width: 140,
@@ -261,11 +296,29 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    micGlyph: { fontSize: 34 },
+    actionsRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        width: "100%",
+        marginTop: 8,
+    },
+    iconButton: { width: 64, alignItems: "center", gap: 4 },
+    iconButtonActive: {},
+    iconButtonLabel: { color: UI.label, fontSize: 11, fontWeight: "600" },
+    stopButton: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: UI.text,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     row: { flexDirection: "row", justifyContent: "center", gap: 10, marginTop: 4 },
     resultCard: { width: "100%", gap: 4 },
     payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
     sub: { color: UI.label, fontSize: 13 },
-    transcript: { color: UI.label, fontSize: 12, fontStyle: "italic", marginTop: 6 },
+    transcriptRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 6 },
+    transcript: { color: UI.label, fontSize: 12, fontStyle: "italic", flex: 1 },
     error: { color: UI.danger, fontSize: 14, textAlign: "center" },
 });
