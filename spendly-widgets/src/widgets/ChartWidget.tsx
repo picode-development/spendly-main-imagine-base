@@ -40,6 +40,12 @@ export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 15
         mode,
         density,
     };
+    // A bar/area/line chart squeezed under ~100x60 stops conveying
+    // anything — bars collapse to slivers, curves flatten into noise. The
+    // big total-amount text above is already the headline number and
+    // stands on its own, so a too-small widget just shows that instead of
+    // cramming an unreadable chart in below it.
+    const chartFits = chartDims.w >= 100 && chartDims.h >= 60;
 
     return (
         <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
@@ -73,19 +79,19 @@ export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 15
                 style={{ fontSize: 22, fontWeight: "bold", color: C.value, marginTop: 2 }}
             />
 
-            {summary ? (
+            {summary && chartFits ? (
                 <FlexWidget style={{ flex: 1, width: "match_parent", marginTop: 8, padding: cardPadding, ...chartCardStyle(mode) }}>
                     <SvgWidget
                         svg={buildSvg(summary.days, chartDims)}
                         style={{ width: chartDims.w, height: chartDims.h }}
                     />
                 </FlexWidget>
-            ) : (
+            ) : !summary ? (
                 <TextWidget
                     text="Open the app to refresh"
                     style={{ fontSize: 12, color: C.label, marginTop: 12 }}
                 />
-            )}
+            ) : null}
         </WidgetShell>
     );
 };

@@ -29,7 +29,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     // Default preserves the pre-existing look for widgets placed before
     // this option existed (their unset style used to fall through to what
     // is now explicitly the "radial" chart).
-    const style = config?.style ?? "radial";
+    const rawStyle = config?.style ?? "radial";
     const cats = summary?.topCategories ?? [];
     const total = cats.reduce((a, c) => a + c.value, 0) || 1;
     const scale = Math.max(1, Math.min(1.5, height / 150));
@@ -43,19 +43,32 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     // No hard ceiling on the stacked chart — a very tall resize should keep
     // growing it (bounded only by the two proportional caps below), not
     // stop at some fixed size and leave the rest of the height empty.
-    const chartSize = stacked
-        ? Math.max(90, Math.min(Math.floor(width * 0.6), Math.floor(height * 0.42)))
-        : Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 320));
+    // Computed unfloored first (rawChartCapacity) so the size-gate below can
+    // tell a genuinely cramped widget apart from one that's merely at the
+    // floor — chartSize itself is never allowed below 80/90 (avoids
+    // degenerate/negative SVG math), which would otherwise mask how little
+    // room is actually available.
+    const rawChartCapacity = stacked
+        ? Math.min(Math.floor(width * 0.6), Math.floor(height * 0.42))
+        : Math.min(height - 52, Math.floor(width * 0.42), 320);
+    const chartSize = Math.max(stacked ? 90 : 80, rawChartCapacity);
+    // A shape chart squeezed below a legible minimum is just a cramped blob
+    // — "bars" (plain rows, no chart geometry) stays legible at any size, so
+    // a too-small widget downgrades to it automatically instead of forcing
+    // an unreadable chart into a space that can't fit it. Radar needs the
+    // most room since labels surround the shape, not just the shape itself.
+    const minChartSize = rawStyle === "radar" ? 150 : 70;
+    const style = rawStyle !== "bars" && rawChartCapacity < minChartSize ? "bars" : rawStyle;
 
-    // Radar's polygon is capped independently of chartSize/stacked growth —
-    // unlike donut/radial (where a bigger ring genuinely shows more detail),
-    // a taller widget stretching radar's labels further from the shape they
-    // label only hurt readability (they were laid out with justifyContent
-    // "space-between" across the full, potentially huge, chartSize box).
-    // Fixed gaps below keep labels close to the chart at any widget size;
-    // extra space just becomes centered breathing room around the block,
-    // which reads as intentional rather than broken.
-    const radarSize = Math.min(220, Math.round(chartSize * 0.64));
+    // Radar scales with chartSize like donut/radial do — a bigger chart on
+    // a tall resize is genuinely better, it's not what caused the earlier
+    // "labels stranded far from the shape" bug. That bug was the label grid
+    // using justifyContent "space-between" to stretch across the full,
+    // uncapped chartSize box; now that labels sit at a FIXED gap from the
+    // chart (below) instead of being stretched to the box edges, a bigger
+    // radarSize just makes the whole chart+label block proportionally
+    // bigger — gap and font scale off radarSize too, so it stays readable.
+    const radarSize = Math.round(chartSize * 0.64);
     const radarGap = Math.max(6, Math.round(radarSize * 0.06));
     const radarFontSize = Math.max(9, Math.round(radarSize * 0.062));
     // Side labels get a fixed width (not the chart's leftover space) so

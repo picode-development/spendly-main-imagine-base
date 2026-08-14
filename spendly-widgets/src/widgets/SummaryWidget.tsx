@@ -47,6 +47,7 @@ const DataCard = ({
     scale,
     fill,
     narrow,
+    ultraNarrow,
     COLORS,
     mode,
 }: {
@@ -59,6 +60,7 @@ const DataCard = ({
     scale: number;
     fill: boolean;
     narrow: boolean;
+    ultraNarrow: boolean;
     COLORS: WidgetTheme;
     mode: WidgetMode;
 }) => {
@@ -69,19 +71,34 @@ const DataCard = ({
     // the raw gradient — so its text needs the neutral-card palette, not
     // the on-gradient one (see theme.ts neutralCardText for why).
     const nc = neutralCardText(mode);
+    const cardStyle = {
+        flex: 1,
+        flexDirection: "column" as const,
+        justifyContent: "center" as const,
+        backgroundColor: COLORS.cardOnGradient,
+        borderRadius: 14,
+        padding: narrow ? 8 : f(10),
+        marginHorizontal: 3,
+        ...(fill ? { height: "match_parent" as const } : {}),
+    };
+    // Below ~78dp per card, a title + icon row + value + change all fit so
+    // tightly that everything gets squeezed to the point of being hard to
+    // read — the value (the one number that actually matters here) is the
+    // thing worth protecting, so title and change% are dropped and the
+    // number gets the space instead, rather than all four elements
+    // surviving at an equally illegible size.
+    if (ultraNarrow) {
+        return (
+            <FlexWidget style={cardStyle}>
+                <FlexWidget style={{ flexDirection: "row", alignItems: "center" }}>
+                    <FlexWidget style={{ height: 6, width: 6, borderRadius: 3, backgroundColor: tint, marginRight: 4 }} />
+                    <TextWidget text={value} truncate="END" maxLines={1} style={{ fontSize: 13, fontWeight: "bold", color: nc.value }} />
+                </FlexWidget>
+            </FlexWidget>
+        );
+    }
     return (
-        <FlexWidget
-            style={{
-                flex: 1,
-                flexDirection: "column",
-                justifyContent: "center",
-                backgroundColor: COLORS.cardOnGradient,
-                borderRadius: 14,
-                padding: narrow ? 8 : f(10),
-                marginHorizontal: 3,
-                ...(fill ? { height: "match_parent" as const } : {}),
-            }}
-        >
+        <FlexWidget style={cardStyle}>
             <FlexWidget style={{ flexDirection: "row", alignItems: "center", width: "match_parent" }}>
                 <FlexWidget
                     style={{
@@ -111,7 +128,11 @@ const DataCard = ({
                 maxLines={1}
                 style={{ fontSize: narrow ? 15 : f(19), fontWeight: "bold", color: nc.value, marginTop: narrow ? 4 : f(6) }}
             />
-            {change !== undefined && (
+            {/* A >300% swing almost always means the comparison period was
+                near-zero, not a meaningful "3x" — the percentage misleads
+                more than it informs at that point, so it's better left out
+                than shown looking broken. */}
+            {change !== undefined && Math.abs(change ?? 0) <= 300 && (
                 <TextWidget
                     text={changeText(change)}
                     truncate="END"
@@ -167,9 +188,12 @@ export const SummaryWidget = ({
     // Each card's real width decides whether it renders the compact variant
     const cardWidth = (width - 20 - 18) / 3;
     const narrow = cardWidth < 112;
+    const ultraNarrow = cardWidth < 78;
     // Tall widgets get a mini spending chart under the cards so the extra
-    // space carries information instead of sitting empty
-    const showMiniChart = style === "cards" && !!summary && height >= 190;
+    // space carries information instead of sitting empty — but only when
+    // there's enough WIDTH too, not just height, or the curve renders
+    // squeezed into an unreadably narrow sliver.
+    const showMiniChart = style === "cards" && !!summary && height >= 190 && width >= 180;
     const cardsAreaFill = style === "cards" && height >= 130;
     // Deterministic vertical split so the chart SVG is generated at the
     // exact height it renders at (no stretching)
@@ -228,7 +252,7 @@ export const SummaryWidget = ({
                     <DataCard
                         icon="piggyBank"
                         tint={TINT.default}
-                        title="Remaining"
+                        title="Left"
                         value={formatINR(useScopedNumbers
                             ? (s?.remaining ?? (s?.income ?? 0) - (s?.expenses ?? 0))
                             : summary.totalBalance)}
@@ -237,6 +261,7 @@ export const SummaryWidget = ({
                         scale={scale}
                         fill={cardsAreaFill || showMiniChart}
                         narrow={narrow}
+                        ultraNarrow={ultraNarrow}
                         COLORS={COLORS}
                         mode={mode}
                     />
@@ -250,19 +275,21 @@ export const SummaryWidget = ({
                         scale={scale}
                         fill={cardsAreaFill || showMiniChart}
                         narrow={narrow}
+                        ultraNarrow={ultraNarrow}
                         COLORS={COLORS}
                         mode={mode}
                     />
                     <DataCard
                         icon="trendingDown"
                         tint={TINT.danger}
-                        title="Expenses"
+                        title="Spent"
                         value={formatINR(useScopedNumbers ? (s?.expenses ?? 0) : summary.monthExpenses)}
                         change={showChange ? s?.expensesChange ?? 0 : undefined}
                         goodWhenUp={false}
                         scale={scale}
                         fill={cardsAreaFill || showMiniChart}
                         narrow={narrow}
+                        ultraNarrow={ultraNarrow}
                         COLORS={COLORS}
                         mode={mode}
                     />

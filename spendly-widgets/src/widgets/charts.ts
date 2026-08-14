@@ -71,23 +71,60 @@ const seriesPoints = (days: WidgetSummary["days"], dims: Dims, key: "income" | "
 const linearPath = (pts: Point[]) =>
     pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
 
-// Catmull-Rom → cubic Bezier: smooth curve through every point, the same
-// visual character as recharts' type="monotone" (area-variant.tsx only —
-// bar/line variants use straight/discrete strokes, so those stay linear).
+// Monotone cubic Hermite (Fritsch-Carlson) → cubic Bezier — this is what
+// recharts' type="monotone" actually is, NOT plain Catmull-Rom (an earlier
+// version of this function used Catmull-Rom and called it equivalent,
+// which it isn't: Catmull-Rom overshoots past the local min/max whenever a
+// sharp spike sits next to flat/near-zero points on both sides — exactly
+// the shape one big one-off expense next to five quiet days produces — so
+// the "smoothed" curve visibly dipped below the zero baseline right before
+// and after the spike. Monotone interpolation is specifically constructed
+// to never introduce an extremum a straight line through the data doesn't
+// already have, so a spike stays a clean spike and flat runs stay flat.
 const smoothPath = (pts: Point[]) => {
     if (pts.length < 2) return pts[0] ? `M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}` : "";
     if (pts.length === 2) return linearPath(pts);
+
+    const n = pts.length;
+    const dx: number[] = [];
+    const secant: number[] = []; // slope between consecutive points
+    for (let i = 0; i < n - 1; i++) {
+        dx.push(pts[i + 1].x - pts[i].x);
+        secant.push((pts[i + 1].y - pts[i].y) / (dx[i] || 1));
+    }
+    // Initial tangent at each point: average of the two adjacent secants
+    // (endpoints just take their one neighbor's secant).
+    const tangent: number[] = [secant[0]];
+    for (let i = 1; i < n - 1; i++) tangent.push((secant[i - 1] + secant[i]) / 2);
+    tangent.push(secant[n - 2]);
+    // Fritsch-Carlson: zero the tangent at any local min/max (secant sign
+    // change), then rescale so neither tangent in a segment overshoots —
+    // this is the step plain Catmull-Rom skips entirely.
+    for (let i = 0; i < n - 1; i++) {
+        if (secant[i] === 0) {
+            tangent[i] = 0;
+            tangent[i + 1] = 0;
+            continue;
+        }
+        const a = tangent[i] / secant[i];
+        const b = tangent[i + 1] / secant[i];
+        const magnitude = a * a + b * b;
+        if (magnitude > 9) {
+            const tau = 3 / Math.sqrt(magnitude);
+            tangent[i] = tau * a * secant[i];
+            tangent[i + 1] = tau * b * secant[i];
+        }
+    }
+
     let d = `M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[i === 0 ? i : i - 1];
-        const p1 = pts[i];
-        const p2 = pts[i + 1];
-        const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
-        const c1x = p1.x + (p2.x - p0.x) / 6;
-        const c1y = p1.y + (p2.y - p0.y) / 6;
-        const c2x = p2.x - (p3.x - p1.x) / 6;
-        const c2y = p2.y - (p3.y - p1.y) / 6;
-        d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+        const p0 = pts[i];
+        const p1 = pts[i + 1];
+        const c1x = p0.x + dx[i] / 3;
+        const c1y = p0.y + (tangent[i] * dx[i]) / 3;
+        const c2x = p1.x - dx[i] / 3;
+        const c2y = p1.y - (tangent[i + 1] * dx[i]) / 3;
+        d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
     }
     return d;
 };
