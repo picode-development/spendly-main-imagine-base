@@ -1,3 +1,4 @@
+import { File, UploadType } from "expo-file-system";
 import { WidgetInstanceConfig, WidgetSummary, WidgetTransaction } from "./config";
 
 // Translate an instance config into summary query params. "month" is
@@ -67,34 +68,41 @@ export type VoiceResult = {
 
 // Uploads a widget-popup recording; the server transcribes, extracts, and
 // stages a pending transaction the user reviews in Spendly.
+//
+// Uses expo-file-system's native File.upload() rather than fetch()+FormData
+// with a raw { uri, name, type } part — RN's Blob-casting of local file://
+// URIs (especially from the cache dir expo-audio records into) is known to
+// throw "Network request failed" before any request reaches the network,
+// which is indistinguishable from a real connectivity failure to the caller.
 export const uploadVoice = async (
     baseUrl: string,
     token: string,
     fileUri: string,
 ): Promise<{ ok: true; data: VoiceResult } | { ok: false; error: string }> => {
-    const t = withTimeout(60_000);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
     try {
-        const form = new FormData();
-        // React Native FormData file part: { uri, name, type }
-        form.append("audio", {
-            uri: fileUri,
-            name: "voice.m4a",
-            type: "audio/m4a",
-        } as unknown as Blob);
-        const res = await fetch(
+        const file = new File(fileUri);
+        const result = await file.upload(
             `${baseUrl}/api/widget/voice?token=${encodeURIComponent(token)}`,
-            { method: "POST", body: form, signal: t.signal },
+            {
+                uploadType: UploadType.MULTIPART,
+                fieldName: "audio",
+                mimeType: "audio/m4a",
+                signal: controller.signal,
+            },
         );
-        if (!res.ok) {
-            const body = await res.json().catch(() => null);
-            return { ok: false, error: body?.error ?? `Server error (${res.status})` };
+        const body = (() => {
+            try { return JSON.parse(result.body); } catch { return null; }
+        })();
+        if (result.status < 200 || result.status >= 300) {
+            return { ok: false, error: body?.error ?? `Server error (${result.status})` };
         }
-        const { data } = await res.json();
-        return { ok: true, data: data as VoiceResult };
+        return { ok: true, data: body.data as VoiceResult };
     } catch {
         return { ok: false, error: "Couldn't reach Spendly — check your connection" };
     } finally {
-        t.done();
+        clearTimeout(timer);
     }
 };
 
