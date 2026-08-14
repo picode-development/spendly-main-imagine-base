@@ -207,8 +207,8 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
-        // Semi-transparent: the launcher stays visible behind the popup
-        backgroundColor: "rgba(2, 6, 23, 0.55)",
+        // Fully transparent: only the card floats over the launcher, no dim
+        backgroundColor: "transparent",
         justifyContent: "center",
         padding: 18,
     },
@@ -219,6 +219,13 @@ const styles = StyleSheet.create({
         borderRadius: 18,
         padding: 18,
         gap: 12,
+        // No backdrop dim behind it now, so the card needs its own shadow
+        // to read as floating over an arbitrary wallpaper
+        elevation: 12,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 14,
     },
     headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
     title: { color: UI.text, fontSize: 18, fontWeight: "700" },
