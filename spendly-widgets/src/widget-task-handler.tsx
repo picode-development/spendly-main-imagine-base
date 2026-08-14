@@ -7,10 +7,12 @@ import {
     getCachedTransactions,
     getInstanceConfig,
     getMetrics,
+    getSelectedSlice,
     getToken,
     removeInstanceConfig,
     setCachedSummary,
     setCachedTransactions,
+    setSelectedSlice,
 } from "./storage";
 import { fetchLatestVersion, updateUriIfNewer } from "./version";
 import { ActionsWidget } from "./widgets/ActionsWidget";
@@ -23,15 +25,30 @@ import { TransactionsWidget } from "./widgets/TransactionsWidget";
 export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
     if (props.widgetAction === "WIDGET_DELETED") {
         await removeInstanceConfig(props.widgetInfo.widgetId);
+        await setSelectedSlice(props.widgetInfo.widgetId, null);
         return;
     }
-    switch (props.widgetAction) {
-        case "WIDGET_ADDED":
-        case "WIDGET_UPDATE":
-        case "WIDGET_RESIZED":
-            break;
-        default:
-            return;
+
+    // Tapping a Categories widget legend row re-renders that SAME widget
+    // with the row highlighted — no app launch, no network round trip for
+    // the selection itself (the re-render below still refetches, same as
+    // any other update, so the highlighted row's data stays current).
+    // Tapping the already-selected row again clears the selection.
+    if (props.widgetAction === "WIDGET_CLICK") {
+        if (props.clickAction !== "SELECT_CATEGORY_SLICE") return;
+        const widgetId = props.widgetInfo.widgetId;
+        const clickedIndex = Number(props.clickActionData?.index);
+        const current = await getSelectedSlice(widgetId);
+        await setSelectedSlice(widgetId, current === clickedIndex ? null : clickedIndex);
+    } else {
+        switch (props.widgetAction) {
+            case "WIDGET_ADDED":
+            case "WIDGET_UPDATE":
+            case "WIDGET_RESIZED":
+                break;
+            default:
+                return;
+        }
     }
 
     const widgetName = props.widgetInfo.widgetName;
@@ -98,8 +115,9 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
     }
 
     if (widgetName === "SpendlyCategories") {
+        const selectedIndex = await getSelectedSlice(props.widgetInfo.widgetId);
         props.renderWidget(themedPair((mode) => (
-            <CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} density={density} updateUri={updateUri} />
+            <CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} density={density} updateUri={updateUri} selectedIndex={selectedIndex} />
         )));
         return;
     }

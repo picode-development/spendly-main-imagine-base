@@ -1,5 +1,5 @@
 import React from "react";
-import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
+import { FlexWidget, OverlapWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
 import { CATEGORY_COLORS, donutSvg, radarSvg, radialSvg } from "./charts";
@@ -15,12 +15,14 @@ type Props = {
     mode?: WidgetMode;
     density?: number;
     updateUri?: string;
+    /** Tapped legend row (chart/radial/radar styles only) — highlights that category. */
+    selectedIndex?: number | null;
 };
 
 // The dashboard's category split as a widget: radial rings, true donut,
 // radar polygon (all with a legend), or ranked horizontal bars — sized to
 // the widget's real dimensions.
-export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri }: Props) => {
+export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri, selectedIndex = null }: Props) => {
     const C = getTheme(mode);
     const nc = neutralCardText(mode);
     // Default preserves the pre-existing look for widgets placed before
@@ -37,8 +39,11 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     // tall widget actually grows the chart and spaces out the list instead
     // of just centering a small unchanged block in empty space.
     const stacked = height >= width * 0.85;
+    // No hard ceiling on the stacked chart — a very tall resize should keep
+    // growing it (bounded only by the two proportional caps below), not
+    // stop at some fixed size and leave the rest of the height empty.
     const chartSize = stacked
-        ? Math.max(90, Math.min(Math.floor(width * 0.6), Math.floor(height * 0.42), 280))
+        ? Math.max(90, Math.min(Math.floor(width * 0.6), Math.floor(height * 0.42)))
         : Math.max(80, Math.min(height - 52, Math.floor(width * 0.42), 320));
 
     return (
@@ -132,7 +137,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                         ...chartCardStyle(mode),
                     }}
                 >
-                    <FlexWidget style={{ height: chartSize, width: chartSize }}>
+                    <OverlapWidget style={{ height: chartSize, width: chartSize }}>
                         <SvgWidget
                             svg={
                                 style === "donut" ? donutSvg(cats, chartSize, mode)
@@ -141,7 +146,41 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                             }
                             style={{ height: chartSize, width: chartSize }}
                         />
-                    </FlexWidget>
+                        {/* Donut's hole (inner/outer radius ratio 60/90, see
+                            charts.ts) is ~2/3 of chartSize wide — plenty of
+                            room for the total, giving a bigger chart on a
+                            tall resize an actual payoff instead of just
+                            more empty ring. */}
+                        {style === "donut" && (
+                            <FlexWidget
+                                style={{
+                                    height: "match_parent",
+                                    width: "match_parent",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    flexDirection: "column",
+                                }}
+                            >
+                                <TextWidget
+                                    text={formatINR(total)}
+                                    maxLines={1}
+                                    style={{
+                                        fontSize: Math.max(11, Math.round(chartSize * 0.1)),
+                                        fontWeight: "bold",
+                                        color: nc.value,
+                                    }}
+                                />
+                                <TextWidget
+                                    text="Total"
+                                    style={{
+                                        fontSize: Math.max(9, Math.round(chartSize * 0.045)),
+                                        color: nc.label,
+                                        marginTop: 2,
+                                    }}
+                                />
+                            </FlexWidget>
+                        )}
+                    </OverlapWidget>
                     <FlexWidget
                         style={
                             stacked
@@ -149,35 +188,55 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
                                 : { flexDirection: "column", flex: 1, marginLeft: 12, justifyContent: "center" }
                         }
                     >
-                        {cats.map((cat, i) => (
-                            <FlexWidget
-                                key={cat.name}
-                                style={{
-                                    flexDirection: "row",
-                                    alignItems: "center",
-                                    width: "match_parent",
-                                    marginTop: i === 0 ? 0 : Math.round((stacked ? 8 : 5) * scale),
-                                }}
-                            >
+                        {cats.map((cat, i) => {
+                            const selected = selectedIndex === i;
+                            const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length] as `#${string}`;
+                            return (
                                 <FlexWidget
+                                    key={cat.name}
+                                    clickAction="SELECT_CATEGORY_SLICE"
+                                    clickActionData={{ index: i }}
                                     style={{
-                                        height: 8,
-                                        width: 8,
-                                        borderRadius: 4,
-                                        backgroundColor: CATEGORY_COLORS[i % CATEGORY_COLORS.length] as `#${string}`,
-                                        marginRight: 6,
+                                        flexDirection: "row",
+                                        alignItems: "center",
+                                        width: "match_parent",
+                                        marginTop: i === 0 ? 0 : Math.round((stacked ? 8 : 5) * scale),
+                                        borderRadius: 8,
+                                        paddingVertical: selected ? 4 : 0,
+                                        paddingHorizontal: selected ? 6 : 0,
+                                        backgroundColor: selected ? `${color}26` : "#00000000",
                                     }}
-                                />
-                                <FlexWidget style={{ flexDirection: "column", flex: 1 }}>
-                                    <TextWidget
-                                        text={`${cat.name.trim()} · ${formatINR(cat.value)}`}
-                                        truncate="END"
-                                        maxLines={1}
-                                        style={{ fontSize: stacked ? legendFont + 1 : legendFont, color: nc.value }}
+                                >
+                                    <FlexWidget
+                                        style={{
+                                            height: selected ? 10 : 8,
+                                            width: selected ? 10 : 8,
+                                            borderRadius: 5,
+                                            backgroundColor: color,
+                                            marginRight: 6,
+                                        }}
                                     />
+                                    <FlexWidget style={{ flexDirection: "column", flex: 1 }}>
+                                        <TextWidget
+                                            text={`${cat.name.trim()} · ${formatINR(cat.value)}`}
+                                            truncate="END"
+                                            maxLines={1}
+                                            style={{
+                                                fontSize: stacked ? legendFont + 1 : legendFont,
+                                                fontWeight: selected ? "bold" : "normal",
+                                                color: nc.value,
+                                            }}
+                                        />
+                                        {selected && (
+                                            <TextWidget
+                                                text={`${Math.round((cat.value / total) * 100)}% of total`}
+                                                style={{ fontSize: Math.max(9, legendFont - 2), color: nc.label, marginTop: 1 }}
+                                            />
+                                        )}
+                                    </FlexWidget>
                                 </FlexWidget>
-                            </FlexWidget>
-                        ))}
+                            );
+                        })}
                     </FlexWidget>
                 </FlexWidget>
             )}

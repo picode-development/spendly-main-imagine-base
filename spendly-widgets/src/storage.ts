@@ -67,6 +67,23 @@ export const setInstanceConfig = (widgetId: number, config: WidgetInstanceConfig
 export const removeInstanceConfig = (widgetId: number) =>
     AsyncStorage.removeItem(instanceKey(widgetId));
 
+// Ephemeral tap-to-select state (Categories widget: which slice is
+// highlighted), kept separate from WidgetInstanceConfig — that's the
+// user's deliberate settings from the config screen; this is a transient
+// UI toggle that shouldn't show up there or survive a config change.
+const selectionKey = (widgetId: number) => `spendly.widgetselection.${widgetId}`;
+
+export const getSelectedSlice = async (widgetId: number): Promise<number | null> => {
+    const raw = await AsyncStorage.getItem(selectionKey(widgetId));
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) ? n : null;
+};
+export const setSelectedSlice = (widgetId: number, index: number | null) =>
+    index === null
+        ? AsyncStorage.removeItem(selectionKey(widgetId))
+        : AsyncStorage.setItem(selectionKey(widgetId), String(index));
+
 export const getCachedTransactions = async (): Promise<WidgetTransaction[] | null> => {
     const raw = await AsyncStorage.getItem(KEYS.transactions);
     if (!raw) return null;
