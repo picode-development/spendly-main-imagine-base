@@ -42,6 +42,17 @@ const csvEscape = (value: string) => {
 const formatPairingCode = (token: string) =>
     token.replace(/^(.{4})(.{4})(.{4})$/, "$1-$2-$3");
 
+// Which Spendly Widgets installer fits this device. iPadOS 13+ reports a
+// Mac user agent, so multi-touch Macs count as iOS.
+const detectPlatform = (): "android" | "ios" | "other" => {
+    if (typeof navigator === "undefined") return "other";
+    const ua = navigator.userAgent;
+    if (/android/i.test(ua)) return "android";
+    if (/iphone|ipad|ipod/i.test(ua)) return "ios";
+    if (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) return "ios";
+    return "other";
+};
+
 const SettingsPage = () => {
   const router = useRouter();
   const { theme = "system", setTheme } = useTheme(); // Default to system
@@ -55,6 +66,7 @@ const SettingsPage = () => {
   const { data: pending } = useGetPendingTransactions();
 
   const [isExporting, setIsExporting] = useState(false);
+  const [platform] = useState(detectPlatform);
 
   const queryClient = useQueryClient();
   const widgetTokenQuery = useQuery({
@@ -286,16 +298,35 @@ const SettingsPage = () => {
                 Spendly Widgets app
               </Label>
               <span className="text-sm text-muted-foreground">
-                Home-screen widgets for Android and iOS. Download the app, then
-                pair it with the code below.
+                {platform === "android"
+                  ? "Home-screen widgets for this phone. Download the APK, allow the install, then pair with the code below."
+                  : platform === "ios"
+                    ? "Home-screen widgets for iPhone/iPad. The iOS build is coming soon — Android is available today."
+                    : "Home-screen widgets for your phone. Open this page on the phone, or grab the installer here."}
               </span>
             </div>
-            <Button size="sm" className="shrink-0" asChild>
-              <a href="/spendly-widgets.apk" download>
-                <Smartphone className="size-4 mr-2" />
-                Android APK
-              </a>
-            </Button>
+            <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row">
+              {(platform === "android" || platform === "other") && (
+                <Button size="sm" className="shrink-0" asChild>
+                  <a href="/spendly-widgets.apk" download>
+                    <Smartphone className="size-4 mr-2" />
+                    Android APK
+                  </a>
+                </Button>
+              )}
+              {(platform === "ios" || platform === "other") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled
+                  title="The iOS build isn't available yet"
+                >
+                  <Smartphone className="size-4 mr-2" />
+                  iOS — coming soon
+                </Button>
+              )}
+            </div>
           </div>
 
           <Separator className="my-2" />
