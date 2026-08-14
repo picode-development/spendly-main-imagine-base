@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.spendly.widgets",
-      "versionCode": 7,
+      "versionCode": 8,
       "adaptiveIcon": {
         "backgroundColor": "#0f172a",
         "foregroundImage": "./assets/android-icon-foreground.png"
