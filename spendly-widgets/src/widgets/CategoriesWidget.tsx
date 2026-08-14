@@ -28,7 +28,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     const legendFont = Math.round(11 * scale);
 
     return (
-        <WidgetShell width={width} height={height} mode={mode} clickUri={baseUrl} updateUri={updateUri}>
+        <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={baseUrl} updateUri={updateUri}>
             <FlexWidget
                 style={{
                     flexDirection: "row",

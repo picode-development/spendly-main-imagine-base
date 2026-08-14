@@ -32,7 +32,7 @@ export const TransactionsWidget = ({
 }: Props) => {
     const C = getTheme(mode);
     return (
-    <WidgetShell width={width} height={height} mode={mode} padding={12} updateUri={updateUri}>
+    <WidgetShell width={width} height={height} mode={mode} background={config?.background} padding={12} updateUri={updateUri}>
         <FlexWidget
             style={{
                 flexDirection: "row",

@@ -32,7 +32,7 @@ export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 15
     };
 
     return (
-        <WidgetShell width={width} height={height} mode={mode} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
+        <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
             <FlexWidget
                 style={{
                     flexDirection: "row",

@@ -97,16 +97,18 @@ const DataCard = ({
                 maxLines={1}
                 style={{ fontSize: narrow ? 14 : f(17), fontWeight: "bold", color: COLORS.value, marginTop: narrow ? 4 : f(6) }}
             />
-            <TextWidget
-                text={changeText(change)}
-                truncate="END"
-                maxLines={1}
-                style={{
-                    fontSize: narrow ? 8 : f(9),
-                    color: changeGood == null ? COLORS.label : changeGood ? COLORS.income : COLORS.expense,
-                    marginTop: 2,
-                }}
-            />
+            {change !== undefined && (
+                <TextWidget
+                    text={changeText(change)}
+                    truncate="END"
+                    maxLines={1}
+                    style={{
+                        fontSize: narrow ? 8 : f(9),
+                        color: changeGood == null ? COLORS.label : changeGood ? COLORS.income : COLORS.expense,
+                        marginTop: 2,
+                    }}
+                />
+            )}
         </FlexWidget>
     );
 };
@@ -124,7 +126,7 @@ export const SummaryWidget = ({
     const COLORS = getTheme(mode);
     if (!paired) {
         return (
-            <WidgetShell width={width} height={height} mode={mode} clickUri={DEFAULT_BASE_URL} updateUri={updateUri}>
+            <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={DEFAULT_BASE_URL} updateUri={updateUri}>
                 <FlexWidget
                     style={{
                         flex: 1,
@@ -184,15 +186,19 @@ export const SummaryWidget = ({
     );
 
     if (summary && style === "cards") {
+        // Cards always show the scoped window (default: last 7 days). The
+        // % badge compares to the previous equal window — for all-time
+        // there is nothing to compare against, so it's hidden entirely.
         const s = summary.scoped;
-        const useScopedNumbers = scoped && s;
+        const useScopedNumbers = !!s;
+        const showChange = !!s && (config?.scope ?? "week") !== "all";
         const chartDims = {
             w: Math.max(60, width - 26),
             h: miniChartH,
             mode,
         };
         return (
-            <WidgetShell width={width} height={height} mode={mode} clickUri={DEFAULT_BASE_URL} padding={10} updateUri={updateUri}>
+            <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={10} updateUri={updateUri}>
                 {header}
                 <FlexWidget
                     style={{
@@ -210,7 +216,7 @@ export const SummaryWidget = ({
                         value={formatINR(useScopedNumbers
                             ? (s?.remaining ?? (s?.income ?? 0) - (s?.expenses ?? 0))
                             : summary.totalBalance)}
-                        change={useScopedNumbers ? s?.remainingChange : undefined}
+                        change={showChange ? s?.remainingChange ?? 0 : undefined}
                         goodWhenUp
                         scale={scale}
                         fill={cardsAreaFill || showMiniChart}
@@ -222,7 +228,7 @@ export const SummaryWidget = ({
                         tint={COLORS.income}
                         title="Income"
                         value={formatINR(useScopedNumbers ? (s?.income ?? 0) : summary.monthIncome)}
-                        change={useScopedNumbers ? s?.incomeChange : undefined}
+                        change={showChange ? s?.incomeChange ?? 0 : undefined}
                         goodWhenUp
                         scale={scale}
                         fill={cardsAreaFill || showMiniChart}
@@ -234,7 +240,7 @@ export const SummaryWidget = ({
                         tint={COLORS.expense}
                         title="Expenses"
                         value={formatINR(useScopedNumbers ? (s?.expenses ?? 0) : summary.monthExpenses)}
-                        change={useScopedNumbers ? s?.expensesChange : undefined}
+                        change={showChange ? s?.expensesChange ?? 0 : undefined}
                         goodWhenUp={false}
                         scale={scale}
                         fill={cardsAreaFill || showMiniChart}
@@ -273,7 +279,7 @@ export const SummaryWidget = ({
     }
 
     return (
-        <WidgetShell width={width} height={height} mode={mode} clickUri={DEFAULT_BASE_URL} padding={16} updateUri={updateUri}>
+        <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={16} updateUri={updateUri}>
             {header}
             {rows.length > 0 ? (
                 <FlexWidget

@@ -86,7 +86,16 @@ export type WidgetInstanceConfig = {
     sort?: "date" | "amount";
     /** UI style key from WIDGET_STYLES for this widget type */
     style?: string;
+    /** Card background: site gradient, soft-blur gradient, translucent gradient, or glass */
+    background?: "gradient" | "blurGradient" | "translucentGradient" | "glass";
 };
+
+export const BACKGROUND_OPTIONS = [
+    { value: "gradient", label: "Spendly gradient" },
+    { value: "blurGradient", label: "Blurred gradient" },
+    { value: "translucentGradient", label: "Translucent gradient" },
+    { value: "glass", label: "Translucent glass" },
+] as const;
 
 export const DEFAULT_INSTANCE_CONFIG: WidgetInstanceConfig = { scope: "week" };
 

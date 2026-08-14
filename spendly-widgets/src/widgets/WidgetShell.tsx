@@ -1,7 +1,7 @@
 import React from "react";
 import { FlexWidget, OverlapWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { lucideSvg } from "./icons";
-import { getTheme, gradientBackgroundSvg, WidgetMode } from "./theme";
+import { BackgroundStyle, backgroundSvg, getTheme, WidgetMode } from "./theme";
 
 // Every widget's frame: the site header's gradient painted edge-to-edge
 // behind the content (RemoteViews can't gradient-fill; an SVG layer can).
@@ -11,6 +11,7 @@ type Props = {
     width: number;
     height: number;
     mode?: WidgetMode;
+    background?: BackgroundStyle;
     clickUri?: string;
     padding?: number;
     /** Set when a newer build is available — tapping downloads the APK */
@@ -22,6 +23,7 @@ export const WidgetShell = ({
     width,
     height,
     mode = "dark",
+    background = "gradient",
     clickUri,
     padding = 14,
     updateUri,
@@ -36,7 +38,7 @@ export const WidgetShell = ({
             style={{ height: "match_parent", width: "match_parent" }}
         >
             <SvgWidget
-                svg={gradientBackgroundSvg(width, height, mode)}
+                svg={backgroundSvg(width, height, mode, background)}
                 style={{ height: "match_parent", width: "match_parent" }}
             />
             <FlexWidget

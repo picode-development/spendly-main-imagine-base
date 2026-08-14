@@ -4,6 +4,7 @@ import type { WidgetConfigurationScreenProps } from "react-native-android-widget
 import { WidgetPreview } from "react-native-android-widget";
 import { fetchSummary, fetchTransactions, pair } from "./api";
 import {
+    BACKGROUND_OPTIONS,
     WIDGET_STYLES,
     WidgetInstanceConfig,
     WidgetSummary,
@@ -68,6 +69,7 @@ export const ConfigScreen = ({
     const [direction, setDirection] = useState<NonNullable<WidgetInstanceConfig["direction"]>>("all");
     const [sort, setSort] = useState<NonNullable<WidgetInstanceConfig["sort"]>>("date");
     const [style, setStyle] = useState<string | undefined>(undefined);
+    const [background, setBackground] = useState<NonNullable<WidgetInstanceConfig["background"]>>("gradient");
 
     const [previewSummary, setPreviewSummary] = useState<WidgetSummary | null>(null);
     const [previewRows, setPreviewRows] = useState<WidgetTransaction[] | null>(null);
@@ -90,7 +92,8 @@ export const ConfigScreen = ({
         direction: isTransactionsWidget && direction !== "all" ? direction : undefined,
         sort: isTransactionsWidget && sort !== "date" ? sort : undefined,
         style,
-    }), [scope, from, to, accountId, categoryId, direction, sort, style, accounts, categories, isTransactionsWidget]);
+        background,
+    }), [scope, from, to, accountId, categoryId, direction, sort, style, background, accounts, categories, isTransactionsWidget]);
 
     useEffect(() => {
         (async () => {
@@ -117,6 +120,7 @@ export const ConfigScreen = ({
                 setDirection(existing.direction ?? "all");
                 setSort(existing.sort ?? "date");
                 setStyle(existing.style);
+                setBackground(existing.background ?? "gradient");
             }
             const result = await pair(storedUrl, storedToken);
             if (result.ok) {
@@ -214,16 +218,21 @@ export const ConfigScreen = ({
                 />
             </View>
 
-            {styleOptions.length > 0 && (
-                <Card>
-                    <CardTitle>Style</CardTitle>
+            <Card>
+                <CardTitle>Style</CardTitle>
+                {styleOptions.length > 0 && (
                     <Select
                         value={style ?? styleOptions[0]?.key}
                         options={styleOptions.map((s) => ({ value: s.key, label: s.label }))}
                         onChange={setStyle}
                     />
-                </Card>
-            )}
+                )}
+                <Select
+                    value={background}
+                    options={BACKGROUND_OPTIONS.map((b) => ({ value: b.value, label: b.label }))}
+                    onChange={(v) => setBackground(v as typeof background)}
+                />
+            </Card>
 
             <Card>
                 <CardTitle>Time period</CardTitle>
