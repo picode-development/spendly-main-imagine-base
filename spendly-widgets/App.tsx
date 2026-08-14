@@ -3,6 +3,7 @@ import {
     ActivityIndicator,
     BackHandler,
     Linking,
+    PixelRatio,
     Pressable,
     ScrollView,
     StatusBar,
@@ -80,7 +81,7 @@ const refreshHomeScreenWidgets = async (
         return { config, summary: await fetchSummary(baseUrl, token, config) };
     };
 
-    type Info = { widgetId: number; width: number; height: number };
+    type Info = { widgetId: number; width: number; height: number; screenInfo: { density: number } };
     type Rendered = ReturnType<typeof themedPair<React.JSX.Element>>;
     const renderers: Record<string, (info: Info) => Promise<Rendered> | Rendered> = {
         SpendlySummary: async (info) => {
@@ -94,6 +95,7 @@ const refreshHomeScreenWidgets = async (
                     width={info.width}
                     height={info.height}
                     mode={mode}
+                    density={info.screenInfo.density}
                     updateUri={updateUri}
                 />
             ));
@@ -111,6 +113,7 @@ const refreshHomeScreenWidgets = async (
                     width={info.width}
                     height={info.height}
                     mode={mode}
+                    density={info.screenInfo.density}
                     updateUri={updateUri}
                 />
             ));
@@ -125,6 +128,7 @@ const refreshHomeScreenWidgets = async (
                     width={info.width}
                     height={info.height}
                     mode={mode}
+                    density={info.screenInfo.density}
                     updateUri={updateUri}
                 />
             ));
@@ -142,6 +146,7 @@ const refreshHomeScreenWidgets = async (
                     width={info.width}
                     height={info.height}
                     mode={mode}
+                    density={info.screenInfo.density}
                     updateUri={updateUri}
                 />
             ));
@@ -367,7 +372,7 @@ export default function App() {
                             <Text style={styles.previewLabel}>Summary</Text>
                             <WidgetPreview
                                 renderWidget={(d) => (
-                                    <SummaryWidget summary={summary} metrics={metrics} paired config={null} width={d.width} height={d.height} />
+                                    <SummaryWidget summary={summary} metrics={metrics} paired config={null} width={d.width} height={d.height} density={PixelRatio.get()} />
                                 )}
                                 width={320}
                                 height={140}
@@ -381,7 +386,7 @@ export default function App() {
                             <Text style={styles.previewLabel}>Chart</Text>
                             <WidgetPreview
                                 renderWidget={(d) => (
-                                    <ChartWidget summary={summary} baseUrl={baseUrl} config={null} width={d.width} height={d.height} />
+                                    <ChartWidget summary={summary} baseUrl={baseUrl} config={null} width={d.width} height={d.height} density={PixelRatio.get()} />
                                 )}
                                 width={320}
                                 height={150}
@@ -389,7 +394,7 @@ export default function App() {
                             <Text style={styles.previewLabel}>Categories</Text>
                             <WidgetPreview
                                 renderWidget={(d) => (
-                                    <CategoriesWidget summary={summary} baseUrl={baseUrl} config={null} width={d.width} height={d.height} />
+                                    <CategoriesWidget summary={summary} baseUrl={baseUrl} config={null} width={d.width} height={d.height} density={PixelRatio.get()} />
                                 )}
                                 width={320}
                                 height={150}
@@ -397,7 +402,7 @@ export default function App() {
                             <Text style={styles.previewLabel}>Transactions</Text>
                             <WidgetPreview
                                 renderWidget={(d) => (
-                                    <TransactionsWidget transactions={transactions} baseUrl={baseUrl} config={null} width={d.width} height={d.height} />
+                                    <TransactionsWidget transactions={transactions} baseUrl={baseUrl} config={null} width={d.width} height={d.height} density={PixelRatio.get()} />
                                 )}
                                 width={320}
                                 height={200}

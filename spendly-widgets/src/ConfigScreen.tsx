@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, PixelRatio, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { WidgetConfigurationScreenProps } from "react-native-android-widget";
 import { WidgetPreview } from "react-native-android-widget";
 import { fetchSummary, fetchTransactions, pair } from "./api";
@@ -146,22 +146,23 @@ export const ConfigScreen = ({
     }, [token, baseUrl, scope, from, to, accountId, categoryId, direction, sort, customValid]);
 
     const renderPreviewWidget = useCallback((d: { width: number; height: number }) => {
+        const density = PixelRatio.get();
         switch (widgetName) {
             case "SpendlyChart":
-                return <ChartWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} />;
+                return <ChartWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} density={density} />;
             case "SpendlyCategories":
-                return <CategoriesWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} />;
+                return <CategoriesWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} density={density} />;
             case "SpendlyTransactions":
-                return <TransactionsWidget transactions={previewRows} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} />;
+                return <TransactionsWidget transactions={previewRows} baseUrl={baseUrl} config={draftConfig} width={d.width} height={d.height} density={density} />;
             default:
-                return <SummaryWidget summary={previewSummary} metrics={metrics} paired config={draftConfig} width={d.width} height={d.height} />;
+                return <SummaryWidget summary={previewSummary} metrics={metrics} paired config={draftConfig} width={d.width} height={d.height} density={density} />;
         }
     }, [widgetName, previewSummary, previewRows, baseUrl, draftConfig, metrics]);
 
     const handleSave = async () => {
         setSaving(true);
         await setInstanceConfig(widgetInfo.widgetId, draftConfig);
-        const dims = { width: widgetInfo.width, height: widgetInfo.height };
+        const dims = { width: widgetInfo.width, height: widgetInfo.height, density: widgetInfo.screenInfo.density };
         if (token) {
             if (isTransactionsWidget) {
                 const rows = await fetchTransactions(baseUrl, token, draftConfig, 30);

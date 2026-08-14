@@ -13,12 +13,13 @@ type Props = {
     width?: number;
     height?: number;
     mode?: WidgetMode;
+    density?: number;
     updateUri?: string;
 };
 
 // The dashboard's category split as a widget: donut with legend, or
 // ranked horizontal bars — sized to the widget's real dimensions.
-export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", updateUri }: Props) => {
+export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri }: Props) => {
     const C = getTheme(mode);
     const style = config?.style ?? "donut";
     const cats = summary?.topCategories ?? [];
@@ -28,7 +29,7 @@ export const CategoriesWidget = ({ summary, baseUrl, config, width = 320, height
     const legendFont = Math.round(11 * scale);
 
     return (
-        <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={baseUrl} updateUri={updateUri}>
+        <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} updateUri={updateUri}>
             <FlexWidget
                 style={{
                     flexDirection: "row",

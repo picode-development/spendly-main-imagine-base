@@ -63,63 +63,80 @@ export const WIDGET_COLORS = DARK;
 
 export type BackgroundStyle = "gradient" | "blurGradient" | "translucentGradient" | "glass";
 
-// Rounded-rect backgrounds painted by an SVG behind each widget's content
-// (RemoteViews can't gradient-fill natively; SVG can). Styles:
-//  gradient            – the site header gradient, solid
-//  blurGradient        – gradient with soft aurora blobs (faked blur via
-//                        radial gradients; AndroidSVG has no real filters)
-//  translucentGradient – the gradient at ~55% opacity, wallpaper shows through
-//  glass               – frosted tint + hairline border, mostly transparent
-export const backgroundSvg = (
-    w: number,
-    h: number,
+// Alpha-blend a hex color toward transparent — 0 = fully transparent,
+// 1 = fully opaque. Produces an 8-digit #RRGGBBAA the library's
+// convertColor() understands directly.
+const withAlpha = (hex: HexColor, alpha: number): HexColor => {
+    const a = Math.round(Math.min(1, Math.max(0, alpha)) * 255)
+        .toString(16)
+        .padStart(2, "0");
+    return `${hex}${a}` as HexColor;
+};
+
+// Native background props (backgroundColor / backgroundGradient / border)
+// for a widget's outermost container. This renders via Android's own
+// GradientDrawable — no image, no rasterization, so it's immune to the
+// SvgWidget density bug entirely. Covers 3 of the 4 background styles;
+// only "blurGradient" (soft aurora blobs) has no native equivalent and
+// still needs an SVG layer — see blurGradientSvg below.
+export const nativeBackgroundStyle = (
     mode: WidgetMode = "dark",
     style: BackgroundStyle = "gradient",
     radius = 20,
 ) => {
     const t = getTheme(mode);
-    const open = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">`;
-    const gradientDef = (opacity: number) =>
-        `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
-        `<stop offset="0" stop-color="${t.gradientFrom}" stop-opacity="${opacity}"/>` +
-        `<stop offset="1" stop-color="${t.gradientTo}" stop-opacity="${opacity}"/>` +
-        `</linearGradient></defs>`;
-    const rect = (fill: string, extra = "") =>
-        `<rect x="0" y="0" width="${w}" height="${h}" rx="${radius}" fill="${fill}"${extra}/>`;
+    const borderRadius = radius;
 
     if (style === "glass") {
-        const tint = mode === "dark" ? "#0f172a" : "#f8fafc";
-        const line = mode === "dark" ? "#ffffff" : "#1e3a8a";
-        return open +
-            rect(tint, ' fill-opacity="0.45"') +
-            `<rect x="1" y="1" width="${w - 2}" height="${h - 2}" rx="${radius - 1}" fill="none" stroke="${line}" stroke-opacity="0.25" stroke-width="1.5"/>` +
-            `</svg>`;
+        const tint = mode === "dark" ? ("#0f172a" as HexColor) : ("#f8fafc" as HexColor);
+        const line = mode === "dark" ? ("#ffffff" as HexColor) : ("#1e3a8a" as HexColor);
+        return {
+            backgroundColor: withAlpha(tint, 0.45),
+            borderColor: withAlpha(line, 0.25),
+            borderWidth: 1.5,
+            borderRadius,
+        } as const;
     }
     if (style === "translucentGradient") {
-        return open + gradientDef(0.55) + rect("url(#g)") + `</svg>`;
+        return {
+            backgroundGradient: {
+                from: withAlpha(t.gradientFrom, 0.55),
+                to: withAlpha(t.gradientTo, 0.55),
+                orientation: "TL_BR",
+            },
+            borderRadius,
+        } as const;
     }
-    if (style === "blurGradient") {
-        const blob = (cx: number, cy: number, r: number, color: string, id: string) =>
-            `<radialGradient id="${id}"><stop offset="0" stop-color="${color}" stop-opacity="0.55"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>`;
-        return open +
-            `<defs>` +
-            `<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
-            `<stop offset="0" stop-color="${t.gradientFrom}"/>` +
-            `<stop offset="1" stop-color="${t.gradientTo}"/>` +
-            `</linearGradient>` +
-            blob(0, 0, 0, mode === "dark" ? "#3b82f6" : "#93c5fd", "b1") +
-            blob(0, 0, 0, t.gold, "b2") +
-            `<clipPath id="clip"><rect x="0" y="0" width="${w}" height="${h}" rx="${radius}"/></clipPath>` +
-            `</defs>` +
-            rect("url(#g)") +
-            `<g clip-path="url(#clip)">` +
-            `<circle cx="${(w * 0.22).toFixed(0)}" cy="${(h * 0.15).toFixed(0)}" r="${(Math.max(w, h) * 0.5).toFixed(0)}" fill="url(#b1)"/>` +
-            `<circle cx="${(w * 0.85).toFixed(0)}" cy="${(h * 0.9).toFixed(0)}" r="${(Math.max(w, h) * 0.42).toFixed(0)}" fill="url(#b2)"/>` +
-            `</g></svg>`;
-    }
-    return open + gradientDef(1) + rect("url(#g)") + `</svg>`;
+    return {
+        backgroundGradient: { from: t.gradientFrom, to: t.gradientTo, orientation: "TL_BR" },
+        borderRadius,
+    } as const;
 };
 
-// Back-compat alias
-export const gradientBackgroundSvg = (w: number, h: number, mode: WidgetMode = "dark", radius = 20) =>
-    backgroundSvg(w, h, mode, "gradient", radius);
+// blurGradient is the one background style with no native equivalent
+// (aurora blobs need vector drawing). Same density-compensation as the
+// chart SVGs: viewBox is baked to real device pixels since the native
+// SvgWidget renderer ignores container size and density.
+export const blurGradientSvg = (w: number, h: number, mode: WidgetMode, density = 1, radius = 20) => {
+    const t = getTheme(mode);
+    const W = Math.round(w * density);
+    const H = Math.round(h * density);
+    const R = Math.round(radius * density);
+    const blob = (color: string, id: string) =>
+        `<radialGradient id="${id}"><stop offset="0" stop-color="${color}" stop-opacity="0.55"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
+        `<defs>` +
+        `<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+        `<stop offset="0" stop-color="${t.gradientFrom}"/>` +
+        `<stop offset="1" stop-color="${t.gradientTo}"/>` +
+        `</linearGradient>` +
+        blob(mode === "dark" ? "#3b82f6" : "#93c5fd", "b1") +
+        blob(t.gold, "b2") +
+        `<clipPath id="clip"><rect x="0" y="0" width="${W}" height="${H}" rx="${R}"/></clipPath>` +
+        `</defs>` +
+        `<rect x="0" y="0" width="${W}" height="${H}" rx="${R}" fill="url(#g)"/>` +
+        `<g clip-path="url(#clip)">` +
+        `<circle cx="${(W * 0.22).toFixed(0)}" cy="${(H * 0.15).toFixed(0)}" r="${(Math.max(W, H) * 0.5).toFixed(0)}" fill="url(#b1)"/>` +
+        `<circle cx="${(W * 0.85).toFixed(0)}" cy="${(H * 0.9).toFixed(0)}" r="${(Math.max(W, H) * 0.42).toFixed(0)}" fill="url(#b2)"/>` +
+        `</g></svg>`;
+};

@@ -13,13 +13,14 @@ type Props = {
     width?: number;
     height?: number;
     mode?: WidgetMode;
+    density?: number;
     updateUri?: string;
 };
 
 // Spending-over-time chart with the dashboard's variants: bar (default),
 // area, or line. The SVG is sized to the widget's real dimensions so it
 // fills the whole card and re-adapts when the widget is resized.
-export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", updateUri }: Props) => {
+export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri }: Props) => {
     const C = getTheme(mode);
     const style = config?.style ?? "bar";
     const buildSvg = style === "line" ? lineChartSvg : style === "area" ? areaChartSvg : barChartSvg;
@@ -29,10 +30,11 @@ export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 15
         w: Math.max(60, width - padding * 2),
         h: Math.max(50, height - padding * 2 - headerHeight),
         mode,
+        density,
     };
 
     return (
-        <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
+        <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
             <FlexWidget
                 style={{
                     flexDirection: "row",

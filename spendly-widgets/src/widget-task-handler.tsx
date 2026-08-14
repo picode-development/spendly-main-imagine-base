@@ -35,8 +35,12 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
     }
 
     const widgetName = props.widgetInfo.widgetName;
-    // Real widget size in dp — layouts fill it and adapt on resize
+    // Real widget size in dp — layouts fill it and adapt on resize.
+    // density compensates for the native SvgWidget renderer rasterizing
+    // content at raw viewBox numbers, ignoring both container size and
+    // device pixel density (see widgets/charts.ts).
     const { width, height } = props.widgetInfo;
+    const density = props.widgetInfo.screenInfo.density;
     const [token, baseUrl] = await Promise.all([getToken(), getBaseUrl()]);
 
     // Newer APK published? Every widget shows the gold update bar
@@ -53,7 +57,7 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
 
     if (!token) {
         props.renderWidget(themedPair((mode) => (
-            <SummaryWidget summary={null} metrics={[]} paired={false} width={width} height={height} mode={mode} updateUri={updateUri} />
+            <SummaryWidget summary={null} metrics={[]} paired={false} width={width} height={height} mode={mode} density={density} updateUri={updateUri} />
         )));
         return;
     }
@@ -74,6 +78,7 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
                 width={width}
                 height={height}
                 mode={mode}
+                density={density}
                 updateUri={updateUri}
             />
         )));
@@ -87,19 +92,19 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
 
     if (widgetName === "SpendlyChart") {
         props.renderWidget(themedPair((mode) => (
-            <ChartWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} updateUri={updateUri} />
+            <ChartWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} density={density} updateUri={updateUri} />
         )));
         return;
     }
 
     if (widgetName === "SpendlyCategories") {
         props.renderWidget(themedPair((mode) => (
-            <CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} updateUri={updateUri} />
+            <CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} width={width} height={height} mode={mode} density={density} updateUri={updateUri} />
         )));
         return;
     }
 
     props.renderWidget(themedPair((mode) => (
-        <SummaryWidget summary={summary} metrics={metrics} paired config={config} width={width} height={height} mode={mode} updateUri={updateUri} />
+        <SummaryWidget summary={summary} metrics={metrics} paired config={config} width={width} height={height} mode={mode} density={density} updateUri={updateUri} />
     )));
 }

@@ -15,6 +15,7 @@ type Props = {
     width?: number;
     height?: number;
     mode?: WidgetMode;
+    density?: number;
     updateUri?: string;
 };
 
@@ -121,12 +122,13 @@ export const SummaryWidget = ({
     width = 320,
     height = 150,
     mode = "dark",
+    density = 1,
     updateUri,
 }: Props) => {
     const COLORS = getTheme(mode);
     if (!paired) {
         return (
-            <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={DEFAULT_BASE_URL} updateUri={updateUri}>
+            <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={DEFAULT_BASE_URL} updateUri={updateUri}>
                 <FlexWidget
                     style={{
                         flex: 1,
@@ -196,9 +198,10 @@ export const SummaryWidget = ({
             w: Math.max(60, width - 26),
             h: miniChartH,
             mode,
+            density,
         };
         return (
-            <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={10} updateUri={updateUri}>
+            <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={10} updateUri={updateUri}>
                 {header}
                 <FlexWidget
                     style={{
@@ -279,7 +282,7 @@ export const SummaryWidget = ({
     }
 
     return (
-        <WidgetShell width={width} height={height} mode={mode} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={16} updateUri={updateUri}>
+        <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={16} updateUri={updateUri}>
             {header}
             {rows.length > 0 ? (
                 <FlexWidget

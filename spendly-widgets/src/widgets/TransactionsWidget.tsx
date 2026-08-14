@@ -18,6 +18,7 @@ type Props = {
     width?: number;
     height?: number;
     mode?: WidgetMode;
+    density?: number;
     updateUri?: string;
 };
 
@@ -28,11 +29,12 @@ export const TransactionsWidget = ({
     width = 320,
     height = 200,
     mode = "dark",
+    density = 1,
     updateUri,
 }: Props) => {
     const C = getTheme(mode);
     return (
-    <WidgetShell width={width} height={height} mode={mode} background={config?.background} padding={12} updateUri={updateUri}>
+    <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} padding={12} updateUri={updateUri}>
         <FlexWidget
             style={{
                 flexDirection: "row",
