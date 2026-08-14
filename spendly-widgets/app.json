@@ -2,7 +2,16 @@
   "expo": {
     "name": "Spendly Widgets",
     "slug": "picode-development",
-    "version": "1.5.0",
+    "version": "1.6.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/78f05329-5676-4306-becb-ce80c19d9f93",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,7 +22,7 @@
     },
     "android": {
       "package": "com.spendly.widgets",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "backgroundColor": "#0f172a",
         "foregroundImage": "./assets/android-icon-foreground.png"
