@@ -218,8 +218,6 @@ const app = new Hono()
             }
 
             const ctx = await getLlmContext(auth.userId);
-            // Rate-limit waits are handled inside the Groq client (it parses
-            // Groq's own "try again in Xs" from 429s and honors it)
             const extracted = await llmExtractFromImage(image, ctx, text);
             return c.json({ data: extracted });
         },
