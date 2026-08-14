@@ -42,6 +42,7 @@ import {
     setToken as storeToken,
 } from "./src/storage";
 import { Button, Card, CardTitle, Field, Hint, UI } from "./src/ui";
+import { useOtaUpdateCheck } from "./src/useOtaUpdateCheck";
 import { VoiceScreen } from "./src/VoiceScreen";
 import { ActionsWidget } from "./src/widgets/ActionsWidget";
 import { CategoriesWidget } from "./src/widgets/CategoriesWidget";
@@ -159,6 +160,7 @@ const refreshHomeScreenWidgets = async (
 };
 
 export default function App() {
+    useOtaUpdateCheck();
     const [screen, setScreen] = useState<Screen>("home");
     // Launched straight into a popup (widget button → overlay activity):
     // closing should dismiss the overlay, not navigate to the app home
