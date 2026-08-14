@@ -4,15 +4,30 @@ import { toast } from "sonner";
 
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
 import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
+import { useVoiceResultQueue, type QueuedVoiceResult } from "@/features/transactions/hooks/use-voice-result-queue";
 
 /**
  * Shared "speak the whole transaction" pipeline: sends the recording to the
  * voice endpoint and opens the matching pre-filled sheet — the transfer form
- * when the user asked to move money between accounts.
+ * when the user asked to move money between accounts. If a form sheet is
+ * already open (the user recorded a second note before saving the first),
+ * the result is queued and opens once that sheet closes.
  */
 export const useVoiceCreate = () => {
     const newTransaction = useNewTransaction();
     const newTransfer = useNewTransfer();
+
+    const deliver = (result: QueuedVoiceResult) => {
+        const sheetBusy =
+            useNewTransaction.getState().isOpen || useNewTransfer.getState().isOpen;
+        if (sheetBusy) {
+            useVoiceResultQueue.getState().enqueue(result);
+            toast.info("Got it — this one opens after you finish the current form.");
+            return;
+        }
+        if (result.kind === "transfer") newTransfer.onOpen({ prefill: result.prefill });
+        else newTransaction.onOpen({ prefill: result.prefill });
+    };
 
     return async (blob: Blob) => {
         const form = new FormData();
@@ -41,7 +56,8 @@ export const useVoiceCreate = () => {
         // "Transfer funds from X to Y" or "switch to transfer form" → the
         // transfer form, not a transaction
         if (parsed?.isTransfer || parsed?.switchTo === "transfer") {
-            newTransfer.onOpen({
+            deliver({
+                kind: "transfer",
                 prefill: {
                     date: parsed.date ? new Date(parsed.date) : undefined,
                     amount: parsed.amount != null ? String(Math.abs(parsed.amount) / 1000) : "",
@@ -53,7 +69,8 @@ export const useVoiceCreate = () => {
             return;
         }
 
-        newTransaction.onOpen({
+        deliver({
+            kind: "transaction",
             prefill: {
                 date: parsed?.date ? new Date(parsed.date) : undefined,
                 payee: parsed?.payee ?? "",

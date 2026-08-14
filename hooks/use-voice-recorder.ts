@@ -14,14 +14,18 @@ const NO_SPEECH_TIMEOUT_MS = 8000;
 
 /**
  * Tap to record, tap again to stop — or just stop talking: after speech,
- * ~2.5s of silence ends the recording automatically. `onAudio` receives the
- * finished clip; `isProcessing` is true while it runs (transcription/
- * extraction). `levels` is a live 0..1 spectrum (VOICE_BARS buckets) for
- * waveform UI.
+ * ~2.5s of silence ends the recording automatically. `toggleLock` disables
+ * the auto-stop for the current recording (for users who pause to think);
+ * a new recording always starts unlocked. Starting a new recording while a
+ * previous clip is still processing is allowed — results are handled by the
+ * caller's queue. `onAudio` receives the finished clip; `isProcessing` is
+ * true while any clip is in flight. `levels` is a live 0..1 spectrum
+ * (VOICE_BARS buckets) for waveform UI.
  */
 export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
     const [isRecording, setIsRecording] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
+    const [isLocked, setIsLocked] = useState(false);
+    const [processingCount, setProcessingCount] = useState(0);
     const [levels, setLevels] = useState<number[]>(() => Array(VOICE_BARS).fill(0));
 
     const recorderRef = useRef<MediaRecorder | null>(null);
@@ -31,6 +35,8 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
     const hasSpokenRef = useRef(false);
     const quietSinceRef = useRef<number | null>(null);
     const startedAtRef = useRef(0);
+    const lockedRef = useRef(false);
+    const isProcessing = processingCount > 0;
 
     const stopMeter = () => {
         cancelAnimationFrame(rafRef.current);
@@ -70,7 +76,12 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
                 });
                 setLevels(next);
 
-                // Silence auto-stop
+                // Silence auto-stop — suspended entirely while locked
+                if (lockedRef.current) {
+                    quietSinceRef.current = null;
+                    rafRef.current = requestAnimationFrame(tick);
+                    return;
+                }
                 const avg = next.reduce((a, v) => a + v, 0) / next.length;
                 const now = Date.now();
                 if (avg >= SPEECH_LEVEL) {
@@ -103,9 +114,17 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
         }
     };
 
-    const toggle = async () => {
-        if (isProcessing) return;
+    const toggleLock = () => {
+        setIsLocked((locked) => {
+            lockedRef.current = !locked;
+            if (lockedRef.current) quietSinceRef.current = null;
+            return !locked;
+        });
+    };
 
+    // Starting while a previous clip is processing is fine — each recording
+    // gets its own recorder, and processingCount tracks the in-flight clips.
+    const toggle = async () => {
         if (isRecording) {
             recorderRef.current?.stop();
             return;
@@ -125,26 +144,34 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
                 ? "audio/webm"
                 : undefined;
             const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-            chunksRef.current = [];
+
+            // Each recording owns its chunk list so an overlapping "start
+            // while previous clip is processing" can't mix audio
+            const chunks: Blob[] = [];
+            chunksRef.current = chunks;
 
             recorder.ondataavailable = (e) => {
-                if (e.data.size > 0) chunksRef.current.push(e.data);
+                if (e.data.size > 0) chunks.push(e.data);
             };
             recorder.onstop = async () => {
                 stream.getTracks().forEach((track) => track.stop());
                 stopMeter();
                 setIsRecording(false);
-                setIsProcessing(true);
+                setIsLocked(false);
+                lockedRef.current = false;
+                setProcessingCount((n) => n + 1);
                 try {
-                    await onAudio(new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }));
+                    await onAudio(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
                 } finally {
-                    setIsProcessing(false);
+                    setProcessingCount((n) => n - 1);
                 }
             };
 
             recorderRef.current = recorder;
             hasSpokenRef.current = false;
             quietSinceRef.current = null;
+            lockedRef.current = false;
+            setIsLocked(false);
             startedAtRef.current = Date.now();
             recorder.start();
             startMeter(stream);
@@ -154,5 +181,5 @@ export const useVoiceRecorder = (onAudio: (blob: Blob) => Promise<void>) => {
         }
     };
 
-    return { isRecording, isProcessing, levels, toggle };
+    return { isRecording, isProcessing, isLocked, levels, toggle, toggleLock };
 };
