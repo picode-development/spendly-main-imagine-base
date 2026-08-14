@@ -1,4 +1,4 @@
-import { WidgetSummary } from "./config";
+import { WidgetSummary, WidgetTransaction } from "./config";
 
 const withTimeout = (ms: number) => {
     const controller = new AbortController();
@@ -41,6 +41,28 @@ export const fetchSummary = async (
         if (!res.ok) return null;
         const { data } = await res.json();
         return data as WidgetSummary;
+    } catch {
+        return null;
+    } finally {
+        t.done();
+    }
+};
+
+export const fetchTransactions = async (
+    baseUrl: string,
+    token: string,
+    limit = 10,
+    timeoutMs = 10_000,
+): Promise<WidgetTransaction[] | null> => {
+    const t = withTimeout(timeoutMs);
+    try {
+        const res = await fetch(
+            `${baseUrl}/api/widget/transactions?token=${encodeURIComponent(token)}&limit=${limit}`,
+            { signal: t.signal },
+        );
+        if (!res.ok) return null;
+        const { data } = await res.json();
+        return data as WidgetTransaction[];
     } catch {
         return null;
     } finally {

@@ -29,12 +29,45 @@
           "widgets": [
             {
               "name": "SpendlySummary",
-              "label": "Spendly",
+              "label": "Spendly Summary",
               "description": "Today's spend, month total, and balance from Spendly",
               "minWidth": "250dp",
               "minHeight": "110dp",
               "targetCellWidth": 4,
               "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            },
+            {
+              "name": "SpendlyActions",
+              "label": "Spendly Quick Actions",
+              "description": "Add a transaction by form, voice, or photo in one tap",
+              "minWidth": "250dp",
+              "minHeight": "70dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 1,
+              "resizeMode": "horizontal",
+              "updatePeriodMillis": 0
+            },
+            {
+              "name": "SpendlyChart",
+              "label": "Spendly Chart",
+              "description": "Your last 7 days of spending at a glance",
+              "minWidth": "250dp",
+              "minHeight": "140dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            },
+            {
+              "name": "SpendlyTransactions",
+              "label": "Spendly Transactions",
+              "description": "Your latest transactions, scrollable",
+              "minWidth": "250dp",
+              "minHeight": "180dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 3,
               "resizeMode": "horizontal|vertical",
               "updatePeriodMillis": 1800000
             }

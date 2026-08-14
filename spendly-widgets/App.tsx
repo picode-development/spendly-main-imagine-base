@@ -12,13 +12,13 @@ import {
     View,
 } from "react-native";
 import { requestWidgetUpdate } from "react-native-android-widget";
-import { fetchSummary, pair } from "./src/api";
+import { fetchSummary, fetchTransactions, pair } from "./src/api";
 import {
     ALL_METRICS,
     DEFAULT_BASE_URL,
     MetricKey,
-    WIDGET_NAME,
     WidgetSummary,
+    WidgetTransaction,
 } from "./src/config";
 import { formatINR } from "./src/format";
 import {
@@ -28,10 +28,14 @@ import {
     getToken,
     setBaseUrl as storeBaseUrl,
     setCachedSummary,
+    setCachedTransactions,
     setMetrics as storeMetrics,
     setToken as storeToken,
 } from "./src/storage";
+import { ActionsWidget } from "./src/widgets/ActionsWidget";
+import { ChartWidget } from "./src/widgets/ChartWidget";
 import { SummaryWidget } from "./src/widgets/SummaryWidget";
+import { TransactionsWidget } from "./src/widgets/TransactionsWidget";
 
 const COLORS = {
     bg: "#0f172a",
@@ -43,14 +47,36 @@ const COLORS = {
     danger: "#f87171",
 };
 
-const refreshHomeScreenWidget = (summary: WidgetSummary | null, metrics: MetricKey[], paired: boolean) =>
-    requestWidgetUpdate({
-        widgetName: WIDGET_NAME,
-        renderWidget: () => <SummaryWidget summary={summary} metrics={metrics} paired={paired} />,
-        widgetNotFound: () => {
-            // No widget on the home screen yet — nothing to draw
-        },
-    });
+// Push fresh renders to every widget variant on the home screen
+const refreshHomeScreenWidgets = (
+    summary: WidgetSummary | null,
+    transactions: WidgetTransaction[] | null,
+    metrics: MetricKey[],
+    paired: boolean,
+    baseUrl: string,
+) => {
+    const renderers = {
+        SpendlySummary: () => (
+            <SummaryWidget summary={summary} metrics={paired ? metrics : []} paired={paired} />
+        ),
+        SpendlyActions: () => <ActionsWidget baseUrl={baseUrl} />,
+        SpendlyChart: () => <ChartWidget summary={paired ? summary : null} baseUrl={baseUrl} />,
+        SpendlyTransactions: () => (
+            <TransactionsWidget transactions={paired ? transactions : null} baseUrl={baseUrl} />
+        ),
+    };
+    return Promise.all(
+        Object.entries(renderers).map(([widgetName, renderWidget]) =>
+            requestWidgetUpdate({
+                widgetName,
+                renderWidget,
+                widgetNotFound: () => {
+                    // This variant isn't on the home screen — nothing to draw
+                },
+            }),
+        ),
+    );
+};
 
 export default function App() {
     const [loading, setLoading] = useState(true);
@@ -59,17 +85,25 @@ export default function App() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [summary, setSummary] = useState<WidgetSummary | null>(null);
+    const [transactions, setTransactions] = useState<WidgetTransaction[] | null>(null);
     const [metrics, setMetrics] = useState<MetricKey[]>(["today", "month", "balance"]);
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
 
     const loadSummary = useCallback(async (url: string, tok: string) => {
-        const data = await fetchSummary(url, tok);
+        const [data, rows] = await Promise.all([
+            fetchSummary(url, tok),
+            fetchTransactions(url, tok),
+        ]);
         if (data) {
             setSummary(data);
             await setCachedSummary(data);
         }
-        return data;
+        if (rows) {
+            setTransactions(rows);
+            await setCachedTransactions(rows);
+        }
+        return { summary: data, transactions: rows };
     }, []);
 
     useEffect(() => {
@@ -101,7 +135,7 @@ export default function App() {
         await Promise.all([storeToken(normalized), storeBaseUrl(url)]);
         setToken(normalized);
         const fresh = await loadSummary(url, normalized);
-        await refreshHomeScreenWidget(fresh, metrics, true);
+        await refreshHomeScreenWidgets(fresh.summary, fresh.transactions, metrics, true, url);
         setBusy(false);
     };
 
@@ -109,8 +143,9 @@ export default function App() {
         await clearAll();
         setToken(null);
         setSummary(null);
+        setTransactions(null);
         setCode("");
-        await refreshHomeScreenWidget(null, [], false);
+        await refreshHomeScreenWidgets(null, null, [], false, baseUrl);
     };
 
     const toggleMetric = async (key: MetricKey, enabled: boolean) => {
@@ -121,14 +156,20 @@ export default function App() {
         const ordered = ALL_METRICS.map((m) => m.key).filter((k) => next.includes(k));
         setMetrics(ordered);
         await storeMetrics(ordered);
-        await refreshHomeScreenWidget(summary, ordered, true);
+        await refreshHomeScreenWidgets(summary, transactions, ordered, true, baseUrl);
     };
 
     const handleRefresh = async () => {
         if (!token) return;
         setBusy(true);
         const fresh = await loadSummary(baseUrl, token);
-        await refreshHomeScreenWidget(fresh ?? summary, metrics, true);
+        await refreshHomeScreenWidgets(
+            fresh.summary ?? summary,
+            fresh.transactions ?? transactions,
+            metrics,
+            true,
+            baseUrl,
+        );
         setBusy(false);
     };
 
@@ -237,8 +278,9 @@ export default function App() {
                             </View>
                         ))}
                         <Text style={styles.hint}>
-                            Add the Spendly widget from your launcher's widget picker. It
-                            refreshes about every 30 minutes, and instantly when you open
+                            Four widgets are available in your launcher's widget picker:
+                            Summary, Quick Actions, Chart, and Recent Transactions. They
+                            refresh about every 30 minutes, and instantly when you open
                             this app.
                         </Text>
                     </View>

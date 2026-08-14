@@ -1,6 +1,6 @@
 import React from "react";
 import { FlexWidget, TextWidget } from "react-native-android-widget";
-import { MetricKey, WidgetSummary } from "../config";
+import { DEFAULT_BASE_URL, MetricKey, WidgetSummary } from "../config";
 import { formatINR, formatTime } from "../format";
 
 const COLORS = {
@@ -74,7 +74,7 @@ export const SummaryWidget = ({ summary, metrics, paired }: Props) => {
     return (
         <FlexWidget
             clickAction="OPEN_URI"
-            clickActionData={{ uri: "https://spendly-main-v2-1.vercel.app" }}
+            clickActionData={{ uri: DEFAULT_BASE_URL }}
             style={{
                 height: "match_parent",
                 width: "match_parent",

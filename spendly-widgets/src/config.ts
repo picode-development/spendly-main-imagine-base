@@ -4,6 +4,15 @@ export const DEFAULT_BASE_URL = "https://spendly-main-v2-1.vercel.app";
 
 export const WIDGET_NAME = "SpendlySummary";
 
+// Every widget the app ships — pairing/refresh pushes fresh data to all
+export const ALL_WIDGET_NAMES = [
+    "SpendlySummary",
+    "SpendlyActions",
+    "SpendlyChart",
+    "SpendlyTransactions",
+] as const;
+export type WidgetName = (typeof ALL_WIDGET_NAMES)[number];
+
 export type MetricKey = "today" | "month" | "balance";
 
 export const ALL_METRICS: { key: MetricKey; label: string }[] = [
@@ -20,5 +29,18 @@ export type WidgetSummary = {
     monthIncome: number;
     totalBalance: number;
     accounts: { name: string; balance: number }[];
+    /** Last 7 days (oldest first), zero-filled */
+    days: { date: string; expenses: number }[];
+    /** This month's top spending categories + "Other" */
+    topCategories: { name: string; value: number }[];
     asOf: string;
+};
+
+export type WidgetTransaction = {
+    id: string;
+    payee: string;
+    amount: number;
+    date: string;
+    category: string | null;
+    account: string;
 };
