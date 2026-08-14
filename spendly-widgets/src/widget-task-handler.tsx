@@ -13,6 +13,7 @@ import {
     setCachedTransactions,
 } from "./storage";
 import { ActionsWidget } from "./widgets/ActionsWidget";
+import { CategoriesWidget } from "./widgets/CategoriesWidget";
 import { ChartWidget } from "./widgets/ChartWidget";
 import { SummaryWidget } from "./widgets/SummaryWidget";
 import { TransactionsWidget } from "./widgets/TransactionsWidget";
@@ -69,7 +70,12 @@ export async function widgetTaskHandler(props: WidgetTaskHandlerProps) {
     const summary = freshSummary ?? (config ? null : cachedSummary);
 
     if (widgetName === "SpendlyChart") {
-        props.renderWidget(<ChartWidget summary={summary} baseUrl={baseUrl} />);
+        props.renderWidget(<ChartWidget summary={summary} baseUrl={baseUrl} config={config} />);
+        return;
+    }
+
+    if (widgetName === "SpendlyCategories") {
+        props.renderWidget(<CategoriesWidget summary={summary} baseUrl={baseUrl} config={config} />);
         return;
     }
 

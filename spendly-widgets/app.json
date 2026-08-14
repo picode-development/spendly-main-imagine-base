@@ -2,6 +2,7 @@
   "expo": {
     "name": "Spendly Widgets",
     "slug": "picode-development",
+    "scheme": "spendlywidgets",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -63,6 +64,18 @@
               "widgetFeatures": "reconfigurable|configuration_optional"
             },
             {
+              "name": "SpendlyCategories",
+              "label": "Spendly Categories",
+              "description": "Where your money went — category split like the dashboard",
+              "minWidth": "250dp",
+              "minHeight": "140dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000,
+              "widgetFeatures": "reconfigurable|configuration_optional"
+            },
+            {
               "name": "SpendlyTransactions",
               "label": "Spendly Transactions",
               "description": "Your latest transactions, scrollable",
@@ -76,7 +89,8 @@
             }
           ]
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "eas": {

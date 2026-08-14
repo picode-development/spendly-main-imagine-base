@@ -1,18 +1,13 @@
-import React, { useEffect, useState } from "react";
-import {
-    ActivityIndicator,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { WidgetConfigurationScreenProps } from "react-native-android-widget";
+import { WidgetPreview } from "react-native-android-widget";
 import { fetchSummary, fetchTransactions, pair } from "./api";
 import {
-    DEFAULT_INSTANCE_CONFIG,
+    WIDGET_STYLES,
     WidgetInstanceConfig,
+    WidgetSummary,
+    WidgetTransaction,
 } from "./config";
 import {
     getBaseUrl,
@@ -21,32 +16,35 @@ import {
     getToken,
     setInstanceConfig,
 } from "./storage";
+import { Button, Card, CardTitle, Field, Hint, Select, UI } from "./ui";
+import { CategoriesWidget } from "./widgets/CategoriesWidget";
 import { ChartWidget } from "./widgets/ChartWidget";
 import { SummaryWidget } from "./widgets/SummaryWidget";
 import { TransactionsWidget } from "./widgets/TransactionsWidget";
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    border: "#334155",
-    label: "#94a3b8",
-    text: "#f8fafc",
-    accent: "#3b82f6",
-    danger: "#f87171",
-};
+const SCOPE_OPTIONS = [
+    { value: "week", label: "Last 7 days" },
+    { value: "month", label: "This month" },
+    { value: "all", label: "All time" },
+    { value: "custom", label: "Custom date range" },
+];
 
-const SCOPES: { key: WidgetInstanceConfig["scope"]; label: string }[] = [
-    { key: "week", label: "Last 7 days" },
-    { key: "month", label: "This month" },
-    { key: "all", label: "All time" },
-    { key: "custom", label: "Date range" },
+const DIRECTION_OPTIONS = [
+    { value: "all", label: "Everything" },
+    { value: "income", label: "Income only" },
+    { value: "expense", label: "Expenses only" },
+];
+
+const SORT_OPTIONS = [
+    { value: "date", label: "Newest first" },
+    { value: "amount", label: "Biggest first" },
 ];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Android widget configuration screen: opens when a configurable widget is
-// added or long-press → reconfigured. Saves per-widgetId settings, redraws
-// that one widget, and finishes.
+// added or long-press → reconfigured. Shows a live preview, saves
+// per-widgetId settings, redraws that one widget, and finishes.
 export const ConfigScreen = ({
     widgetInfo,
     renderWidget,
@@ -55,8 +53,12 @@ export const ConfigScreen = ({
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [paired, setPaired] = useState(true);
+    const [baseUrl, setBaseUrl] = useState("");
+    const [token, setToken] = useState<string | null>(null);
+    const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof getMetrics>>>([]);
     const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
     const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+
     const [scope, setScope] = useState<WidgetInstanceConfig["scope"]>("week");
     const [from, setFrom] = useState("");
     const [to, setTo] = useState("");
@@ -64,21 +66,47 @@ export const ConfigScreen = ({
     const [categoryId, setCategoryId] = useState<string | undefined>(undefined);
     const [direction, setDirection] = useState<NonNullable<WidgetInstanceConfig["direction"]>>("all");
     const [sort, setSort] = useState<NonNullable<WidgetInstanceConfig["sort"]>>("date");
+    const [style, setStyle] = useState<string | undefined>(undefined);
 
-    const isTransactionsWidget = widgetInfo.widgetName === "SpendlyTransactions";
+    const [previewSummary, setPreviewSummary] = useState<WidgetSummary | null>(null);
+    const [previewRows, setPreviewRows] = useState<WidgetTransaction[] | null>(null);
+
+    const widgetName = widgetInfo.widgetName;
+    const isTransactionsWidget = widgetName === "SpendlyTransactions";
+    const styleOptions = WIDGET_STYLES[widgetName] ?? [];
+
+    const customValid =
+        scope !== "custom" || (DATE_RE.test(from) && DATE_RE.test(to) && from <= to);
+
+    const draftConfig = useMemo((): WidgetInstanceConfig => ({
+        scope,
+        from: scope === "custom" && DATE_RE.test(from) ? from : undefined,
+        to: scope === "custom" && DATE_RE.test(to) ? to : undefined,
+        accountId,
+        accountName: accounts.find((a) => a.id === accountId)?.name,
+        categoryId,
+        categoryName: categories.find((c) => c.id === categoryId)?.name,
+        direction: isTransactionsWidget && direction !== "all" ? direction : undefined,
+        sort: isTransactionsWidget && sort !== "date" ? sort : undefined,
+        style,
+    }), [scope, from, to, accountId, categoryId, direction, sort, style, accounts, categories, isTransactionsWidget]);
 
     useEffect(() => {
         (async () => {
-            const [token, baseUrl, existing] = await Promise.all([
+            const [storedToken, storedUrl, existing, storedMetrics] = await Promise.all([
                 getToken(),
                 getBaseUrl(),
                 getInstanceConfig(widgetInfo.widgetId),
+                getMetrics(),
             ]);
-            if (!token) {
+            setBaseUrl(storedUrl);
+            setMetrics(storedMetrics);
+            if (!storedToken) {
                 setPaired(false);
                 setLoading(false);
                 return;
             }
+            setToken(storedToken);
             if (existing) {
                 setScope(existing.scope);
                 setFrom(existing.from ?? "");
@@ -87,8 +115,9 @@ export const ConfigScreen = ({
                 setCategoryId(existing.categoryId);
                 setDirection(existing.direction ?? "all");
                 setSort(existing.sort ?? "date");
+                setStyle(existing.style);
             }
-            const result = await pair(baseUrl, token);
+            const result = await pair(storedUrl, storedToken);
             if (result.ok) {
                 setAccounts(result.accounts);
                 setCategories(result.categories);
@@ -97,42 +126,50 @@ export const ConfigScreen = ({
         })();
     }, [widgetInfo.widgetId]);
 
-    const customValid =
-        scope !== "custom" ||
-        (DATE_RE.test(from) && DATE_RE.test(to) && from <= to);
+    // Live preview data: refetch when scope-affecting fields settle
+    useEffect(() => {
+        if (!token || !baseUrl || !customValid) return;
+        const timer = setTimeout(async () => {
+            if (isTransactionsWidget) {
+                setPreviewRows(await fetchTransactions(baseUrl, token, draftConfig));
+            } else {
+                setPreviewSummary(await fetchSummary(baseUrl, token, draftConfig));
+            }
+        }, 350);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [token, baseUrl, scope, from, to, accountId, categoryId, direction, sort, customValid]);
+
+    const renderPreviewWidget = useCallback(() => {
+        switch (widgetName) {
+            case "SpendlyChart":
+                return <ChartWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} />;
+            case "SpendlyCategories":
+                return <CategoriesWidget summary={previewSummary} baseUrl={baseUrl} config={draftConfig} />;
+            case "SpendlyTransactions":
+                return <TransactionsWidget transactions={previewRows} baseUrl={baseUrl} config={draftConfig} />;
+            default:
+                return <SummaryWidget summary={previewSummary} metrics={metrics} paired config={draftConfig} />;
+        }
+    }, [widgetName, previewSummary, previewRows, baseUrl, draftConfig, metrics]);
 
     const handleSave = async () => {
         setSaving(true);
-        const config: WidgetInstanceConfig = {
-            scope,
-            from: scope === "custom" ? from : undefined,
-            to: scope === "custom" ? to : undefined,
-            accountId,
-            accountName: accounts.find((a) => a.id === accountId)?.name,
-            categoryId,
-            categoryName: categories.find((cat) => cat.id === categoryId)?.name,
-            direction: isTransactionsWidget && direction !== "all" ? direction : undefined,
-            sort: isTransactionsWidget && sort !== "date" ? sort : undefined,
-        };
-        await setInstanceConfig(widgetInfo.widgetId, config);
-
-        const [token, baseUrl, metrics] = await Promise.all([
-            getToken(),
-            getBaseUrl(),
-            getMetrics(),
-        ]);
+        await setInstanceConfig(widgetInfo.widgetId, draftConfig);
         if (token) {
             if (isTransactionsWidget) {
-                const rows = await fetchTransactions(baseUrl, token, config);
+                const rows = await fetchTransactions(baseUrl, token, draftConfig);
                 renderWidget(
-                    <TransactionsWidget transactions={rows} baseUrl={baseUrl} config={config} />,
+                    <TransactionsWidget transactions={rows} baseUrl={baseUrl} config={draftConfig} />,
                 );
             } else {
-                const summary = await fetchSummary(baseUrl, token, config);
+                const summary = await fetchSummary(baseUrl, token, draftConfig);
                 renderWidget(
-                    widgetInfo.widgetName === "SpendlyChart"
-                        ? <ChartWidget summary={summary} baseUrl={baseUrl} />
-                        : <SummaryWidget summary={summary} metrics={metrics} paired config={config} />,
+                    widgetName === "SpendlyChart"
+                        ? <ChartWidget summary={summary} baseUrl={baseUrl} config={draftConfig} />
+                        : widgetName === "SpendlyCategories"
+                            ? <CategoriesWidget summary={summary} baseUrl={baseUrl} config={draftConfig} />
+                            : <SummaryWidget summary={summary} metrics={metrics} paired config={draftConfig} />,
                 );
             }
         }
@@ -142,22 +179,20 @@ export const ConfigScreen = ({
     if (loading) {
         return (
             <View style={[styles.screen, styles.center]}>
-                <ActivityIndicator color={COLORS.accent} />
+                <ActivityIndicator color={UI.accent} />
             </View>
         );
     }
 
     if (!paired) {
         return (
-            <View style={[styles.screen, styles.center, { padding: 24 }]}>
+            <View style={[styles.screen, styles.center, { padding: 24, gap: 12 }]}>
                 <Text style={styles.title}>Not paired yet</Text>
-                <Text style={styles.hint}>
-                    Open the Spendly Widgets app first and enter your pairing code,
-                    then add the widget again.
-                </Text>
-                <Pressable style={styles.button} onPress={() => setResult("cancel")}>
-                    <Text style={styles.buttonText}>Close</Text>
-                </Pressable>
+                <Hint>
+                    Open the Spendly Widgets app first and enter your pairing code, then
+                    add the widget again.
+                </Hint>
+                <Button onPress={() => setResult("cancel")}>Close</Button>
             </View>
         );
     }
@@ -165,193 +200,103 @@ export const ConfigScreen = ({
     return (
         <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
             <Text style={styles.title}>Widget settings</Text>
-            <Text style={styles.hint}>
-                Applies only to this widget — every widget you add can have its own
-                view.
-            </Text>
+            <Hint>
+                Applies only to this widget — every copy you add can have its own view.
+            </Hint>
 
-            <View style={styles.card}>
-                <Text style={styles.cardTitle}>Time period</Text>
-                <View style={styles.chipRow}>
-                    {SCOPES.map((s) => (
-                        <Pressable
-                            key={s.key}
-                            onPress={() => setScope(s.key)}
-                            style={[styles.chip, scope === s.key && styles.chipActive]}
-                        >
-                            <Text style={[styles.chipText, scope === s.key && styles.chipTextActive]}>
-                                {s.label}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </View>
+            <View style={styles.previewWrap}>
+                <WidgetPreview
+                    renderWidget={renderPreviewWidget}
+                    width={320}
+                    height={widgetName === "SpendlyTransactions" ? 220 : 150}
+                />
+            </View>
+
+            {styleOptions.length > 0 && (
+                <Card>
+                    <CardTitle>Style</CardTitle>
+                    <Select
+                        value={style ?? styleOptions[0]?.key}
+                        options={styleOptions.map((s) => ({ value: s.key, label: s.label }))}
+                        onChange={setStyle}
+                    />
+                </Card>
+            )}
+
+            <Card>
+                <CardTitle>Time period</CardTitle>
+                <Select
+                    value={scope}
+                    options={SCOPE_OPTIONS}
+                    onChange={(v) => setScope(v as WidgetInstanceConfig["scope"])}
+                />
                 {scope === "custom" && (
                     <View style={{ gap: 8 }}>
-                        <TextInput
-                            style={styles.input}
+                        <Field
                             value={from}
                             onChangeText={setFrom}
                             placeholder="From (YYYY-MM-DD)"
-                            placeholderTextColor={COLORS.border}
                             autoCapitalize="none"
                         />
-                        <TextInput
-                            style={styles.input}
+                        <Field
                             value={to}
                             onChangeText={setTo}
                             placeholder="To (YYYY-MM-DD)"
-                            placeholderTextColor={COLORS.border}
                             autoCapitalize="none"
                         />
-                        <Text style={styles.hint}>
-                            Use the same date in both fields for a single day.
-                        </Text>
+                        <Hint>Use the same date in both fields for a single day.</Hint>
                     </View>
                 )}
-            </View>
+            </Card>
 
-            <View style={styles.card}>
-                <Text style={styles.cardTitle}>Account</Text>
-                <View style={styles.chipRow}>
-                    <Pressable
-                        onPress={() => setAccountId(undefined)}
-                        style={[styles.chip, !accountId && styles.chipActive]}
-                    >
-                        <Text style={[styles.chipText, !accountId && styles.chipTextActive]}>
-                            All accounts
-                        </Text>
-                    </Pressable>
-                    {accounts.map((a) => (
-                        <Pressable
-                            key={a.id}
-                            onPress={() => setAccountId(a.id)}
-                            style={[styles.chip, accountId === a.id && styles.chipActive]}
-                        >
-                            <Text style={[styles.chipText, accountId === a.id && styles.chipTextActive]}>
-                                {a.name.trim()}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </View>
-            </View>
+            <Card>
+                <CardTitle>Filters</CardTitle>
+                <Select
+                    value={accountId ?? "__all__"}
+                    options={[
+                        { value: "__all__", label: "All accounts" },
+                        ...accounts.map((a) => ({ value: a.id, label: a.name.trim() })),
+                    ]}
+                    onChange={(v) => setAccountId(v === "__all__" ? undefined : v)}
+                />
+                <Select
+                    value={categoryId ?? "__all__"}
+                    options={[
+                        { value: "__all__", label: "All categories" },
+                        ...categories.map((c) => ({ value: c.id, label: c.name.trim() })),
+                    ]}
+                    onChange={(v) => setCategoryId(v === "__all__" ? undefined : v)}
+                />
+                {isTransactionsWidget && (
+                    <>
+                        <Select
+                            value={direction}
+                            options={DIRECTION_OPTIONS}
+                            onChange={(v) => setDirection(v as typeof direction)}
+                        />
+                        <Select
+                            value={sort}
+                            options={SORT_OPTIONS}
+                            onChange={(v) => setSort(v as typeof sort)}
+                        />
+                    </>
+                )}
+            </Card>
 
-            <View style={styles.card}>
-                <Text style={styles.cardTitle}>Category</Text>
-                <View style={styles.chipRow}>
-                    <Pressable
-                        onPress={() => setCategoryId(undefined)}
-                        style={[styles.chip, !categoryId && styles.chipActive]}
-                    >
-                        <Text style={[styles.chipText, !categoryId && styles.chipTextActive]}>
-                            All categories
-                        </Text>
-                    </Pressable>
-                    {categories.map((cat) => (
-                        <Pressable
-                            key={cat.id}
-                            onPress={() => setCategoryId(cat.id)}
-                            style={[styles.chip, categoryId === cat.id && styles.chipActive]}
-                        >
-                            <Text style={[styles.chipText, categoryId === cat.id && styles.chipTextActive]}>
-                                {cat.name.trim()}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </View>
-            </View>
-
-            {isTransactionsWidget && (
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Show</Text>
-                    <View style={styles.chipRow}>
-                        {([
-                            ["all", "Everything"],
-                            ["income", "Income only"],
-                            ["expense", "Expenses only"],
-                        ] as const).map(([key, label]) => (
-                            <Pressable
-                                key={key}
-                                onPress={() => setDirection(key)}
-                                style={[styles.chip, direction === key && styles.chipActive]}
-                            >
-                                <Text style={[styles.chipText, direction === key && styles.chipTextActive]}>
-                                    {label}
-                                </Text>
-                            </Pressable>
-                        ))}
-                    </View>
-                    <Text style={styles.cardTitle}>Order</Text>
-                    <View style={styles.chipRow}>
-                        {([
-                            ["date", "Newest first"],
-                            ["amount", "Biggest first"],
-                        ] as const).map(([key, label]) => (
-                            <Pressable
-                                key={key}
-                                onPress={() => setSort(key)}
-                                style={[styles.chip, sort === key && styles.chipActive]}
-                            >
-                                <Text style={[styles.chipText, sort === key && styles.chipTextActive]}>
-                                    {label}
-                                </Text>
-                            </Pressable>
-                        ))}
-                    </View>
-                </View>
-            )}
-
-            <Pressable
-                style={[styles.button, (!customValid || saving) && styles.buttonDisabled]}
-                disabled={!customValid || saving}
-                onPress={handleSave}
-            >
-                {saving
-                    ? <ActivityIndicator color={COLORS.text} />
-                    : <Text style={styles.buttonText}>Save</Text>}
-            </Pressable>
-            <Pressable onPress={() => setResult("cancel")} disabled={saving}>
-                <Text style={styles.cancel}>Cancel</Text>
-            </Pressable>
+            <Button onPress={handleSave} disabled={!customValid || saving}>
+                {saving ? "Saving…" : "Save"}
+            </Button>
+            <Button variant="ghost" onPress={() => setResult("cancel")} disabled={saving}>
+                Cancel
+            </Button>
         </ScrollView>
     );
 };
 
 const styles = StyleSheet.create({
-    screen: { flex: 1, backgroundColor: COLORS.bg },
+    screen: { flex: 1, backgroundColor: UI.bg },
     center: { alignItems: "center", justifyContent: "center" },
     content: { padding: 20, paddingTop: 48, gap: 14 },
-    title: { color: COLORS.text, fontSize: 22, fontWeight: "700" },
-    card: { backgroundColor: COLORS.card, borderRadius: 16, padding: 16, gap: 10 },
-    cardTitle: { color: COLORS.text, fontSize: 15, fontWeight: "600" },
-    hint: { color: COLORS.label, fontSize: 13, lineHeight: 18 },
-    chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-    chip: {
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        borderRadius: 999,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-    },
-    chipActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-    chipText: { color: COLORS.label, fontSize: 13 },
-    chipTextActive: { color: COLORS.text, fontWeight: "600" },
-    input: {
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        borderRadius: 10,
-        color: COLORS.text,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        fontSize: 15,
-    },
-    button: {
-        backgroundColor: COLORS.accent,
-        borderRadius: 10,
-        paddingVertical: 12,
-        alignItems: "center",
-        marginTop: 4,
-    },
-    buttonDisabled: { opacity: 0.5 },
-    buttonText: { color: COLORS.text, fontSize: 15, fontWeight: "600" },
-    cancel: { color: COLORS.label, fontSize: 14, textAlign: "center", paddingVertical: 8 },
+    title: { color: UI.text, fontSize: 22, fontWeight: "700" },
+    previewWrap: { alignItems: "center", marginVertical: 4 },
 });

@@ -8,10 +8,9 @@ import {
     StyleSheet,
     Switch,
     Text,
-    TextInput,
     View,
 } from "react-native";
-import { requestWidgetUpdate } from "react-native-android-widget";
+import { requestWidgetUpdate, WidgetPreview } from "react-native-android-widget";
 import { fetchSummary, fetchTransactions, pair } from "./src/api";
 import {
     ALL_METRICS,
@@ -21,6 +20,7 @@ import {
     WidgetTransaction,
 } from "./src/config";
 import { formatINR } from "./src/format";
+import { SearchScreen } from "./src/SearchScreen";
 import {
     clearAll,
     getBaseUrl,
@@ -33,19 +33,21 @@ import {
     setMetrics as storeMetrics,
     setToken as storeToken,
 } from "./src/storage";
+import { Button, Card, CardTitle, Field, Hint, UI } from "./src/ui";
+import { VoiceScreen } from "./src/VoiceScreen";
 import { ActionsWidget } from "./src/widgets/ActionsWidget";
+import { CategoriesWidget } from "./src/widgets/CategoriesWidget";
 import { ChartWidget } from "./src/widgets/ChartWidget";
 import { SummaryWidget } from "./src/widgets/SummaryWidget";
 import { TransactionsWidget } from "./src/widgets/TransactionsWidget";
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    border: "#334155",
-    label: "#94a3b8",
-    text: "#f8fafc",
-    accent: "#3b82f6",
-    danger: "#f87171",
+type Screen = "home" | "search" | "voice";
+
+const screenFromUrl = (url: string | null): Screen => {
+    if (!url) return "home";
+    if (url.includes("voice")) return "voice";
+    if (url.includes("search")) return "search";
+    return "home";
 };
 
 // Push fresh renders to every widget variant on the home screen. Instances
@@ -62,7 +64,7 @@ const refreshHomeScreenWidgets = async (
 
     const scopedSummary = async (widgetId: number) => {
         const config = await getInstanceConfig(widgetId);
-        if (!config || !token || !paired) return { config: null, summary: paired ? summary : null };
+        if (!config || !token || !paired) return { config: config ?? null, summary: paired ? summary : null };
         return { config, summary: await fetchSummary(baseUrl, token, config) };
     };
 
@@ -81,7 +83,11 @@ const refreshHomeScreenWidgets = async (
         SpendlyActions: () => <ActionsWidget baseUrl={baseUrl} />,
         SpendlyChart: async (info) => {
             const scoped = await scopedSummary(info.widgetId);
-            return <ChartWidget summary={scoped.summary} baseUrl={baseUrl} />;
+            return <ChartWidget summary={scoped.summary} baseUrl={baseUrl} config={scoped.config} />;
+        },
+        SpendlyCategories: async (info) => {
+            const scoped = await scopedSummary(info.widgetId);
+            return <CategoriesWidget summary={scoped.summary} baseUrl={baseUrl} config={scoped.config} />;
         },
         SpendlyTransactions: async (info) => {
             const config = await getInstanceConfig(info.widgetId);
@@ -105,6 +111,7 @@ const refreshHomeScreenWidgets = async (
 };
 
 export default function App() {
+    const [screen, setScreen] = useState<Screen>("home");
     const [loading, setLoading] = useState(true);
     const [token, setToken] = useState<string | null>(null);
     const [code, setCode] = useState("");
@@ -134,17 +141,21 @@ export default function App() {
 
     useEffect(() => {
         (async () => {
-            const [storedToken, storedMetrics, storedUrl] = await Promise.all([
+            const [storedToken, storedMetrics, storedUrl, initialUrl] = await Promise.all([
                 getToken(),
                 getMetrics(),
                 getBaseUrl(),
+                Linking.getInitialURL(),
             ]);
             setMetrics(storedMetrics);
             setBaseUrl(storedUrl);
             setToken(storedToken);
+            setScreen(screenFromUrl(initialUrl));
             setLoading(false);
             if (storedToken) void loadSummary(storedUrl, storedToken);
         })();
+        const sub = Linking.addEventListener("url", ({ url }) => setScreen(screenFromUrl(url)));
+        return () => sub.remove();
     }, [loadSummary]);
 
     const handlePair = async () => {
@@ -175,9 +186,7 @@ export default function App() {
     };
 
     const toggleMetric = async (key: MetricKey, enabled: boolean) => {
-        const next = enabled
-            ? [...metrics, key]
-            : metrics.filter((m) => m !== key);
+        const next = enabled ? [...metrics, key] : metrics.filter((m) => m !== key);
         if (next.length === 0) return; // keep at least one number on the widget
         const ordered = ALL_METRICS.map((m) => m.key).filter((k) => next.includes(k));
         setMetrics(ordered);
@@ -202,76 +211,73 @@ export default function App() {
     if (loading) {
         return (
             <View style={[styles.screen, styles.center]}>
-                <ActivityIndicator color={COLORS.accent} />
+                <ActivityIndicator color={UI.accent} />
             </View>
         );
     }
 
+    if (screen === "search") {
+        return <SearchScreen baseUrl={baseUrl} token={token} onClose={() => setScreen("home")} />;
+    }
+    if (screen === "voice") {
+        return <VoiceScreen baseUrl={baseUrl} token={token} onClose={() => setScreen("home")} />;
+    }
+
     return (
         <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-            <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
+            <StatusBar barStyle="light-content" backgroundColor={UI.bg} />
             <Text style={styles.title}>Spendly Widgets</Text>
 
             {!token ? (
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Pair with Spendly</Text>
-                    <Text style={styles.hint}>
+                <Card>
+                    <CardTitle>Pair with Spendly</CardTitle>
+                    <Hint>
                         In Spendly, open Settings → Widgets, generate a pairing code, and
                         enter it here.
-                    </Text>
-                    <TextInput
-                        style={styles.input}
+                    </Hint>
+                    <Field
                         value={code}
                         onChangeText={(v) => setCode(v.toUpperCase())}
                         placeholder="XXXX-XXXX-XXXX"
-                        placeholderTextColor={COLORS.border}
                         autoCapitalize="characters"
                         autoCorrect={false}
+                        style={{ letterSpacing: 2 }}
                     />
                     {error && <Text style={styles.error}>{error}</Text>}
-                    <Pressable
-                        style={[styles.button, (busy || code.trim().length < 8) && styles.buttonDisabled]}
-                        disabled={busy || code.trim().length < 8}
-                        onPress={handlePair}
-                    >
-                        {busy
-                            ? <ActivityIndicator color={COLORS.text} />
-                            : <Text style={styles.buttonText}>Pair</Text>}
-                    </Pressable>
-
+                    <Button onPress={handlePair} disabled={busy || code.trim().length < 8}>
+                        {busy ? "Pairing…" : "Pair"}
+                    </Button>
                     <Pressable onPress={() => setShowAdvanced((s) => !s)}>
                         <Text style={styles.advancedToggle}>
                             {showAdvanced ? "Hide advanced" : "Advanced"}
                         </Text>
                     </Pressable>
                     {showAdvanced && (
-                        <TextInput
-                            style={styles.input}
+                        <Field
                             value={baseUrl}
                             onChangeText={setBaseUrl}
                             placeholder={DEFAULT_BASE_URL}
-                            placeholderTextColor={COLORS.border}
                             autoCapitalize="none"
                             autoCorrect={false}
                             keyboardType="url"
                         />
                     )}
-                </View>
+                </Card>
             ) : (
                 <>
-                    <View style={styles.card}>
-                        <Text style={styles.cardTitle}>Paired</Text>
+                    <Card>
+                        <CardTitle>Paired</CardTitle>
                         {summary ? (
                             <View style={styles.statsRow}>
                                 <View style={styles.stat}>
                                     <Text style={styles.statLabel}>Spent today</Text>
-                                    <Text style={[styles.statValue, { color: COLORS.danger }]}>
+                                    <Text style={[styles.statValue, { color: UI.danger }]}>
                                         {formatINR(summary.todayExpenses)}
                                     </Text>
                                 </View>
                                 <View style={styles.stat}>
                                     <Text style={styles.statLabel}>This month</Text>
-                                    <Text style={[styles.statValue, { color: COLORS.danger }]}>
+                                    <Text style={[styles.statValue, { color: UI.danger }]}>
                                         {formatINR(summary.monthExpenses)}
                                     </Text>
                                 </View>
@@ -281,44 +287,85 @@ export default function App() {
                                 </View>
                             </View>
                         ) : (
-                            <Text style={styles.hint}>Couldn't load your numbers — pull to refresh below.</Text>
+                            <Hint>Couldn't load your numbers — try refreshing.</Hint>
                         )}
-                        <Pressable style={styles.button} disabled={busy} onPress={handleRefresh}>
-                            {busy
-                                ? <ActivityIndicator color={COLORS.text} />
-                                : <Text style={styles.buttonText}>Refresh now</Text>}
-                        </Pressable>
-                    </View>
+                        <Button onPress={handleRefresh} disabled={busy}>
+                            {busy ? "Refreshing…" : "Refresh now"}
+                        </Button>
+                    </Card>
 
-                    <View style={styles.card}>
-                        <Text style={styles.cardTitle}>Widget shows</Text>
+                    <Card>
+                        <CardTitle>Your widgets</CardTitle>
+                        <Hint>
+                            Add them from your launcher's widget picker. Long-press a widget →
+                            Reconfigure to give it its own dates, account, category, and style.
+                        </Hint>
+                        <View style={styles.previewList}>
+                            <Text style={styles.previewLabel}>Summary</Text>
+                            <WidgetPreview
+                                renderWidget={() => (
+                                    <SummaryWidget summary={summary} metrics={metrics} paired config={null} />
+                                )}
+                                width={320}
+                                height={140}
+                            />
+                            <Text style={styles.previewLabel}>Quick actions</Text>
+                            <WidgetPreview
+                                renderWidget={() => <ActionsWidget baseUrl={baseUrl} />}
+                                width={320}
+                                height={86}
+                            />
+                            <Text style={styles.previewLabel}>Chart</Text>
+                            <WidgetPreview
+                                renderWidget={() => (
+                                    <ChartWidget summary={summary} baseUrl={baseUrl} config={null} />
+                                )}
+                                width={320}
+                                height={150}
+                            />
+                            <Text style={styles.previewLabel}>Categories</Text>
+                            <WidgetPreview
+                                renderWidget={() => (
+                                    <CategoriesWidget summary={summary} baseUrl={baseUrl} config={null} />
+                                )}
+                                width={320}
+                                height={150}
+                            />
+                            <Text style={styles.previewLabel}>Transactions</Text>
+                            <WidgetPreview
+                                renderWidget={() => (
+                                    <TransactionsWidget transactions={transactions} baseUrl={baseUrl} config={null} />
+                                )}
+                                width={320}
+                                height={200}
+                            />
+                        </View>
+                    </Card>
+
+                    <Card>
+                        <CardTitle>Default summary shows</CardTitle>
                         {ALL_METRICS.map((m) => (
                             <View key={m.key} style={styles.switchRow}>
                                 <Text style={styles.switchLabel}>{m.label}</Text>
                                 <Switch
                                     value={metrics.includes(m.key)}
                                     onValueChange={(v) => toggleMetric(m.key, v)}
-                                    trackColor={{ true: COLORS.accent, false: COLORS.border }}
-                                    thumbColor={COLORS.text}
+                                    trackColor={{ true: UI.accent, false: UI.border }}
+                                    thumbColor={UI.text}
                                 />
                             </View>
                         ))}
-                        <Text style={styles.hint}>
-                            Four widgets are available in your launcher's widget picker:
-                            Summary, Quick Actions, Chart, and Recent Transactions. They
-                            refresh about every 30 minutes, and instantly when you open
-                            this app.
-                        </Text>
-                    </View>
+                        <Hint>Applies to Summary widgets in the compact style without their own settings.</Hint>
+                    </Card>
 
-                    <View style={styles.card}>
+                    <Card>
                         <Pressable onPress={() => Linking.openURL(baseUrl)}>
                             <Text style={styles.link}>Open Spendly</Text>
                         </Pressable>
                         <Pressable onPress={handleUnpair}>
-                            <Text style={[styles.link, { color: COLORS.danger }]}>Unpair this device</Text>
+                            <Text style={[styles.link, { color: UI.danger }]}>Unpair this device</Text>
                         </Pressable>
-                    </View>
+                    </Card>
                 </>
             )}
         </ScrollView>
@@ -326,47 +373,29 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-    screen: { flex: 1, backgroundColor: COLORS.bg },
+    screen: { flex: 1, backgroundColor: UI.bg },
     center: { alignItems: "center", justifyContent: "center" },
-    content: { padding: 20, paddingTop: 64, gap: 16 },
-    title: { color: COLORS.text, fontSize: 26, fontWeight: "700", marginBottom: 4 },
-    card: {
-        backgroundColor: COLORS.card,
-        borderRadius: 16,
-        padding: 16,
-        gap: 12,
-    },
-    cardTitle: { color: COLORS.text, fontSize: 16, fontWeight: "600" },
-    hint: { color: COLORS.label, fontSize: 13, lineHeight: 18 },
-    input: {
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        borderRadius: 10,
-        color: COLORS.text,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        fontSize: 16,
-        letterSpacing: 2,
-    },
-    error: { color: COLORS.danger, fontSize: 13 },
-    button: {
-        backgroundColor: COLORS.accent,
-        borderRadius: 10,
-        paddingVertical: 12,
-        alignItems: "center",
-    },
-    buttonDisabled: { opacity: 0.5 },
-    buttonText: { color: COLORS.text, fontSize: 15, fontWeight: "600" },
-    advancedToggle: { color: COLORS.label, fontSize: 13, textAlign: "center" },
+    content: { padding: 20, paddingTop: 64, gap: 16, paddingBottom: 48 },
+    title: { color: UI.text, fontSize: 26, fontWeight: "700", marginBottom: 4 },
+    error: { color: UI.danger, fontSize: 13 },
+    advancedToggle: { color: UI.label, fontSize: 13, textAlign: "center", paddingVertical: 4 },
     statsRow: { flexDirection: "row", gap: 12 },
     stat: { flex: 1 },
-    statLabel: { color: COLORS.label, fontSize: 12 },
-    statValue: { color: COLORS.text, fontSize: 17, fontWeight: "700", marginTop: 2 },
+    statLabel: { color: UI.label, fontSize: 12 },
+    statValue: { color: UI.text, fontSize: 17, fontWeight: "700", marginTop: 2 },
     switchRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
     },
-    switchLabel: { color: COLORS.text, fontSize: 15 },
-    link: { color: COLORS.accent, fontSize: 15, fontWeight: "500", paddingVertical: 4 },
+    switchLabel: { color: UI.text, fontSize: 15 },
+    link: { color: UI.accent, fontSize: 15, fontWeight: "500", paddingVertical: 4 },
+    previewList: { alignItems: "center", gap: 6 },
+    previewLabel: {
+        alignSelf: "flex-start",
+        color: UI.label,
+        fontSize: 12,
+        fontWeight: "600",
+        marginTop: 8,
+    },
 });

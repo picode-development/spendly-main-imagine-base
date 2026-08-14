@@ -52,6 +52,52 @@ export const pair = async (baseUrl: string, code: string) => {
     }
 };
 
+export type VoiceResult = {
+    transcript: string;
+    pendingId: string;
+    parsed: {
+        amount: number | null;
+        payee: string | null;
+        accountName: string | null;
+        categoryName: string | null;
+        note: string | null;
+        date: string | null;
+    } | null;
+};
+
+// Uploads a widget-popup recording; the server transcribes, extracts, and
+// stages a pending transaction the user reviews in Spendly.
+export const uploadVoice = async (
+    baseUrl: string,
+    token: string,
+    fileUri: string,
+): Promise<{ ok: true; data: VoiceResult } | { ok: false; error: string }> => {
+    const t = withTimeout(60_000);
+    try {
+        const form = new FormData();
+        // React Native FormData file part: { uri, name, type }
+        form.append("audio", {
+            uri: fileUri,
+            name: "voice.m4a",
+            type: "audio/m4a",
+        } as unknown as Blob);
+        const res = await fetch(
+            `${baseUrl}/api/widget/voice?token=${encodeURIComponent(token)}`,
+            { method: "POST", body: form, signal: t.signal },
+        );
+        if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            return { ok: false, error: body?.error ?? `Server error (${res.status})` };
+        }
+        const { data } = await res.json();
+        return { ok: true, data: data as VoiceResult };
+    } catch {
+        return { ok: false, error: "Couldn't reach Spendly — check your connection" };
+    } finally {
+        t.done();
+    }
+};
+
 export const fetchSummary = async (
     baseUrl: string,
     token: string,
@@ -81,12 +127,14 @@ export const fetchTransactions = async (
     config: WidgetInstanceConfig | null = null,
     limit = 10,
     timeoutMs = 10_000,
+    q?: string,
 ): Promise<WidgetTransaction[] | null> => {
     const t = withTimeout(timeoutMs);
     try {
         const extras = new URLSearchParams();
         if (config?.direction && config.direction !== "all") extras.set("direction", config.direction);
         if (config?.sort === "amount") extras.set("sort", "amount");
+        if (q) extras.set("q", q);
         // Default scope for the transactions list is the last 7 days
         if (!config || config.scope === "week") {
             const pad = (n: number) => String(n).padStart(2, "0");

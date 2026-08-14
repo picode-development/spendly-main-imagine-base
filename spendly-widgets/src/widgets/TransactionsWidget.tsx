@@ -50,7 +50,7 @@ export const TransactionsWidget = ({ transactions, baseUrl, config }: Props) => 
             </FlexWidget>
             <FlexWidget
                 clickAction="OPEN_URI"
-                clickActionData={{ uri: `${baseUrl}/transactions?search=1` }}
+                clickActionData={{ uri: "spendlywidgets://search" }}
                 style={{ paddingHorizontal: 8, paddingVertical: 2 }}
             >
                 <SvgWidget
@@ -73,7 +73,7 @@ export const TransactionsWidget = ({ transactions, baseUrl, config }: Props) => 
                             width: "match_parent",
                             justifyContent: "space-between",
                             alignItems: "center",
-                            paddingVertical: 7,
+                            paddingVertical: config?.style === "compact" ? 4 : 7,
                         }}
                     >
                         <FlexWidget style={{ flexDirection: "column", flex: 1, marginRight: 8 }}>
@@ -83,12 +83,14 @@ export const TransactionsWidget = ({ transactions, baseUrl, config }: Props) => 
                                 maxLines={1}
                                 style={{ fontSize: 13, fontWeight: "500", color: C.value }}
                             />
-                            <TextWidget
-                                text={`${formatDay(t.date)}${t.category ? ` · ${t.category}` : ""}`}
-                                truncate="END"
-                                maxLines={1}
-                                style={{ fontSize: 10, color: C.label, marginTop: 1 }}
-                            />
+                            {config?.style !== "compact" && (
+                                <TextWidget
+                                    text={`${formatDay(t.date)}${t.category ? ` · ${t.category}` : ""}`}
+                                    truncate="END"
+                                    maxLines={1}
+                                    style={{ fontSize: 10, color: C.label, marginTop: 1 }}
+                                />
+                            )}
                         </FlexWidget>
                         <TextWidget
                             text={`${t.amount < 0 ? "-" : "+"}${formatINR(Math.abs(t.amount))}`}

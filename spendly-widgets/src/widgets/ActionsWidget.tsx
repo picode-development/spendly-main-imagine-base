@@ -5,11 +5,13 @@ import { WIDGET_COLORS as C } from "./theme";
 
 // Paytm/GPay-style quick action row: each button deep-links straight into
 // the matching Spendly flow. Icons are the app's own library (Lucide).
+// Voice and Search open the companion app's popup screens (app scheme);
+// the rest deep-link into the Spendly web app.
 const ACTIONS: { icon: LucideIconName; label: string; uri: (baseUrl: string) => string }[] = [
     { icon: "plus", label: "Add", uri: (b) => `${b}/?widget-action=new` },
-    { icon: "mic", label: "Voice", uri: (b) => `${b}/?widget-action=voice` },
+    { icon: "mic", label: "Voice", uri: () => "spendlywidgets://voice" },
     { icon: "camera", label: "Photo", uri: (b) => `${b}/?widget-action=photo` },
-    { icon: "search", label: "Search", uri: (b) => `${b}/transactions?search=1` },
+    { icon: "search", label: "Search", uri: () => "spendlywidgets://search" },
     { icon: "arrowUpRight", label: "Open", uri: (b) => b },
 ];
 

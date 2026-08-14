@@ -9,9 +9,31 @@ export const ALL_WIDGET_NAMES = [
     "SpendlySummary",
     "SpendlyActions",
     "SpendlyChart",
+    "SpendlyCategories",
     "SpendlyTransactions",
 ] as const;
 export type WidgetName = (typeof ALL_WIDGET_NAMES)[number];
+
+// UI styles each widget can be switched between (per instance)
+export const WIDGET_STYLES: Record<string, { key: string; label: string }[]> = {
+    SpendlySummary: [
+        { key: "cards", label: "Dashboard cards" },
+        { key: "compact", label: "Compact row" },
+    ],
+    SpendlyChart: [
+        { key: "bar", label: "Bar chart" },
+        { key: "area", label: "Area chart" },
+        { key: "line", label: "Line chart" },
+    ],
+    SpendlyCategories: [
+        { key: "donut", label: "Donut" },
+        { key: "bars", label: "Ranked bars" },
+    ],
+    SpendlyTransactions: [
+        { key: "detailed", label: "Detailed rows" },
+        { key: "compact", label: "Compact rows" },
+    ],
+};
 
 export type MetricKey = "today" | "month" | "balance";
 
@@ -34,7 +56,15 @@ export type WidgetSummary = {
     /** This month's top spending categories + "Other" */
     topCategories: { name: string; value: number }[];
     /** Totals for the instance's scope window */
-    scoped?: { label: string; expenses: number; income: number };
+    scoped?: {
+        label: string;
+        expenses: number;
+        income: number;
+        remaining?: number;
+        expensesChange?: number;
+        incomeChange?: number;
+        remainingChange?: number;
+    };
     /** Set when the instance is filtered to one account */
     accountName?: string | null;
     asOf: string;
@@ -54,6 +84,8 @@ export type WidgetInstanceConfig = {
     categoryName?: string;
     direction?: "all" | "income" | "expense";
     sort?: "date" | "amount";
+    /** UI style key from WIDGET_STYLES for this widget type */
+    style?: string;
 };
 
 export const DEFAULT_INSTANCE_CONFIG: WidgetInstanceConfig = { scope: "week" };
