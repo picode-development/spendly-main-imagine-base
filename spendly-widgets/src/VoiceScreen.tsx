@@ -35,12 +35,17 @@ const INTRO_MS = 600;
 const BASE_ROT_SPEED = 0.12;
 const MAX_ROT_SPEED = 0.4;
 const MAX_HOVER_INTENSITY = 0.3;
-// The orb's "activity" (0..1) eases toward a target derived from the same
-// SPEECH_DB/SILENCE_DB thresholds the auto-stop logic already uses, not a
-// separate hand-picked cutoff — ambient room noise sits well below
-// SILENCE_DB, so it no longer reads as "speaking." Eased rather than
-// snapped so starting/stopping speech ramps smoothly instead of the orb
-// jumping between a reacting and an idle state.
+// SILENCE_DB (shared with the auto-stop logic) is still the floor: below
+// it the orb is fully still, so ambient noise never registers. But the
+// ceiling for full-intensity reaction is deliberately louder than
+// SPEECH_DB — SPEECH_DB just marks "this counts as speech" for auto-stop,
+// a fairly low bar that a soft "hi" already clears. LOUD_DB stretches the
+// range out toward shouting, so a soft voice reacts gently and a loud
+// voice reacts strongly instead of both instantly maxing out the orb.
+const LOUD_DB = -8;
+// The orb's "activity" (0..1) eases toward that target rather than
+// snapping to it, so starting/stopping speech ramps smoothly instead of
+// the orb jumping between a reacting and an idle state.
 const ACTIVITY_ATTACK = 0.25;
 const ACTIVITY_RELEASE = 0.06;
 
@@ -323,10 +328,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     }, []);
 
     // Drives the shader orb every frame. `activity` (0..1) eases toward a
-    // target set by the calibrated SPEECH_DB/SILENCE_DB thresholds, with a
-    // fast attack (quick to pick up when you start talking) and a slow
-    // release (eases back down instead of snapping off) — an envelope, not
-    // a hard gate. `iTime` and `rot` advance proportionally to `activity`,
+    // target that scales with how loud you actually are (SILENCE_DB..
+    // LOUD_DB), with a fast attack (quick to pick up when you start
+    // talking) and a slow release (eases back down instead of snapping
+    // off) — an envelope, not a hard gate. `iTime` and `rot` advance
+    // proportionally to `activity`,
     // so everything the shader keys off `iTime` (noise wobble, hue sweep,
     // orbiting hotspot) smoothly decelerates to a stop rather than
     // freezing/unfreezing abruptly. No reanimated — plain rAF + state is
@@ -343,7 +349,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             lastTime = t;
 
             const db = dbRef.current;
-            const targetActivity = db >= SPEECH_DB ? 1 : db <= SILENCE_DB ? 0 : (db - SILENCE_DB) / (SPEECH_DB - SILENCE_DB);
+            const targetActivity = db <= SILENCE_DB ? 0 : Math.min(1, (db - SILENCE_DB) / (LOUD_DB - SILENCE_DB));
             const rate = targetActivity > activityRef.current ? ACTIVITY_ATTACK : ACTIVITY_RELEASE;
             activityRef.current += (targetActivity - activityRef.current) * rate;
             const activity = activityRef.current;
