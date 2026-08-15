@@ -263,6 +263,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const iconVisibleRef = useRef(false);
     const levelRef = useRef(0);
     const dbRef = useRef(-160);
+    const lockedRef = useRef(false);
     const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
 
@@ -332,17 +333,27 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Drives the shader orb every frame. `activity` (0..1) eases toward a
-    // target that scales with how loud you actually are (SILENCE_DB..
-    // LOUD_DB), with a fast attack (quick to pick up when you start
-    // talking) and a slow release (eases back down instead of snapping
-    // off) — an envelope, not a hard gate. `iTime` and `rot` advance
-    // proportionally to `activity`,
-    // so everything the shader keys off `iTime` (noise wobble, hue sweep,
-    // orbiting hotspot) smoothly decelerates to a stop rather than
-    // freezing/unfreezing abruptly. No reanimated — plain rAF + state is
-    // fine for a single full-screen canvas. The mic icon fades in a beat
-    // later.
+    // Drives the shader orb every frame AND the silence auto-stop check.
+    // `activity` (0..1) eases toward a target that scales with how loud
+    // you actually are (SILENCE_DB..LOUD_DB), with a fast attack (quick to
+    // pick up when you start talking) and a slow release (eases back down
+    // instead of snapping off) — an envelope, not a hard gate. `iTime` and
+    // `rot` advance proportionally to `activity`, so everything the shader
+    // keys off `iTime` (noise wobble, hue sweep, orbiting hotspot) smoothly
+    // decelerates to a stop rather than freezing/unfreezing abruptly.
+    //
+    // The silence check runs HERE (every animation frame via dbRef.current)
+    // rather than in its own useEffect keyed on recorderState.metering —
+    // that was the actual auto-stop bug. A plain dependency-array effect
+    // only re-runs when the value changes; dead silence routinely reports
+    // the exact same dBFS reading for consecutive polls, so the effect
+    // could go seconds without re-running, and the "has 2.5s of quiet
+    // elapsed" check never got evaluated during that stretch. Piggybacking
+    // on this already-running ~60fps loop guarantees the check happens
+    // regardless of whether the underlying reading changed.
+    //
+    // No reanimated — plain rAF + state is fine for a single full-screen
+    // canvas. The mic icon fades in a beat later.
     useEffect(() => {
         if (phase !== "recording") return;
         let raf: number;
@@ -370,6 +381,29 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 rot: currentRot,
                 hoverIntensity: activity * MAX_HOVER_INTENSITY,
             });
+
+            if (!lockedRef.current) {
+                const now = Date.now();
+                if (db >= SPEECH_DB) {
+                    hasSpokenRef.current = true;
+                    quietSinceRef.current = null;
+                } else if (db <= SILENCE_DB) {
+                    quietSinceRef.current ??= now;
+                    const quietFor = now - quietSinceRef.current;
+                    if (hasSpokenRef.current && quietFor >= TRAILING_SILENCE_MS) void stopAndUpload();
+                    else if (!hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
+                        setError("Didn't hear anything.");
+                        setPhase("error");
+                        stoppingRef.current = true;
+                        recorder.stop().catch(() => {});
+                    }
+                } else {
+                    quietSinceRef.current = null;
+                }
+            } else {
+                quietSinceRef.current = null;
+            }
+
             raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
@@ -413,32 +447,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         return () => cancelAnimationFrame(raf);
     }, [phase]);
 
-    // Silence auto-stop, suspended while locked
     useEffect(() => {
-        if (phase !== "recording" || locked) {
-            quietSinceRef.current = null;
-            return;
-        }
-        const db = recorderState.metering ?? -160;
-        const now = Date.now();
-        if (db >= SPEECH_DB) {
-            hasSpokenRef.current = true;
-            quietSinceRef.current = null;
-        } else if (db <= SILENCE_DB) {
-            quietSinceRef.current ??= now;
-            const quietFor = now - quietSinceRef.current;
-            if (hasSpokenRef.current && quietFor >= TRAILING_SILENCE_MS) void stopAndUpload();
-            else if (!hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
-                setError("Didn't hear anything.");
-                setPhase("error");
-                stoppingRef.current = true;
-                recorder.stop().catch(() => {});
-            }
-        } else {
-            quietSinceRef.current = null;
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [recorderState.metering, phase, locked]);
+        lockedRef.current = locked;
+        if (locked) quietSinceRef.current = null;
+    }, [locked]);
 
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
     const db = recorderState.metering ?? -160;
@@ -505,7 +517,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                             <Text style={styles.statusText}>{locked ? "Recording" : "Listening"}</Text>
                         </View>
 
-                        <Pressable onPress={handleOrbTap} hitSlop={20} style={styles.orbWrap}>
+                        <Pressable
+                            onPress={handleOrbTap}
+                            hitSlop={20}
+                            style={({ pressed }) => [styles.orbWrap, pressed && styles.orbWrapPressed]}
+                        >
                             {orbShader && (
                                 <Canvas style={styles.orbCanvas}>
                                     <Fill>
@@ -524,7 +540,14 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                             </Animated.View>
                         </Pressable>
 
-                        <Pressable onPress={() => setLocked((l) => !l)} style={styles.lockToggle}>
+                        <Pressable
+                            onPress={() => setLocked((l) => !l)}
+                            style={({ pressed }) => [
+                                styles.lockToggle,
+                                locked && styles.lockToggleActive,
+                                pressed && styles.lockTogglePressed,
+                            ]}
+                        >
                             <Feather name={locked ? "lock" : "unlock"} size={14} color={locked ? UI.accent : UI.label} />
                             <Text style={[styles.lockLabel, locked && { color: UI.accent }]}>
                                 {locked ? "Locked" : "Lock"}
@@ -634,6 +657,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+    orbWrapPressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
     orbCanvas: {
         position: "absolute",
         width: ORB_SIZE,
@@ -654,9 +678,13 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 999,
+        backgroundColor: `${UI.label}1a`,
     },
+    lockToggleActive: { backgroundColor: `${UI.accent}26` },
+    lockTogglePressed: { opacity: 0.7 },
     lockLabel: { color: UI.label, fontSize: 12, fontWeight: "600" },
     row: { flexDirection: "row", justifyContent: "center", gap: 10, marginTop: 4 },
     payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
