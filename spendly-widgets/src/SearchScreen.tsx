@@ -80,10 +80,14 @@ type QuickActionProps = {
 };
 
 const QuickAction = ({ icon, label, left, index, t, onPress, active }: QuickActionProps) => {
+    // Precomputed on the JS thread and captured as a plain number: a
+    // worklet body may only call other worklets, so calling hiddenOffset()
+    // inside useAnimatedStyle would throw on the UI thread.
+    const hx = hiddenOffset(index);
     const animStyle = useAnimatedStyle(() => ({
         opacity: t.value,
         transform: [
-            { translateX: hiddenOffset(index) * (1 - t.value) },
+            { translateX: hx * (1 - t.value) },
             { scale: 0.7 + 0.3 * t.value },
         ],
     }));
@@ -138,23 +142,41 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
     }, [visible]);
 
     const shortcutLeft = (i: number) => zoneWidth - SHORTCUTS_W + i * SHORTCUT_STEP;
-    const barStyle = useAnimatedStyle(() => ({
-        width: zoneWidth > 0 ? zoneWidth - openness.value * (SHORTCUTS_W + BAR_GAP) : "100%",
-    }));
+
+    // Everything a worklet needs is precomputed here on the JS thread and
+    // captured as plain numbers — worklet bodies can only call other
+    // worklets, so calling shortcutLeft()/hiddenOffset() inside them would
+    // throw on the UI thread (which blanked the whole screen).
+    const zw = zoneWidth;
+    const openW = SHORTCUTS_W + BAR_GAP;
+    const restCx0 = shortcutLeft(0) + SHORTCUT_SIZE / 2;
+    const restCx1 = shortcutLeft(1) + SHORTCUT_SIZE / 2;
+    const restCx2 = shortcutLeft(2) + SHORTCUT_SIZE / 2;
+    const restCx3 = shortcutLeft(3) + SHORTCUT_SIZE / 2;
+    const hx0 = hiddenOffset(0);
+    const hx1 = hiddenOffset(1);
+    const hx2 = hiddenOffset(2);
+    const hx3 = hiddenOffset(3);
+    const halfShortcut = SHORTCUT_SIZE / 2;
+
+    const barStyle = useAnimatedStyle(() => {
+        if (zw <= 0) return {};
+        return { width: zw - openness.value * openW };
+    });
 
     // Goo blobs track the same progress values as the real buttons, so the
     // blurred shapes merge into the search bar exactly as the buttons slide
     // out of it. r shrinks to 0 when hidden, so nothing lingers on canvas.
-    const barW = useDerivedValue(() => Math.max(0, zoneWidth - openness.value * (SHORTCUTS_W + BAR_GAP)));
+    const barW = useDerivedValue(() => Math.max(0, zw - openness.value * openW));
     const cy = ROW_H / 2;
-    const cx0 = useDerivedValue(() => shortcutLeft(0) + SHORTCUT_SIZE / 2 + hiddenOffset(0) * (1 - s0.t.value));
-    const cx1 = useDerivedValue(() => shortcutLeft(1) + SHORTCUT_SIZE / 2 + hiddenOffset(1) * (1 - s1.t.value));
-    const cx2 = useDerivedValue(() => shortcutLeft(2) + SHORTCUT_SIZE / 2 + hiddenOffset(2) * (1 - s2.t.value));
-    const cx3 = useDerivedValue(() => shortcutLeft(3) + SHORTCUT_SIZE / 2 + hiddenOffset(3) * (1 - s3.t.value));
-    const r0 = useDerivedValue(() => (SHORTCUT_SIZE / 2) * s0.t.value);
-    const r1 = useDerivedValue(() => (SHORTCUT_SIZE / 2) * s1.t.value);
-    const r2 = useDerivedValue(() => (SHORTCUT_SIZE / 2) * s2.t.value);
-    const r3 = useDerivedValue(() => (SHORTCUT_SIZE / 2) * s3.t.value);
+    const cx0 = useDerivedValue(() => restCx0 + hx0 * (1 - s0.t.value));
+    const cx1 = useDerivedValue(() => restCx1 + hx1 * (1 - s1.t.value));
+    const cx2 = useDerivedValue(() => restCx2 + hx2 * (1 - s2.t.value));
+    const cx3 = useDerivedValue(() => restCx3 + hx3 * (1 - s3.t.value));
+    const r0 = useDerivedValue(() => halfShortcut * s0.t.value);
+    const r1 = useDerivedValue(() => halfShortcut * s1.t.value);
+    const r2 = useDerivedValue(() => halfShortcut * s2.t.value);
+    const r3 = useDerivedValue(() => halfShortcut * s3.t.value);
 
     useEffect(() => {
         if (!token) return;
@@ -424,9 +446,10 @@ const styles = StyleSheet.create({
     searchRow: { height: ROW_H, justifyContent: "center" },
     gooCanvas: { position: "absolute", left: 0, right: 0, top: 0, height: ROW_H },
     barWrap: { height: BAR_H, justifyContent: "center" },
-    // Transparent: the rounded bar itself is drawn by the goo canvas
-    // underneath, so the input is just the text + icon layer on top.
-    barInput: { backgroundColor: "transparent", borderColor: "transparent", borderRadius: BAR_H / 2, height: BAR_H },
+    // Carries its own background rather than relying on the goo canvas to
+    // draw the bar: if Skia ever fails to render, the field must still be
+    // visible and usable instead of leaving a blank strip.
+    barInput: { backgroundColor: UI.card, borderColor: "transparent", borderRadius: BAR_H / 2, height: BAR_H },
     shortcutsLayer: { position: "absolute", left: 0, right: 0, top: 0, height: ROW_H },
     shortcut: {
         position: "absolute",
@@ -438,6 +461,9 @@ const styles = StyleSheet.create({
         width: SHORTCUT_SIZE,
         height: SHORTCUT_SIZE,
         borderRadius: SHORTCUT_SIZE / 2,
+        // Same reasoning as barInput: don't depend on the goo canvas for
+        // the visible pill, it only adds the merge effect behind these.
+        backgroundColor: UI.card,
         alignItems: "center",
         justifyContent: "center",
     },
