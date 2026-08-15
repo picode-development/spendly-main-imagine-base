@@ -1,13 +1,22 @@
+import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { db } from "@/db/drizzle";
 import { pendingTransactions, sharedStash } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
-import { hasGroqKey, hasHermesBridge, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { hasGroqKey, hasHermesBridge, isTrustedImageUrl, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { zValidator } from "@hono/zod-validator";
+
+// Constant-time compare for shared-secret tokens — a plain `!==` leaks
+// timing info proportional to the matching prefix length.
+const safeEqual = (a: string, b: string): boolean => {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+};
 
 const app = new Hono()
     .get(
@@ -67,7 +76,7 @@ const app = new Hono()
             if (!expectedToken || !inboxUserId) {
                 return c.json({ error: "SMS inbox not configured" }, 501);
             }
-            if (token !== expectedToken) {
+            if (!safeEqual(token, expectedToken)) {
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
@@ -205,8 +214,8 @@ const app = new Hono()
         clerkMiddleware(),
         zValidator("json", z.object({
             image: z.string().max(3_500_000).refine(
-                (v) => v.startsWith("data:image/") || v.startsWith("https://"),
-                "Must be an image data URL or an https URL",
+                isTrustedImageUrl,
+                "Must be an image data URL or a hosted imgbb URL",
             ),
             text: z.string().max(2000).nullish(),
         })),
@@ -323,7 +332,7 @@ const app = new Hono()
         zValidator("json", z.object({
             text: z.string().max(2000).nullish(),
             images: z.array(z.object({
-                url: z.string().url(),
+                url: z.string().refine(isTrustedImageUrl, "Must be a hosted imgbb URL"),
                 preview: z.string().optional(),
             })).max(25),
         })),

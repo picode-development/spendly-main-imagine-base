@@ -250,6 +250,18 @@ export const llmExtractFromText = async (text: string, ctx: LlmContext): Promise
     return toLlmTransaction(data as RawExtraction);
 };
 
+// Screenshots are hosted on imgbb by our own server-side upload code
+// (app/share-target/route.ts) or the client-side uploader
+// (features/transactions/lib/upload-imgbb.ts) — never anywhere else. This
+// is the sink that makes the Hermes bridge fetch a URL server-side, so a
+// caller passing an arbitrary user-supplied URL through here would let an
+// authenticated user make the bridge host fetch internal/local addresses
+// (SSRF). data: URLs are also fine — no fetch happens, the bytes are
+// already in the request.
+export const isTrustedImageUrl = (url: string): boolean =>
+    url.startsWith("data:image/")
+    || /^https:\/\/(i\.)?ibb\.co\//.test(url);
+
 /**
  * Extract a transaction from a payment screenshot (https or data: URL).
  * UPI apps often attach a summary caption when sharing — pass it as
@@ -260,6 +272,7 @@ export const llmExtractFromImage = async (
     ctx: LlmContext,
     accompanyingText?: string | null,
 ): Promise<LlmTransaction | null> => {
+    if (!isTrustedImageUrl(imageUrl)) return null;
     const data = await hermesPost("/extract/vision", {
         image_url: imageUrl,
         accompanying_text: accompanyingText?.trim() || null,

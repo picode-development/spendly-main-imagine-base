@@ -9,6 +9,32 @@ import { zValidator } from "@hono/zod-validator";
 import { subDays, parse } from "date-fns";
  
 
+// The DB foreign keys only enforce that accountId/categoryId EXIST, not
+// that they belong to the caller — without this check, any authenticated
+// user could write a transaction into another user's account by supplying
+// its id (an IDOR: forged debits/credits into a victim's ledger).
+const assertOwnsRefs = async (
+    userId: string,
+    refs: { accountId: string; categoryId?: string | null }[],
+): Promise<boolean> => {
+    const accountIds = [...new Set(refs.map((r) => r.accountId))];
+    const categoryIds = [...new Set(refs.map((r) => r.categoryId).filter((id): id is string => !!id))];
+
+    const [ownedAccounts, ownedCategories] = await Promise.all([
+        db.select({ id: accounts.id }).from(accounts)
+            .where(and(eq(accounts.userId, userId), inArray(accounts.id, accountIds))),
+        categoryIds.length
+            ? db.select({ id: categories.id }).from(categories)
+                .where(and(eq(categories.userId, userId), inArray(categories.id, categoryIds)))
+            : Promise.resolve([]),
+    ]);
+
+    const ownedAccountIds = new Set(ownedAccounts.map((a) => a.id));
+    const ownedCategoryIds = new Set(ownedCategories.map((c) => c.id));
+    return accountIds.every((id) => ownedAccountIds.has(id))
+        && categoryIds.every((id) => ownedCategoryIds.has(id));
+};
+
 const app = new Hono()
     .get(
         "/",
@@ -165,6 +191,10 @@ const app = new Hono()
                 return c.json({error: "Unauthorized"}, 401);
             }
 
+            if (!await assertOwnsRefs(auth.userId, [values])) {
+                return c.json({error: "Account or category not found"}, 404);
+            }
+
             const [data] = await db.insert(transactions).values({
                 id: createId(),
                 ...values,
@@ -192,6 +222,10 @@ const app = new Hono()
 
             if (!auth?.userId) {
                 return c.json({error: "Unauthorized"}, 401);
+            }
+
+            if (!await assertOwnsRefs(auth.userId, values)) {
+                return c.json({error: "Account or category not found"}, 404);
             }
 
             const data = await db
@@ -355,6 +389,10 @@ const app = new Hono()
 
             if (!auth?.userId) {
                 return c.json({erroe: "Unauthorized"}, 401);
+            }
+
+            if (!await assertOwnsRefs(auth.userId, [values])) {
+                return c.json({error: "Account or category not found"}, 404);
             }
 
             const transactionsToUpdate = db.$with("transactions_to_update").as(

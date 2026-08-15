@@ -31,6 +31,16 @@ const userDayStartUtc = (tzOffsetMinutes: number) => {
     return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 };
 
+// Prefer the Authorization header (doesn't land in server/proxy access
+// logs the way a URL query string does) — the `?token=` query param is
+// kept as a fallback only so widgets still running a pre-update JS bundle
+// (OTA hasn't reached them yet) don't break outright.
+const readWidgetToken = (c: { req: { header: (name: string) => string | undefined } }, queryToken?: string): string | null => {
+    const auth = c.req.header("authorization") || "";
+    if (auth.startsWith("Bearer ")) return auth.slice(7);
+    return queryToken || null;
+};
+
 const app = new Hono()
 
     // ----- Clerk-authenticated management (Settings → Widgets card) -----
@@ -127,7 +137,7 @@ const app = new Hono()
     .get(
         "/summary",
         zValidator("query", z.object({
-            token: z.string().min(8).max(32),
+            token: z.string().min(8).max(32).optional(),
             tzOffset: z.coerce.number().int().min(-840).max(840).optional(),
             // Per-widget-instance scope: a custom range (from/to), all time,
             // or the default last-7-days; optionally filtered to one account
@@ -138,7 +148,9 @@ const app = new Hono()
             categoryId: z.string().optional(),
         })),
         async (c) => {
-            const { token, tzOffset, from, to, allDates, accountId, categoryId } = c.req.valid("query");
+            const { token: queryToken, tzOffset, from, to, allDates, accountId, categoryId } = c.req.valid("query");
+            const token = readWidgetToken(c, queryToken);
+            if (!token) return c.json({ error: "Unauthorized" }, 401);
 
             const [tokenRow] = await db
                 .select({ id: widgetTokens.id, userId: widgetTokens.userId })
@@ -347,7 +359,7 @@ const app = new Hono()
     .get(
         "/transactions",
         zValidator("query", z.object({
-            token: z.string().min(8).max(32),
+            token: z.string().min(8).max(32).optional(),
             limit: z.coerce.number().int().min(1).max(100).optional(),
             accountId: z.string().optional(),
             categoryId: z.string().optional(),
@@ -358,8 +370,10 @@ const app = new Hono()
             q: z.string().max(80).optional(),
         })),
         async (c) => {
-            const { token, limit, accountId, categoryId, from, to, direction, sort, q } =
+            const { token: queryToken, limit, accountId, categoryId, from, to, direction, sort, q } =
                 c.req.valid("query");
+            const token = readWidgetToken(c, queryToken);
+            if (!token) return c.json({ error: "Unauthorized" }, 401);
 
             const [tokenRow] = await db
                 .select({ id: widgetTokens.id, userId: widgetTokens.userId })
@@ -419,10 +433,12 @@ const app = new Hono()
     .post(
         "/voice",
         zValidator("query", z.object({
-            token: z.string().min(8).max(32),
+            token: z.string().min(8).max(32).optional(),
         })),
         async (c) => {
-            const { token } = c.req.valid("query");
+            const { token: queryToken } = c.req.valid("query");
+            const token = readWidgetToken(c, queryToken);
+            if (!token) return c.json({ error: "Unauthorized" }, 401);
 
             const [tokenRow] = await db
                 .select({ id: widgetTokens.id, userId: widgetTokens.userId })
