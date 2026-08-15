@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Animated,
+    Easing,
     Linking,
     Pressable,
     StatusBar,
@@ -25,7 +26,9 @@ import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
 // sustained quiet ends the recording; never-spoke bails out sooner.
 // Levels are dBFS (negative; closer to 0 = louder).
 const SPEECH_DB = -25;
-const SILENCE_DB = -38;
+// -38 was too strict — normal room/mic noise floor rarely dips that low,
+// so genuine silence never registered and auto-stop never fired.
+const SILENCE_DB = -32;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 
@@ -266,6 +269,8 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
     const dotBlink = useRef(new Animated.Value(1)).current;
+    const loaderSpin = useRef(new Animated.Value(0)).current;
+    const resultAnim = useRef(new Animated.Value(0)).current;
 
     // Guarded rather than asserted non-null: this shader was hand-ported
     // from GLSL to SKSL and hasn't been run through a device compile yet,
@@ -380,6 +385,34 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [phase]);
 
+    // The same orb keeps going while the recording is understood, now with
+    // a gentle constant idle motion instead of voice-driven reaction (there
+    // is no more live audio to react to) and a slightly shifted hue so
+    // "processing" reads as visually distinct from "recording."
+    useEffect(() => {
+        if (phase !== "uploading") return;
+        let raf: number;
+        let lastTime = 0;
+        let localTime = activeTimeRef.current;
+        const tick = (t: number) => {
+            if (!lastTime) lastTime = t;
+            const dt = (t - lastTime) * 0.001;
+            lastTime = t;
+            localTime += dt;
+            setOrbUniforms({
+                iTime: localTime,
+                iResolution: [ORB_SIZE, ORB_SIZE, 1],
+                hue: 25,
+                hover: 0.35,
+                rot: localTime * 0.4,
+                hoverIntensity: 0.12,
+            });
+            raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [phase]);
+
     // Silence auto-stop, suspended while locked
     useEffect(() => {
         if (phase !== "recording" || locked) {
@@ -426,8 +459,26 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         return () => loop.stop();
     }, [phase, dotBlink]);
 
+    useEffect(() => {
+        if (phase !== "uploading") return;
+        loaderSpin.setValue(0);
+        const loop = Animated.loop(
+            Animated.timing(loaderSpin, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true }),
+        );
+        loop.start();
+        return () => loop.stop();
+    }, [phase, loaderSpin]);
+
+    useEffect(() => {
+        if (phase !== "done") return;
+        resultAnim.setValue(0);
+        Animated.timing(resultAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }, [phase, resultAnim]);
+
     const iconScale = iconAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] });
     const corePulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
+    const loaderRotate = loaderSpin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+    const resultScale = resultAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] });
 
     const handleOrbTap = () => {
         if (phase !== "recording" || !iconVisibleRef.current) return;
@@ -483,14 +534,28 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 )}
 
                 {phase === "uploading" && (
-                    <>
-                        <ActivityIndicator color={UI.accent} style={{ marginBottom: 12 }} />
-                        <Hint>Understanding your voice note…</Hint>
-                    </>
+                    <View style={styles.orbGroup}>
+                        <View style={styles.orbWrap}>
+                            {orbShader && (
+                                <Canvas style={styles.orbCanvas}>
+                                    <Fill>
+                                        <Shader source={orbShader} uniforms={orbUniforms} />
+                                    </Fill>
+                                </Canvas>
+                            )}
+                            <View style={styles.micCore}>
+                                <Animated.View style={{ transform: [{ rotate: loaderRotate }] }}>
+                                    <Feather name="loader" size={26} color="#ffffff" />
+                                </Animated.View>
+                            </View>
+                        </View>
+                        <Text style={styles.processingTitle}>Understanding your voice note</Text>
+                        <Hint>This usually takes a few seconds…</Hint>
+                    </View>
                 )}
 
                 {phase === "done" && result && (
-                    <>
+                    <Animated.View style={[styles.resultGroup, { opacity: resultAnim, transform: [{ scale: resultScale }] }]}>
                         <IconBox color={UI.green}>
                             <Feather name="check" size={18} color={UI.green} />
                         </IconBox>
@@ -514,7 +579,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                             <Button variant="outline" onPress={onClose}>Done</Button>
                             <Button icon="external-link" onPress={() => Linking.openURL(baseUrl)}>Open Spendly</Button>
                         </View>
-                    </>
+                    </Animated.View>
                 )}
 
                 {phase === "error" && (
@@ -558,6 +623,8 @@ const styles = StyleSheet.create({
         gap: 14,
     },
     orbGroup: { alignItems: "center", gap: 10 },
+    resultGroup: { alignItems: "center", gap: 14, width: "100%" },
+    processingTitle: { color: UI.text, fontSize: 16, fontWeight: "600", marginTop: 4 },
     statusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
     liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: UI.danger },
     statusText: { color: UI.label, fontSize: 13, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" },
