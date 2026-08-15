@@ -19,7 +19,7 @@ import {
     useAudioRecorderState,
 } from "expo-audio";
 import { uploadVoice, VoiceResult } from "./api";
-import { AmountPill, Button, Card, Hint, IconBox } from "./ui";
+import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
 
 // Mirrors the web app's silence auto-stop: once the user has spoken,
 // sustained quiet ends the recording; never-spoke bails out sooner.
@@ -29,26 +29,11 @@ const SILENCE_DB = -38;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 
-// A light theme used only on this screen, sourced exactly from the main
-// app's real :root design tokens (app/globals.css) rather than invented
-// colors — background/card/border/foreground/muted-foreground/destructive
-// converted from their oklch values, accent from --header-gradient-to
-// (already plain hex). No --success token exists anywhere in the site's
-// CSS (light or dark), so `green` stays a plain Tailwind green-600
-// stopgap.
-const LIGHT = {
-    bg: "#f1f5f9",
-    card: "#ffffff",
-    border: "#e2e8f0",
-    text: "#020618",
-    label: "#62748e",
-    danger: "#e7000b",
-    green: "#16a34a",
-    accent: "#3b82f6",
-} as const;
-
 const ORB_SIZE = 200;
 const INTRO_MS = 600;
+// Below this, the orb is treated as silent and stays completely still —
+// it should react to your voice, not animate on its own.
+const SPEECH_THRESHOLD = 0.05;
 const BASE_ROT_SPEED = 0.3;
 const MAX_ROT_SPEED = 1.2;
 const MAX_HOVER_INTENSITY = 0.8;
@@ -232,11 +217,10 @@ type Phase = "starting" | "recording" | "uploading" | "done" | "error";
 // A widget button opens this as its own full-screen page (PopupActivity),
 // not a floating card — Android can't render a truly transparent Activity
 // reliably, so this owns its own background and a real header like any
-// other screen in the app. The recording view breaks from the app's dark
-// theme (a light theme sourced from the main site's real tokens) with a
-// live shader orb behind the mic — a wobbling, noise-driven ring with an
-// orbiting hotspot and a hue sweep, reacting to live mic volume — rather
-// than a flat CSS approximation.
+// other screen in the app. The recording view uses the app's standard
+// dark theme (UI, matching every other screen) with a live shader orb
+// behind the mic — a wobbling, noise-driven ring with an orbiting
+// hotspot and a hue sweep — that stays still until you actually speak.
 export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const recorder = useAudioRecorder({
         ...RecordingPresets.HIGH_QUALITY,
@@ -256,6 +240,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
     const levelRef = useRef(0);
+    const activeTimeRef = useRef(0);
 
     const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
@@ -321,11 +306,14 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Drives the shader orb every frame: rotation speed and ripple
-    // intensity both scale with live mic volume, same as the reference.
+    // Drives the shader orb every frame. `iTime` and `rot` only advance
+    // while actual speech is detected — everything in the shader (the
+    // noise wobble, the hue sweep, the orbiting hotspot) is keyed off
+    // `iTime`, so freezing it is what makes the orb hold still instead of
+    // animating on its own. `hover`/`hoverIntensity` (the ripple) track
+    // volume directly, so they fall back to ~0 naturally when quiet.
     // No reanimated — plain rAF + state is fine for a single full-screen
-    // canvas. The mic icon fades in a beat later; the orb itself is live
-    // from the first frame.
+    // canvas. The mic icon fades in a beat later.
     useEffect(() => {
         if (phase !== "recording") return;
         let raf: number;
@@ -336,10 +324,12 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             const dt = (t - lastTime) * 0.001;
             lastTime = t;
             const voiceLevel = levelRef.current;
-            const voiceRotSpeed = BASE_ROT_SPEED + voiceLevel * MAX_ROT_SPEED * 2.0;
-            if (voiceLevel > 0.05) currentRot += dt * voiceRotSpeed;
+            if (voiceLevel > SPEECH_THRESHOLD) {
+                activeTimeRef.current += dt;
+                currentRot += dt * (BASE_ROT_SPEED + voiceLevel * MAX_ROT_SPEED * 2.0);
+            }
             setOrbUniforms({
-                iTime: t * 0.001,
+                iTime: activeTimeRef.current,
                 iResolution: [ORB_SIZE, ORB_SIZE, 1],
                 hue: 0,
                 hover: Math.min(voiceLevel * 2.0, 1.0),
@@ -415,19 +405,19 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
     return (
         <View style={styles.screen}>
-            <StatusBar barStyle="dark-content" backgroundColor={LIGHT.bg} />
+            <StatusBar barStyle="light-content" backgroundColor={UI.bg} />
             <View style={styles.header}>
                 <Text style={styles.title}>Voice note</Text>
                 <Pressable onPress={onClose} hitSlop={12} style={styles.closeButton}>
-                    <Feather name="x" size={18} color={LIGHT.label} />
+                    <Feather name="x" size={18} color={UI.label} />
                 </Pressable>
             </View>
 
             <View style={styles.content}>
-                {phase === "starting" && <ActivityIndicator color={LIGHT.accent} />}
+                {phase === "starting" && <ActivityIndicator color={UI.accent} />}
 
                 {phase === "recording" && (
-                    <>
+                    <View style={styles.orbGroup}>
                         <View style={styles.statusRow}>
                             <Animated.View style={[styles.liveDot, { opacity: dotBlink }]} />
                             <Text style={styles.statusText}>{locked ? "Recording" : "Listening"}</Text>
@@ -448,40 +438,32 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                                     { opacity: iconAnim, transform: [{ scale: iconScale }, { scale: corePulseScale }] },
                                 ]}
                             >
-                                <Feather name="mic" size={30} color={LIGHT.accent} />
+                                <Feather name="mic" size={30} color={UI.accent} />
                             </Animated.View>
                         </Pressable>
 
-                        <Hint color={LIGHT.label}>
-                            Speak the transaction — tap to stop, or it stops itself when you go quiet.
-                            {locked ? " Auto-stop is off." : ""}
-                        </Hint>
-
-                        <Pressable
-                            onPress={() => setLocked((l) => !l)}
-                            style={[styles.lockPill, locked && styles.lockPillActive]}
-                        >
-                            <Feather name={locked ? "lock" : "unlock"} size={14} color={locked ? LIGHT.accent : LIGHT.label} />
-                            <Text style={[styles.lockLabel, locked && { color: LIGHT.accent }]}>
+                        <Pressable onPress={() => setLocked((l) => !l)} style={styles.lockToggle}>
+                            <Feather name={locked ? "lock" : "unlock"} size={14} color={locked ? UI.accent : UI.label} />
+                            <Text style={[styles.lockLabel, locked && { color: UI.accent }]}>
                                 {locked ? "Locked" : "Lock"}
                             </Text>
                         </Pressable>
-                    </>
+                    </View>
                 )}
 
                 {phase === "uploading" && (
                     <>
-                        <ActivityIndicator color={LIGHT.accent} style={{ marginBottom: 12 }} />
-                        <Hint color={LIGHT.label}>Understanding your voice note…</Hint>
+                        <ActivityIndicator color={UI.accent} style={{ marginBottom: 12 }} />
+                        <Hint>Understanding your voice note…</Hint>
                     </>
                 )}
 
                 {phase === "done" && result && (
                     <>
-                        <IconBox color={LIGHT.green}>
-                            <Feather name="check" size={18} color={LIGHT.green} />
+                        <IconBox color={UI.green}>
+                            <Feather name="check" size={18} color={UI.green} />
                         </IconBox>
-                        <Card style={{ backgroundColor: LIGHT.card, borderColor: LIGHT.border, width: "100%", gap: 4 }}>
+                        <Card style={{ width: "100%", gap: 4 }}>
                             {result.parsed?.amount != null && (
                                 <AmountPill amount={result.parsed.amount} size="lg" />
                             )}
@@ -492,15 +474,13 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                             </Text>
                             {result.parsed?.note && <Text style={styles.sub}>{result.parsed.note}</Text>}
                             <View style={styles.transcriptRow}>
-                                <Feather name="volume-2" size={12} color={LIGHT.label} style={{ marginTop: 1 }} />
+                                <Feather name="volume-2" size={12} color={UI.label} style={{ marginTop: 1 }} />
                                 <Text style={styles.transcript}>{result.transcript}</Text>
                             </View>
                         </Card>
-                        <Hint color={LIGHT.label}>Saved to your detected transactions — confirm it in Spendly.</Hint>
+                        <Hint>Saved to your detected transactions — confirm it in Spendly.</Hint>
                         <View style={styles.row}>
-                            <Button variant="outline" color={LIGHT.text} borderColor={LIGHT.border} onPress={onClose}>
-                                Done
-                            </Button>
+                            <Button variant="outline" onPress={onClose}>Done</Button>
                             <Button icon="external-link" onPress={() => Linking.openURL(baseUrl)}>Open Spendly</Button>
                         </View>
                     </>
@@ -508,13 +488,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
                 {phase === "error" && (
                     <>
-                        <IconBox color={LIGHT.danger}>
-                            <Feather name="alert-circle" size={18} color={LIGHT.danger} />
+                        <IconBox color={UI.danger}>
+                            <Feather name="alert-circle" size={18} color={UI.danger} />
                         </IconBox>
                         <Text style={styles.error}>{error}</Text>
-                        <Button variant="outline" color={LIGHT.text} borderColor={LIGHT.border} onPress={onClose}>
-                            Close
-                        </Button>
+                        <Button variant="outline" onPress={onClose}>Close</Button>
                     </>
                 )}
             </View>
@@ -523,7 +501,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 };
 
 const styles = StyleSheet.create({
-    screen: { flex: 1, backgroundColor: LIGHT.bg },
+    screen: { flex: 1, backgroundColor: UI.bg },
     header: {
         flexDirection: "row",
         justifyContent: "space-between",
@@ -532,14 +510,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingBottom: 12,
     },
-    title: { color: LIGHT.text, fontSize: 20, fontWeight: "700" },
+    title: { color: UI.text, fontSize: 20, fontWeight: "700" },
     closeButton: {
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: LIGHT.card,
-        borderWidth: 1,
-        borderColor: LIGHT.border,
+        backgroundColor: UI.card,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -550,15 +526,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: 28,
         gap: 14,
     },
+    orbGroup: { alignItems: "center", gap: 10 },
     statusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
-    liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: LIGHT.danger },
-    statusText: { color: LIGHT.label, fontSize: 13, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" },
+    liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: UI.danger },
+    statusText: { color: UI.label, fontSize: 13, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" },
     orbWrap: {
         width: ORB_SIZE,
         height: ORB_SIZE,
         alignItems: "center",
         justifyContent: "center",
-        marginVertical: 6,
     },
     orbCanvas: {
         position: "absolute",
@@ -570,34 +546,24 @@ const styles = StyleSheet.create({
         width: 88,
         height: 88,
         borderRadius: 44,
-        backgroundColor: LIGHT.card,
+        backgroundColor: UI.card,
         borderWidth: 1,
-        borderColor: LIGHT.border,
+        borderColor: UI.border,
         alignItems: "center",
         justifyContent: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-        elevation: 4,
     },
-    lockPill: {
+    lockToggle: {
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 7,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: LIGHT.border,
-        backgroundColor: LIGHT.card,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
     },
-    lockPillActive: { borderColor: LIGHT.accent },
-    lockLabel: { color: LIGHT.label, fontSize: 12, fontWeight: "600" },
+    lockLabel: { color: UI.label, fontSize: 12, fontWeight: "600" },
     row: { flexDirection: "row", justifyContent: "center", gap: 10, marginTop: 4 },
-    payee: { color: LIGHT.text, fontSize: 17, fontWeight: "600" },
-    sub: { color: LIGHT.label, fontSize: 13 },
+    payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
+    sub: { color: UI.label, fontSize: 13 },
     transcriptRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 6 },
-    transcript: { color: LIGHT.label, fontSize: 12, fontStyle: "italic", flex: 1 },
-    error: { color: LIGHT.danger, fontSize: 14, textAlign: "center" },
+    transcript: { color: UI.label, fontSize: 12, fontStyle: "italic", flex: 1 },
+    error: { color: UI.danger, fontSize: 14, textAlign: "center" },
 });
