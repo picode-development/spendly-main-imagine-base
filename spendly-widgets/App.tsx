@@ -308,7 +308,7 @@ export default function App() {
         else setScreen("home");
     };
     if (screen === "search") {
-        return <SearchScreen baseUrl={baseUrl} token={token} onClose={closePopup} />;
+        return <SearchScreen baseUrl={baseUrl} token={token} onClose={closePopup} onOpenVoice={() => setScreen("voice")} />;
     }
     if (screen === "voice") {
         return <VoiceScreen baseUrl={baseUrl} token={token} onClose={closePopup} />;
