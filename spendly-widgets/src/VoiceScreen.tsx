@@ -325,11 +325,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<VoiceResult | null>(null);
     const [orbUniforms, setOrbUniforms] = useState<OrbUniforms>(INITIAL_UNIFORMS);
-    // TEMPORARY diagnostic overlay — five straight blind fixes for
-    // auto-stop failed, so this surfaces the real live numbers instead of
-    // guessing again. Remove once the underlying issue is confirmed fixed.
-    const [debugInfo, setDebugInfo] = useState("");
-    const debugThrottleRef = useRef(0);
 
     const hasSpokenRef = useRef(false);
     // Accumulated quiet time in ms, capped at TRAILING_SILENCE_MS — see
@@ -349,8 +344,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     // Consecutive speech-classified polls — see SPEECH_CONFIRM_POLLS.
     const speechStreakRef = useRef(0);
     const lastPollAtRef = useRef(0);
-    // Latest classification, for the debug overlay only.
-    const lastClassRef = useRef("warmup");
     // Populated by a slower interval, not every animation frame — see the
     // METERING_POLL_MS effect below for why.
     const rawMeterRef = useRef<number | null>(null);
@@ -491,7 +484,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             else if (rawDb >= floor + SPEECH_MARGIN_DB) cls = "speech";
             else if (rawDb <= floor + SILENCE_MARGIN_DB) cls = "silence";
             else cls = "ambiguous";
-            lastClassRef.current = cls;
 
             if (lockedRef.current) {
                 quietAccumMsRef.current = 0;
@@ -567,16 +559,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             // The mic core's subtle volume pulse rides the same envelope —
             // its old source (useAudioRecorderState) is gone, see above.
             pulse.setValue(activity);
-
-            if (t - debugThrottleRef.current > 200) {
-                debugThrottleRef.current = t;
-                setDebugInfo(
-                    `metering raw: ${rawDb === null ? "NULL (no sample yet)" : rawDb.toFixed(1) + " dB"}  class: ${lastClassRef.current}\n` +
-                    `floor: ${noiseFloorRef.current === null ? "—" : noiseFloorRef.current.toFixed(1)} (win ${floorWindowRef.current.length}/${FLOOR_WINDOW_SAMPLES})  silence<=${silenceCeiling.toFixed(1)}  speech>=${(floor + SPEECH_MARGIN_DB).toFixed(1)}\n` +
-                    `hasSpoken: ${hasSpokenRef.current} (streak ${speechStreakRef.current})  quietAccum: ${(quietAccumMsRef.current / 1000).toFixed(1)}s / ${(TRAILING_SILENCE_MS / 1000).toFixed(1)}s  locked: ${lockedRef.current}\n` +
-                    `activity: ${activity.toFixed(2)}`,
-                );
-            }
 
             raf = requestAnimationFrame(tick);
         };
@@ -730,7 +712,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
                         {/* TEMPORARY diagnostic overlay — remove once
                             auto-stop is confirmed fixed on-device. */}
-                        {!!debugInfo && <Text style={styles.debugText}>{debugInfo}</Text>}
                     </View>
                 )}
 
@@ -864,17 +845,6 @@ const styles = StyleSheet.create({
     lockToggleActive: { backgroundColor: `${UI.accent}26` },
     lockTogglePressed: { opacity: 0.7 },
     lockLabel: { color: UI.label, fontSize: 12, fontWeight: "600" },
-    debugText: {
-        marginTop: 8,
-        color: "#84cc16",
-        fontSize: 10,
-        fontFamily: "monospace",
-        textAlign: "center",
-        backgroundColor: "#00000066",
-        paddingHorizontal: 8,
-        paddingVertical: 6,
-        borderRadius: 6,
-    },
     row: { flexDirection: "row", justifyContent: "center", gap: 10, marginTop: 4 },
     payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
     sub: { color: UI.label, fontSize: 13 },
