@@ -68,8 +68,8 @@ export const isTokenValid = async (baseUrl: string, token: string): Promise<bool
     const t = withTimeout(8_000);
     try {
         const res = await fetch(
-            `${baseUrl}/api/widget/summary?token=${encodeURIComponent(token)}`,
-            { signal: t.signal },
+            `${baseUrl}/api/widget/summary`,
+            { headers: { Authorization: `Bearer ${token}` }, signal: t.signal },
         );
         return res.status !== 401;
     } catch {
@@ -110,11 +110,12 @@ export const uploadVoice = async (
     try {
         const file = new File(fileUri);
         const result = await file.upload(
-            `${baseUrl}/api/widget/voice?token=${encodeURIComponent(token)}`,
+            `${baseUrl}/api/widget/voice`,
             {
                 uploadType: UploadType.MULTIPART,
                 fieldName: "audio",
                 mimeType: "audio/m4a",
+                headers: { Authorization: `Bearer ${token}` },
                 signal: controller.signal,
             },
         );
@@ -142,8 +143,8 @@ export const fetchSummary = async (
     try {
         const tzOffset = -new Date().getTimezoneOffset();
         const res = await fetch(
-            `${baseUrl}/api/widget/summary?token=${encodeURIComponent(token)}&tzOffset=${tzOffset}${configToParams(config)}`,
-            { signal: t.signal },
+            `${baseUrl}/api/widget/summary?tzOffset=${tzOffset}${configToParams(config)}`,
+            { headers: { Authorization: `Bearer ${token}` }, signal: t.signal },
         );
         if (!res.ok) return null;
         const { data } = await res.json();
@@ -179,8 +180,8 @@ export const fetchTransactions = async (
         }
         const extraQs = extras.toString() ? `&${extras.toString()}` : "";
         const res = await fetch(
-            `${baseUrl}/api/widget/transactions?token=${encodeURIComponent(token)}&limit=${limit}${configToParams(config)}${extraQs}`,
-            { signal: t.signal },
+            `${baseUrl}/api/widget/transactions?limit=${limit}${configToParams(config)}${extraQs}`,
+            { headers: { Authorization: `Bearer ${token}` }, signal: t.signal },
         );
         if (!res.ok) return null;
         const { data } = await res.json();
