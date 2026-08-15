@@ -47,6 +47,13 @@ const LOUD_MARGIN_DB = 40;
 const NOISE_FLOOR_CLAMP_MIN = -55;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
+// Unconditional backstop, independent of metering entirely: if metering
+// itself isn't reporting real values on a given device (a known issue in
+// some expo-audio versions — see the prepareToRecordAsync fix below),
+// every threshold-based auto-stop check above silently does nothing
+// forever. This guarantees recording always ends and gets processed
+// eventually no matter what, same as tapping the orb manually.
+const MAX_RECORDING_MS = 45_000;
 
 const ORB_SIZE = 200;
 const INTRO_MS = 600;
@@ -335,7 +342,12 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 return;
             }
             await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-            await recorder.prepareToRecordAsync();
+            // isMeteringEnabled passed only to useAudioRecorder's initial
+            // config is unreliable on some expo-audio versions — passing it
+            // here too is the documented workaround (expo/expo#37241) and
+            // is very likely why metering-based auto-stop never worked at
+            // all, regardless of how the threshold logic was tuned.
+            await recorder.prepareToRecordAsync({ isMeteringEnabled: true });
             recorder.record();
             startedAtRef.current = Date.now();
             setPhase("recording");
@@ -443,9 +455,15 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             iconVisibleRef.current = true;
             Animated.timing(iconAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
         }, INTRO_MS);
+        // Unconditional — fires regardless of metering, locked, or anything
+        // else above. void stopAndUpload() is itself idempotent (guarded by
+        // stoppingRef), so this is safe even if a metering-based stop also
+        // fires around the same moment.
+        const maxDurationTimer = setTimeout(() => void stopAndUpload(), MAX_RECORDING_MS);
         return () => {
             cancelAnimationFrame(raf);
             clearTimeout(introTimer);
+            clearTimeout(maxDurationTimer);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [phase]);
