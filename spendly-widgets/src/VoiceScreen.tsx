@@ -26,25 +26,32 @@ import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
 // sustained quiet ends the recording; never-spoke bails out sooner.
 // Levels are dBFS (negative; closer to 0 = louder) — but unlike the web
 // app (a real Web Audio AnalyserNode, consistently calibrated), Android's
-// MediaRecorder-based metering varies a lot by device/manufacturer: a
-// fixed absolute cutoff tuned against one phone's "silence" can sit well
-// above another phone's actual noise floor, so genuine silence never
-// crosses it and auto-stop never fires. Fixed thresholds were tried twice
-// (-38, then -32) and still failed on-device. Replaced with an adaptive
-// floor: track the quietest reading actually observed this recording
-// (see noiseFloorRef in the component) and define speech/silence as
-// margins ABOVE that floor, so it self-calibrates to whatever a given
-// phone's real silence reads as, instead of guessing a universal number.
+// MediaRecorder-based metering varies a lot by device/manufacturer AND by
+// room (e.g. a fan or AC running), so a fixed cutoff can't work. Uses an
+// ADAPTIVE floor (noiseFloorRef in the component) and defines speech/
+// silence as margins above it. First tried as a running MINIMUM (only
+// ever adapts down) — failed with continuous background noise (a fan):
+// if the floor happened to calibrate from one lucky quiet instant early
+// on, it could never re-adjust upward to the fan's actual steady level,
+// so the fan's normal volume kept reading as "louder than the silence
+// threshold" (or even "speech") for the WHOLE recording, no matter how
+// the countdown logic tolerated individual blips. Replaced with a slow
+// bidirectional EMA that continuously tracks toward whatever the CURRENT
+// non-speech ambient level actually is (adapts up just as readily as
+// down), so it settles on the fan's real running level within a few
+// seconds instead of being pinned to a single historical sample.
 const SILENCE_MARGIN_DB = 8;
 const SPEECH_MARGIN_DB = 16;
 const LOUD_MARGIN_DB = 40;
-// Never let an anomalously-quiet reading drag the floor down further than
-// a real phone mic's self-noise floor realistically goes — this was the
-// actual bug: an uninitialized "no data yet" placeholder briefly got
-// treated as a real reading and permanently pinned the floor here, and
-// with the old -70 clamp that meant NOTHING real (including genuine
-// silence) ever registered as quiet again for the rest of the recording.
-const NOISE_FLOOR_CLAMP_MIN = -55;
+// Per-poll blend rate for the floor EMA — ~3s time constant at
+// METERING_POLL_MS. Fast enough to settle on a room's real ambient level
+// (e.g. after a fan starts) within a few seconds, slow enough not to
+// chase brief dips during normal speech pauses.
+const FLOOR_ADAPT_RATE = 0.05;
+// Sanity bounds so a single bad sample (or a very loud/quiet room) can't
+// push the EMA somewhere unrealistic for a phone mic's self-noise floor.
+const NOISE_FLOOR_CLAMP_MIN = -70;
+const NOISE_FLOOR_CLAMP_MAX = -20;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 // On-device diagnostics showed isolated loud readings recurring roughly
@@ -312,10 +319,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const lockedRef = useRef(false);
     const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
-    // Seeded loud (0dBFS) so the running minimum converges DOWN to
-    // whatever this phone's real ambient floor is, whatever that turns
-    // out to be, rather than assuming a guessed starting point.
-    const noiseFloorRef = useRef(0);
+    // null until the first real sample, which the floor snaps to directly
+    // (avoids a slow initial climb/descent from an arbitrary seed) —
+    // afterward it's nudged by FLOOR_ADAPT_RATE toward the current
+    // non-speech ambient level every poll, in either direction.
+    const noiseFloorRef = useRef<number | null>(null);
     // Populated by a slower interval, not every animation frame — see the
     // METERING_POLL_MS effect below for why.
     const rawMeterRef = useRef<number | null>(null);
@@ -443,20 +451,32 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             const dt = (t - lastTime) * 0.001;
             lastTime = t;
 
-            // Only real samples calibrate the floor — the brief gap before
-            // the recorder's first metering sample arrives must NOT be
-            // treated as data, or it permanently anchors the floor at the
-            // clamp minimum (this was the actual bug: everything after
-            // that read as "louder than silence" forever, since nothing
-            // could ever be quieter than an artificial rock-bottom floor).
+            // Thresholds for THIS frame come from the floor as of the end
+            // of the previous frame — avoids a circular dependency (the
+            // floor update below needs speechFloor to decide whether a
+            // sample counts as "ambient", but speechFloor needs the floor).
+            // One frame of lag (~16ms) is immaterial.
             const rawDb = rawMeterRef.current;
+            const priorFloor = noiseFloorRef.current ?? NOISE_FLOOR_CLAMP_MIN;
+            const silenceCeiling = priorFloor + SILENCE_MARGIN_DB;
+            const speechFloor = priorFloor + SPEECH_MARGIN_DB;
+            const loudCeiling = priorFloor + LOUD_MARGIN_DB;
+
+            // Only real samples update the floor, and only ones that
+            // aren't confidently "speech" — this is what lets it track
+            // continuous ambient noise (e.g. a fan) rather than a single
+            // historical minimum: as long as the fan itself doesn't sound
+            // as loud as deliberate speech, every fan-only reading keeps
+            // nudging the floor toward the fan's real running level.
             if (rawDb !== null) {
-                noiseFloorRef.current = Math.max(NOISE_FLOOR_CLAMP_MIN, Math.min(noiseFloorRef.current, rawDb));
+                if (noiseFloorRef.current === null) {
+                    noiseFloorRef.current = rawDb;
+                } else if (rawDb < speechFloor) {
+                    const next = priorFloor + (rawDb - priorFloor) * FLOOR_ADAPT_RATE;
+                    noiseFloorRef.current = Math.min(NOISE_FLOOR_CLAMP_MAX, Math.max(NOISE_FLOOR_CLAMP_MIN, next));
+                }
             }
             const db = rawDb ?? -160;
-            const silenceCeiling = noiseFloorRef.current + SILENCE_MARGIN_DB;
-            const speechFloor = noiseFloorRef.current + SPEECH_MARGIN_DB;
-            const loudCeiling = noiseFloorRef.current + LOUD_MARGIN_DB;
 
             const targetActivity = db <= silenceCeiling ? 0 : Math.min(1, (db - silenceCeiling) / (loudCeiling - silenceCeiling));
             const rate = targetActivity > activityRef.current ? ACTIVITY_ATTACK : ACTIVITY_RELEASE;
@@ -504,7 +524,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 debugThrottleRef.current = t;
                 setDebugInfo(
                     `metering raw: ${rawDb === null ? "NULL (no sample yet)" : rawDb.toFixed(1) + " dB"}\n` +
-                    `floor: ${noiseFloorRef.current.toFixed(1)}  silence<=${silenceCeiling.toFixed(1)}  speech>=${speechFloor.toFixed(1)}\n` +
+                    `floor: ${noiseFloorRef.current === null ? "—" : noiseFloorRef.current.toFixed(1)}  silence<=${silenceCeiling.toFixed(1)}  speech>=${speechFloor.toFixed(1)}\n` +
                     `hasSpoken: ${hasSpokenRef.current}  quietAccum: ${(quietAccumMsRef.current / 1000).toFixed(1)}s / ${(TRAILING_SILENCE_MS / 1000).toFixed(1)}s  locked: ${lockedRef.current}\n` +
                     `activity: ${activity.toFixed(2)}`,
                 );
