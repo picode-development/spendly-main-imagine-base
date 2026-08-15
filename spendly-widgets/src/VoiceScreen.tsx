@@ -17,7 +17,6 @@ import {
     requestRecordingPermissionsAsync,
     setAudioModeAsync,
     useAudioRecorder,
-    useAudioRecorderState,
 } from "expo-audio";
 import { uploadVoice, VoiceResult } from "./api";
 import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
@@ -43,15 +42,34 @@ import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
 const SILENCE_MARGIN_DB = 8;
 const SPEECH_MARGIN_DB = 16;
 const LOUD_MARGIN_DB = 40;
-// Per-poll blend rate for the floor EMA — ~3s time constant at
-// METERING_POLL_MS. Fast enough to settle on a room's real ambient level
-// (e.g. after a fan starts) within a few seconds, slow enough not to
-// chase brief dips during normal speech pauses.
-const FLOOR_ADAPT_RATE = 0.05;
-// Sanity bounds so a single bad sample (or a very loud/quiet room) can't
-// push the EMA somewhere unrealistic for a phone mic's self-noise floor.
+// The floor is the LOW PERCENTILE of a sliding window of recent real
+// samples, recomputed every poll — NOT a gated EMA or running minimum.
+// Both prior designs deadlocked: a running minimum could never adapt UP
+// to a fan's continuous level, and the EMA only updated from samples it
+// classified as "not speech" — so once the floor got stuck too low
+// (e.g. initialized from Android's first-read amplitude of 0 = -160dB),
+// everything read as speech, no sample ever qualified to update the
+// floor again, and it stayed wrong for the rest of the recording. A
+// windowed percentile has no gate and no memory beyond the window, so
+// it recovers from ANY bad state within a few seconds by construction:
+// whatever level the quietest ~10% of the last 6 seconds sat at IS the
+// floor, whether that's a silent bedroom or a running fan.
+const FLOOR_WINDOW_SAMPLES = 40; // ~6s of history at METERING_POLL_MS
+const FLOOR_PERCENTILE = 0.1;
+const FLOOR_MIN_SAMPLES = 6; // no speech/silence verdicts until ~0.9s of real data
+// Android reports exactly -160dB when the peak-hold register reads 0 —
+// "no signal since last read", seen at recording start and during true
+// digital silence. These are treated as silence for the countdown (they
+// are definitionally quiet) but are excluded from floor calibration,
+// since -160 is a sentinel for "nothing", not a measured ambient level.
+const DROPOUT_DB = -120;
+// Sanity bounds for the computed floor — a phone mic's plausible range.
 const NOISE_FLOOR_CLAMP_MIN = -70;
 const NOISE_FLOOR_CLAMP_MAX = -20;
+// hasSpoken latches only after this many CONSECUTIVE speech-level polls
+// (~300ms of sustained sound) — a single loud blip (breath, bump,
+// keyboard clack) no longer counts as the user having spoken.
+const SPEECH_CONFIRM_POLLS = 2;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 // On-device diagnostics showed isolated loud readings recurring roughly
@@ -291,10 +309,16 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         ...RecordingPresets.HIGH_QUALITY,
         isMeteringEnabled: true,
     });
-    // Faster than the 150ms used before — the orb's own attack/release
-    // envelope already smooths frame-to-frame, but it can only react as
-    // fast as new metering values actually arrive.
-    const recorderState = useAudioRecorderState(recorder, 60);
+    // Deliberately NO useAudioRecorderState here. That hook runs its own
+    // setInterval calling recorder.getStatus() — and on Android, EVERY
+    // getStatus() call reads MediaRecorder.getMaxAmplitude(), which
+    // returns the peak SINCE THE LAST READ and resets the register
+    // (confirmed in this package's AudioRecorder.kt:
+    // getAudioRecorderStatus → getAudioRecorderLevels → maxAmplitude).
+    // A second reader polling in parallel means OUR reads only ever see
+    // the peak since the HOOK's last read — tiny windows that flap
+    // between -160 and real values. The 150ms poll below must be the
+    // ONLY getStatus() caller while recording.
 
     const [phase, setPhase] = useState<Phase>("starting");
     const [locked, setLocked] = useState(false);
@@ -315,15 +339,18 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
-    const levelRef = useRef(0);
     const lockedRef = useRef(false);
     const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
-    // null until the first real sample, which the floor snaps to directly
-    // (avoids a slow initial climb/descent from an arbitrary seed) —
-    // afterward it's nudged by FLOOR_ADAPT_RATE toward the current
-    // non-speech ambient level every poll, in either direction.
+    // Sliding window of recent real (non-dropout) samples; the floor is
+    // its FLOOR_PERCENTILE, null until FLOOR_MIN_SAMPLES have arrived.
+    const floorWindowRef = useRef<number[]>([]);
     const noiseFloorRef = useRef<number | null>(null);
+    // Consecutive speech-classified polls — see SPEECH_CONFIRM_POLLS.
+    const speechStreakRef = useRef(0);
+    const lastPollAtRef = useRef(0);
+    // Latest classification, for the debug overlay only.
+    const lastClassRef = useRef("warmup");
     // Populated by a slower interval, not every animation frame — see the
     // METERING_POLL_MS effect below for why.
     const rawMeterRef = useRef<number | null>(null);
@@ -413,33 +440,82 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     // keys off `iTime` (noise wobble, hue sweep, orbiting hotspot) smoothly
     // decelerates to a stop rather than freezing/unfreezing abruptly.
     //
-    // The silence check reads recorder.getStatus().metering DIRECTLY every
-    // frame here, bypassing useAudioRecorderState/recorderState entirely
-    // for this critical path. Confirmed by reading expo-audio's own source
-    // (node_modules/expo-audio/src/utils/useAudioRecorderState.ts): that
-    // hook deliberately SUPPRESSES its own state update — and therefore a
-    // React re-render — whenever the new metering reading is within 0.1dB
-    // of the previous one. Real silence is acoustically stable frame to
-    // frame, so it routinely stays within that 0.1dB band, meaning
-    // recorderState.metering (and anything derived from it, no matter how
-    // it's consumed downstream) can simply stop updating for the rest of a
-    // quiet stretch. No amount of restructuring the CONSUMING code could
-    // ever fix that — the suppression happens upstream, inside the library
-    // hook itself. recorder.getStatus() is the same plain method that hook
-    // calls internally, but rawMeterRef (populated by the slower
-    // METERING_POLL_MS interval below, not this loop) reads it unsuppressed
-    // AND at a rate that doesn't fight the underlying peak-hold reset
-    // behavior — see METERING_POLL_MS's own comment for that second issue,
-    // confirmed from on-device diagnostics after the suppression fix alone
-    // still wasn't enough.
+    // The silence check lives entirely inside pollMeter — the single
+    // getStatus() reader (see the comment where useAudioRecorderState
+    // used to be for why there must be exactly one), evaluating each
+    // sample exactly once. This loop only animates.
     //
     // No reanimated — plain rAF + state is fine for a single full-screen
     // canvas. The mic icon fades in a beat later.
     useEffect(() => {
         if (phase !== "recording") return;
         rawMeterRef.current = null;
+        floorWindowRef.current = [];
+        noiseFloorRef.current = null;
+        speechStreakRef.current = 0;
+        lastPollAtRef.current = 0;
+        // ALL detection happens here, exactly once per metering sample.
+        // It used to live in the rAF tick below — which runs ~9 frames
+        // per 150ms sample, so a single loud sample applied the
+        // BLIP_PENALTY_MS drain ~9 times (≈5.4s), wiping the whole 2.5s
+        // bucket every time. The "leaky bucket" was effectively a hard
+        // reset. Verdicts must be per-SAMPLE, never per-frame.
         const pollMeter = () => {
-            rawMeterRef.current = recorder.getStatus().metering ?? null;
+            const rawDb = recorder.getStatus().metering ?? null;
+            rawMeterRef.current = rawDb;
+            const now = Date.now();
+            const elapsed = lastPollAtRef.current ? Math.min(1000, now - lastPollAtRef.current) : METERING_POLL_MS;
+            lastPollAtRef.current = now;
+            if (rawDb === null) return;
+
+            // Calibrate the floor from real samples only.
+            if (rawDb > DROPOUT_DB) {
+                const win = floorWindowRef.current;
+                win.push(rawDb);
+                if (win.length > FLOOR_WINDOW_SAMPLES) win.shift();
+                if (win.length >= FLOOR_MIN_SAMPLES) {
+                    const sorted = [...win].sort((a, b) => a - b);
+                    const idx = Math.floor(FLOOR_PERCENTILE * (sorted.length - 1));
+                    noiseFloorRef.current = Math.min(NOISE_FLOOR_CLAMP_MAX, Math.max(NOISE_FLOOR_CLAMP_MIN, sorted[idx]));
+                }
+            }
+
+            // Classify THIS sample. During warmup (no floor yet) nothing
+            // is a speech OR silence verdict — early garbage can't latch
+            // hasSpoken or feed the countdown. Dropout readings are
+            // definitionally quiet regardless of calibration.
+            const floor = noiseFloorRef.current;
+            let cls: "silence" | "speech" | "ambiguous" | "warmup";
+            if (rawDb <= DROPOUT_DB) cls = "silence";
+            else if (floor === null) cls = "warmup";
+            else if (rawDb >= floor + SPEECH_MARGIN_DB) cls = "speech";
+            else if (rawDb <= floor + SILENCE_MARGIN_DB) cls = "silence";
+            else cls = "ambiguous";
+            lastClassRef.current = cls;
+
+            if (lockedRef.current) {
+                quietAccumMsRef.current = 0;
+                speechStreakRef.current = 0;
+                return;
+            }
+
+            if (cls === "speech") {
+                speechStreakRef.current += 1;
+                if (speechStreakRef.current >= SPEECH_CONFIRM_POLLS) hasSpokenRef.current = true;
+                quietAccumMsRef.current = Math.max(0, quietAccumMsRef.current - BLIP_PENALTY_MS);
+            } else {
+                speechStreakRef.current = 0;
+                if (cls === "silence") {
+                    quietAccumMsRef.current = Math.min(TRAILING_SILENCE_MS, quietAccumMsRef.current + elapsed);
+                    if (hasSpokenRef.current && quietAccumMsRef.current >= TRAILING_SILENCE_MS) void stopAndUpload();
+                }
+            }
+            if (!hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
+                setError("Didn't hear anything.");
+                setPhase("error");
+                stoppingRef.current = true;
+                recorder.stop().catch(() => {});
+            }
         };
         pollMeter();
         const meterInterval = setInterval(pollMeter, METERING_POLL_MS);
@@ -451,31 +527,12 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             const dt = (t - lastTime) * 0.001;
             lastTime = t;
 
-            // Thresholds for THIS frame come from the floor as of the end
-            // of the previous frame — avoids a circular dependency (the
-            // floor update below needs speechFloor to decide whether a
-            // sample counts as "ambient", but speechFloor needs the floor).
-            // One frame of lag (~16ms) is immaterial.
+            // Purely visual from here — every speech/silence decision
+            // lives in pollMeter above, once per real sample.
             const rawDb = rawMeterRef.current;
-            const priorFloor = noiseFloorRef.current ?? NOISE_FLOOR_CLAMP_MIN;
-            const silenceCeiling = priorFloor + SILENCE_MARGIN_DB;
-            const speechFloor = priorFloor + SPEECH_MARGIN_DB;
-            const loudCeiling = priorFloor + LOUD_MARGIN_DB;
-
-            // Only real samples update the floor, and only ones that
-            // aren't confidently "speech" — this is what lets it track
-            // continuous ambient noise (e.g. a fan) rather than a single
-            // historical minimum: as long as the fan itself doesn't sound
-            // as loud as deliberate speech, every fan-only reading keeps
-            // nudging the floor toward the fan's real running level.
-            if (rawDb !== null) {
-                if (noiseFloorRef.current === null) {
-                    noiseFloorRef.current = rawDb;
-                } else if (rawDb < speechFloor) {
-                    const next = priorFloor + (rawDb - priorFloor) * FLOOR_ADAPT_RATE;
-                    noiseFloorRef.current = Math.min(NOISE_FLOOR_CLAMP_MAX, Math.max(NOISE_FLOOR_CLAMP_MIN, next));
-                }
-            }
+            const floor = noiseFloorRef.current ?? NOISE_FLOOR_CLAMP_MIN;
+            const silenceCeiling = floor + SILENCE_MARGIN_DB;
+            const loudCeiling = floor + LOUD_MARGIN_DB;
             const db = rawDb ?? -160;
 
             const targetActivity = db <= silenceCeiling ? 0 : Math.min(1, (db - silenceCeiling) / (loudCeiling - silenceCeiling));
@@ -494,38 +551,16 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 rot: currentRot,
                 hoverIntensity: activity * MAX_HOVER_INTENSITY,
             });
-
-            const now = Date.now();
-            if (!lockedRef.current) {
-                if (db >= speechFloor) {
-                    hasSpokenRef.current = true;
-                    // A confirmed-loud poll costs progress rather than
-                    // wiping the countdown out entirely — see
-                    // BLIP_PENALTY_MS's comment.
-                    quietAccumMsRef.current = Math.max(0, quietAccumMsRef.current - BLIP_PENALTY_MS);
-                } else if (db <= silenceCeiling) {
-                    quietAccumMsRef.current = Math.min(TRAILING_SILENCE_MS, quietAccumMsRef.current + dt * 1000);
-                    if (hasSpokenRef.current && quietAccumMsRef.current >= TRAILING_SILENCE_MS) void stopAndUpload();
-                    else if (!hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
-                        setError("Didn't hear anything.");
-                        setPhase("error");
-                        stoppingRef.current = true;
-                        recorder.stop().catch(() => {});
-                    }
-                }
-                // Ambiguous zone (between silenceCeiling and speechFloor):
-                // leave the accumulator untouched — neither progress nor
-                // penalty.
-            } else {
-                quietAccumMsRef.current = 0;
-            }
+            // The mic core's subtle volume pulse rides the same envelope —
+            // its old source (useAudioRecorderState) is gone, see above.
+            pulse.setValue(activity);
 
             if (t - debugThrottleRef.current > 200) {
                 debugThrottleRef.current = t;
                 setDebugInfo(
-                    `metering raw: ${rawDb === null ? "NULL (no sample yet)" : rawDb.toFixed(1) + " dB"}\n` +
-                    `floor: ${noiseFloorRef.current === null ? "—" : noiseFloorRef.current.toFixed(1)}  silence<=${silenceCeiling.toFixed(1)}  speech>=${speechFloor.toFixed(1)}\n` +
-                    `hasSpoken: ${hasSpokenRef.current}  quietAccum: ${(quietAccumMsRef.current / 1000).toFixed(1)}s / ${(TRAILING_SILENCE_MS / 1000).toFixed(1)}s  locked: ${lockedRef.current}\n` +
+                    `metering raw: ${rawDb === null ? "NULL (no sample yet)" : rawDb.toFixed(1) + " dB"}  class: ${lastClassRef.current}\n` +
+                    `floor: ${noiseFloorRef.current === null ? "—" : noiseFloorRef.current.toFixed(1)} (win ${floorWindowRef.current.length}/${FLOOR_WINDOW_SAMPLES})  silence<=${silenceCeiling.toFixed(1)}  speech>=${(floor + SPEECH_MARGIN_DB).toFixed(1)}\n` +
+                    `hasSpoken: ${hasSpokenRef.current} (streak ${speechStreakRef.current})  quietAccum: ${(quietAccumMsRef.current / 1000).toFixed(1)}s / ${(TRAILING_SILENCE_MS / 1000).toFixed(1)}s  locked: ${lockedRef.current}\n` +
                     `activity: ${activity.toFixed(2)}`,
                 );
             }
@@ -585,14 +620,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         if (locked) quietAccumMsRef.current = 0;
     }, [locked]);
 
-    // Cosmetic only (the mic core's subtle scale-with-volume pulse) — fine
-    // to source from the hook's possibly-suppressed value, unlike the
-    // auto-stop path above which reads recorder.getStatus() directly.
-    const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
-    useEffect(() => {
-        levelRef.current = level;
-        Animated.spring(pulse, { toValue: level, useNativeDriver: true, friction: 6 }).start();
-    }, [level, pulse]);
     useEffect(() => {
         if (phase !== "recording") return;
         const loop = Animated.loop(
