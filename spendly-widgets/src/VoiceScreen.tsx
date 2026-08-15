@@ -1,6 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Linking, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
+import {
+    ActivityIndicator,
+    Animated,
+    Easing,
+    Linking,
+    Pressable,
+    StatusBar,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import {
     RecordingPresets,
     requestRecordingPermissionsAsync,
@@ -9,7 +20,7 @@ import {
     useAudioRecorderState,
 } from "expo-audio";
 import { uploadVoice, VoiceResult } from "./api";
-import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
+import { AmountPill, Button, Card, Hint, IconBox } from "./ui";
 
 // Mirrors the web app's silence auto-stop: once the user has spoken,
 // sustained quiet ends the recording; never-spoke bails out sooner.
@@ -18,6 +29,26 @@ const SPEECH_DB = -25;
 const SILENCE_DB = -38;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
+
+// A light, grayish-white palette used only on this screen — deliberately
+// distinct from the rest of the (dark) app, per design reference.
+const LIGHT = {
+    bg: "#f1f0f7",
+    card: "#ffffff",
+    border: "#e2e0ee",
+    text: "#1e1b2e",
+    label: "#6b6880",
+    danger: "#dc2626",
+    green: "#16a34a",
+    accent: "#7c6ef2",
+} as const;
+
+const GRADIENT = ["#60a5fa", "#a78bfa", "#f472b6"] as const;
+const ORB_SIZE = 176;
+const BLOB_CORE = 104;
+const BLOB_WRAP = Math.round(BLOB_CORE * 1.6);
+const ORBIT_R = 36;
+const INTRO_MS = 600;
 
 type Props = {
     baseUrl: string;
@@ -29,9 +60,10 @@ type Phase = "starting" | "recording" | "uploading" | "done" | "error";
 
 // A widget button opens this as its own full-screen page (PopupActivity),
 // not a floating card — Android can't render a truly transparent Activity
-// reliably (it showed a dark tinge instead of the launcher behind it), so
-// this owns its own solid background and a real header like any other
-// screen in the app.
+// reliably, so this owns its own background and a real header like any
+// other screen in the app. The recording view intentionally breaks from
+// the app's dark theme (grayish-white, per design reference) with a
+// gradient orb that flows in before the mic appears and recording begins.
 export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const recorder = useAudioRecorder({
         ...RecordingPresets.HIGH_QUALITY,
@@ -48,6 +80,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const quietSinceRef = useRef<number | null>(null);
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
+    const iconVisibleRef = useRef(false);
+
+    const spin = useRef(new Animated.Value(0)).current;
+    const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
     const dotBlink = useRef(new Animated.Value(1)).current;
 
@@ -105,6 +141,26 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // The orb: two gradient blobs flow around an empty center as soon as
+    // recording starts, then the mic icon fades in a beat later. Audio
+    // capture already began above — this delay is purely visual.
+    useEffect(() => {
+        if (phase !== "recording") return;
+        const spinLoop = Animated.loop(
+            Animated.timing(spin, { toValue: 1, duration: 6000, easing: Easing.linear, useNativeDriver: true }),
+        );
+        spinLoop.start();
+        const introTimer = setTimeout(() => {
+            iconVisibleRef.current = true;
+            Animated.timing(iconAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+        }, INTRO_MS);
+        return () => {
+            spinLoop.stop();
+            clearTimeout(introTimer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [phase]);
+
     // Silence auto-stop, suspended while locked
     useEffect(() => {
         if (phase !== "recording" || locked) {
@@ -133,10 +189,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     }, [recorderState.metering, phase, locked]);
 
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
-
-    // The mic circle grows a little with speech volume, and the "Listening"
-    // dot breathes steadily — a full page has room for a real focal point
-    // instead of just a thin meter bar.
     useEffect(() => {
         Animated.spring(pulse, { toValue: level, useNativeDriver: true, friction: 6 }).start();
     }, [level, pulse]);
@@ -151,20 +203,28 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         loop.start();
         return () => loop.stop();
     }, [phase, dotBlink]);
-    const micScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] });
+
+    const spinDeg = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+    const iconScale = iconAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] });
+    const corePulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
+
+    const handleOrbTap = () => {
+        if (phase !== "recording" || !iconVisibleRef.current) return;
+        void stopAndUpload();
+    };
 
     return (
         <View style={styles.screen}>
-            <StatusBar barStyle="light-content" backgroundColor={UI.bg} />
+            <StatusBar barStyle="dark-content" backgroundColor={LIGHT.bg} />
             <View style={styles.header}>
                 <Text style={styles.title}>Voice note</Text>
                 <Pressable onPress={onClose} hitSlop={12} style={styles.closeButton}>
-                    <Feather name="x" size={18} color={UI.label} />
+                    <Feather name="x" size={18} color={LIGHT.label} />
                 </Pressable>
             </View>
 
             <View style={styles.content}>
-                {phase === "starting" && <ActivityIndicator color={UI.accent} />}
+                {phase === "starting" && <ActivityIndicator color={LIGHT.accent} />}
 
                 {phase === "recording" && (
                     <>
@@ -172,47 +232,57 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                             <Animated.View style={[styles.liveDot, { opacity: dotBlink }]} />
                             <Text style={styles.statusText}>{locked ? "Recording" : "Listening"}</Text>
                         </View>
-                        <View style={styles.micWrap}>
-                            <Animated.View style={[styles.micRing, { transform: [{ scale: micScale }] }]} />
-                            <View style={styles.micCore}>
-                                <Feather name="mic" size={34} color={UI.danger} />
-                            </View>
-                        </View>
-                        <Hint>
-                            Speak the transaction — it stops by itself when you go quiet.
+
+                        <Pressable onPress={handleOrbTap} hitSlop={20} style={styles.orbWrap}>
+                            <Animated.View style={[styles.orbitLayer, { transform: [{ rotate: spinDeg }] }]}>
+                                <View style={[styles.blobSlot, { transform: [{ translateX: ORBIT_R }] }]}>
+                                    <GradientBlob start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }} />
+                                </View>
+                                <View style={[styles.blobSlot, { transform: [{ translateX: -ORBIT_R }] }]}>
+                                    <GradientBlob start={{ x: 0.9, y: 0 }} end={{ x: 0.1, y: 1 }} />
+                                </View>
+                            </Animated.View>
+
+                            <Animated.View
+                                style={[
+                                    styles.micCore,
+                                    { opacity: iconAnim, transform: [{ scale: iconScale }, { scale: corePulseScale }] },
+                                ]}
+                            >
+                                <Feather name="mic" size={30} color={LIGHT.accent} />
+                            </Animated.View>
+                        </Pressable>
+
+                        <Hint color={LIGHT.label}>
+                            Speak the transaction — tap to stop, or it stops itself when you go quiet.
                             {locked ? " Auto-stop is off." : ""}
                         </Hint>
-                        <View style={styles.actionsRow}>
-                            <Pressable
-                                onPress={() => setLocked((l) => !l)}
-                                style={[styles.iconButton, locked && styles.iconButtonActive]}
-                            >
-                                <Feather name={locked ? "lock" : "unlock"} size={18} color={locked ? UI.accent : UI.label} />
-                                <Text style={[styles.iconButtonLabel, locked && { color: UI.accent }]}>
-                                    {locked ? "Locked" : "Lock"}
-                                </Text>
-                            </Pressable>
-                            <Pressable onPress={stopAndUpload} style={styles.stopButton}>
-                                <Feather name="square" size={20} color="#0f172a" />
-                            </Pressable>
-                            <View style={styles.iconButton} />
-                        </View>
+
+                        <Pressable
+                            onPress={() => setLocked((l) => !l)}
+                            style={[styles.lockPill, locked && styles.lockPillActive]}
+                        >
+                            <Feather name={locked ? "lock" : "unlock"} size={14} color={locked ? LIGHT.accent : LIGHT.label} />
+                            <Text style={[styles.lockLabel, locked && { color: LIGHT.accent }]}>
+                                {locked ? "Locked" : "Lock"}
+                            </Text>
+                        </Pressable>
                     </>
                 )}
 
                 {phase === "uploading" && (
                     <>
-                        <ActivityIndicator color={UI.accent} style={{ marginBottom: 12 }} />
-                        <Hint>Understanding your voice note…</Hint>
+                        <ActivityIndicator color={LIGHT.accent} style={{ marginBottom: 12 }} />
+                        <Hint color={LIGHT.label}>Understanding your voice note…</Hint>
                     </>
                 )}
 
                 {phase === "done" && result && (
                     <>
-                        <IconBox color={UI.green}>
-                            <Feather name="check" size={18} color={UI.green} />
+                        <IconBox color={LIGHT.green}>
+                            <Feather name="check" size={18} color={LIGHT.green} />
                         </IconBox>
-                        <Card style={styles.resultCard}>
+                        <Card style={{ backgroundColor: LIGHT.card, borderColor: LIGHT.border, width: "100%", gap: 4 }}>
                             {result.parsed?.amount != null && (
                                 <AmountPill amount={result.parsed.amount} size="lg" />
                             )}
@@ -223,13 +293,15 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                             </Text>
                             {result.parsed?.note && <Text style={styles.sub}>{result.parsed.note}</Text>}
                             <View style={styles.transcriptRow}>
-                                <Feather name="volume-2" size={12} color={UI.label} style={{ marginTop: 1 }} />
+                                <Feather name="volume-2" size={12} color={LIGHT.label} style={{ marginTop: 1 }} />
                                 <Text style={styles.transcript}>{result.transcript}</Text>
                             </View>
                         </Card>
-                        <Hint>Saved to your detected transactions — confirm it in Spendly.</Hint>
+                        <Hint color={LIGHT.label}>Saved to your detected transactions — confirm it in Spendly.</Hint>
                         <View style={styles.row}>
-                            <Button variant="outline" onPress={onClose}>Done</Button>
+                            <Button variant="outline" color={LIGHT.text} borderColor={LIGHT.border} onPress={onClose}>
+                                Done
+                            </Button>
                             <Button icon="external-link" onPress={() => Linking.openURL(baseUrl)}>Open Spendly</Button>
                         </View>
                     </>
@@ -237,11 +309,13 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
                 {phase === "error" && (
                     <>
-                        <IconBox color={UI.danger}>
-                            <Feather name="alert-circle" size={18} color={UI.danger} />
+                        <IconBox color={LIGHT.danger}>
+                            <Feather name="alert-circle" size={18} color={LIGHT.danger} />
                         </IconBox>
                         <Text style={styles.error}>{error}</Text>
-                        <Button variant="outline" onPress={onClose}>Close</Button>
+                        <Button variant="outline" color={LIGHT.text} borderColor={LIGHT.border} onPress={onClose}>
+                            Close
+                        </Button>
                     </>
                 )}
             </View>
@@ -249,8 +323,19 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     );
 };
 
+// Three same-gradient circles layered at decreasing size/increasing
+// opacity fake a soft glow falloff — there's no blur primitive available
+// without adding expo-blur, and this reads close enough at this scale.
+const GradientBlob = ({ start, end }: { start: { x: number; y: number }; end: { x: number; y: number } }) => (
+    <View style={styles.blob}>
+        <LinearGradient colors={GRADIENT} start={start} end={end} style={[styles.blobLayer, styles.blobLayerOuter]} />
+        <LinearGradient colors={GRADIENT} start={start} end={end} style={[styles.blobLayer, styles.blobLayerMid]} />
+        <LinearGradient colors={GRADIENT} start={start} end={end} style={[styles.blobLayer, styles.blobLayerCore]} />
+    </View>
+);
+
 const styles = StyleSheet.create({
-    screen: { flex: 1, backgroundColor: UI.bg },
+    screen: { flex: 1, backgroundColor: LIGHT.bg },
     header: {
         flexDirection: "row",
         justifyContent: "space-between",
@@ -259,12 +344,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingBottom: 12,
     },
-    title: { color: UI.text, fontSize: 20, fontWeight: "700" },
+    title: { color: LIGHT.text, fontSize: 20, fontWeight: "700" },
     closeButton: {
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: UI.card,
+        backgroundColor: LIGHT.card,
+        borderWidth: 1,
+        borderColor: LIGHT.border,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -276,49 +363,67 @@ const styles = StyleSheet.create({
         gap: 14,
     },
     statusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
-    liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: UI.danger },
-    statusText: { color: UI.label, fontSize: 13, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" },
-    micWrap: { width: 140, height: 140, alignItems: "center", justifyContent: "center", marginBottom: 4 },
-    micRing: {
-        position: "absolute",
-        width: 140,
-        height: 140,
-        borderRadius: 70,
-        backgroundColor: `${UI.danger}26`,
+    liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: LIGHT.danger },
+    statusText: { color: LIGHT.label, fontSize: 13, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase" },
+    orbWrap: {
+        width: ORB_SIZE,
+        height: ORB_SIZE,
+        alignItems: "center",
+        justifyContent: "center",
+        marginVertical: 6,
     },
-    micCore: {
-        width: 92,
-        height: 92,
-        borderRadius: 46,
-        backgroundColor: UI.card,
-        borderWidth: 1,
-        borderColor: UI.border,
+    orbitLayer: {
+        position: "absolute",
+        width: ORB_SIZE,
+        height: ORB_SIZE,
+    },
+    blobSlot: {
+        position: "absolute",
+        left: (ORB_SIZE - BLOB_WRAP) / 2,
+        top: (ORB_SIZE - BLOB_WRAP) / 2,
+        width: BLOB_WRAP,
+        height: BLOB_WRAP,
         alignItems: "center",
         justifyContent: "center",
     },
-    actionsRow: {
+    blob: { width: BLOB_WRAP, height: BLOB_WRAP, alignItems: "center", justifyContent: "center" },
+    blobLayer: { position: "absolute", borderRadius: 999 },
+    blobLayerOuter: { width: BLOB_WRAP, height: BLOB_WRAP, opacity: 0.15 },
+    blobLayerMid: { width: Math.round(BLOB_CORE * 1.3), height: Math.round(BLOB_CORE * 1.3), opacity: 0.35 },
+    blobLayerCore: { width: BLOB_CORE, height: BLOB_CORE, opacity: 1 },
+    micCore: {
+        position: "absolute",
+        width: 88,
+        height: 88,
+        borderRadius: 44,
+        backgroundColor: LIGHT.card,
+        borderWidth: 1,
+        borderColor: LIGHT.border,
+        alignItems: "center",
+        justifyContent: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+        elevation: 4,
+    },
+    lockPill: {
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "space-between",
-        width: "100%",
-        marginTop: 8,
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: LIGHT.border,
+        backgroundColor: LIGHT.card,
     },
-    iconButton: { width: 64, alignItems: "center", gap: 4 },
-    iconButtonActive: {},
-    iconButtonLabel: { color: UI.label, fontSize: 11, fontWeight: "600" },
-    stopButton: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        backgroundColor: UI.text,
-        alignItems: "center",
-        justifyContent: "center",
-    },
+    lockPillActive: { borderColor: LIGHT.accent },
+    lockLabel: { color: LIGHT.label, fontSize: 12, fontWeight: "600" },
     row: { flexDirection: "row", justifyContent: "center", gap: 10, marginTop: 4 },
-    resultCard: { width: "100%", gap: 4 },
-    payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
-    sub: { color: UI.label, fontSize: 13 },
+    payee: { color: LIGHT.text, fontSize: 17, fontWeight: "600" },
+    sub: { color: LIGHT.label, fontSize: 13 },
     transcriptRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 6 },
-    transcript: { color: UI.label, fontSize: 12, fontStyle: "italic", flex: 1 },
-    error: { color: UI.danger, fontSize: 14, textAlign: "center" },
+    transcript: { color: LIGHT.label, fontSize: 12, fontStyle: "italic", flex: 1 },
+    error: { color: LIGHT.danger, fontSize: 14, textAlign: "center" },
 });

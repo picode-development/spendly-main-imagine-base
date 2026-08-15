@@ -76,8 +76,8 @@ export const SectionLabel = ({ children }: { children: React.ReactNode }) => (
     <Text style={styles.sectionLabel}>{children}</Text>
 );
 
-export const Hint = ({ children }: { children: React.ReactNode }) => (
-    <Text style={styles.hint}>{children}</Text>
+export const Hint = ({ children, color }: { children: React.ReactNode; color?: string }) => (
+    <Text style={[styles.hint, color && { color }]}>{children}</Text>
 );
 
 export const Field = ({
@@ -111,14 +111,21 @@ export const Button = ({
     disabled,
     variant = "default",
     icon,
+    color,
+    borderColor,
 }: {
     children: React.ReactNode;
     onPress: () => void;
     disabled?: boolean;
     variant?: "default" | "outline" | "ghost" | "accent";
     icon?: React.ComponentProps<typeof Feather>["name"];
+    // Outline/ghost variants render light text on a transparent background,
+    // which only reads on this app's default dark screens — light-theme
+    // screens (e.g. VoiceScreen) must override both.
+    color?: string;
+    borderColor?: string;
 }) => {
-    const textColor = variant === "default" ? "#0f172a" : UI.text;
+    const textColor = variant === "default" ? "#0f172a" : color ?? UI.text;
     return (
         <Pressable
             onPress={onPress}
@@ -126,6 +133,7 @@ export const Button = ({
             style={({ pressed }) => [
                 styles.button,
                 variant === "outline" && styles.buttonOutline,
+                variant === "outline" && borderColor && { borderColor },
                 variant === "ghost" && styles.buttonGhost,
                 variant === "accent" && styles.buttonAccent,
                 (disabled || pressed) && { opacity: disabled ? 0.5 : 0.8 },
