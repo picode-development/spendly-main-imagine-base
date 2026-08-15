@@ -31,12 +31,17 @@ const NO_SPEECH_TIMEOUT_MS = 8000;
 
 const ORB_SIZE = 200;
 const INTRO_MS = 600;
-// Below this, the orb is treated as silent and stays completely still —
-// it should react to your voice, not animate on its own.
-const SPEECH_THRESHOLD = 0.05;
 const BASE_ROT_SPEED = 0.3;
 const MAX_ROT_SPEED = 1.2;
 const MAX_HOVER_INTENSITY = 0.8;
+// The orb's "activity" (0..1) eases toward a target derived from the same
+// SPEECH_DB/SILENCE_DB thresholds the auto-stop logic already uses, not a
+// separate hand-picked cutoff — ambient room noise sits well below
+// SILENCE_DB, so it no longer reads as "speaking." Eased rather than
+// snapped so starting/stopping speech ramps smoothly instead of the orb
+// jumping between a reacting and an idle state.
+const ACTIVITY_ATTACK = 0.25;
+const ACTIVITY_RELEASE = 0.06;
 
 // A noise-driven "voice orb" shader — an organic wobbling ring with a
 // slowly orbiting hotspot and a hue sweep around its edge, ported from a
@@ -240,6 +245,8 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
     const levelRef = useRef(0);
+    const dbRef = useRef(-160);
+    const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
 
     const iconAnim = useRef(new Animated.Value(0)).current;
@@ -306,14 +313,16 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Drives the shader orb every frame. `iTime` and `rot` only advance
-    // while actual speech is detected — everything in the shader (the
-    // noise wobble, the hue sweep, the orbiting hotspot) is keyed off
-    // `iTime`, so freezing it is what makes the orb hold still instead of
-    // animating on its own. `hover`/`hoverIntensity` (the ripple) track
-    // volume directly, so they fall back to ~0 naturally when quiet.
-    // No reanimated — plain rAF + state is fine for a single full-screen
-    // canvas. The mic icon fades in a beat later.
+    // Drives the shader orb every frame. `activity` (0..1) eases toward a
+    // target set by the calibrated SPEECH_DB/SILENCE_DB thresholds, with a
+    // fast attack (quick to pick up when you start talking) and a slow
+    // release (eases back down instead of snapping off) — an envelope, not
+    // a hard gate. `iTime` and `rot` advance proportionally to `activity`,
+    // so everything the shader keys off `iTime` (noise wobble, hue sweep,
+    // orbiting hotspot) smoothly decelerates to a stop rather than
+    // freezing/unfreezing abruptly. No reanimated — plain rAF + state is
+    // fine for a single full-screen canvas. The mic icon fades in a beat
+    // later.
     useEffect(() => {
         if (phase !== "recording") return;
         let raf: number;
@@ -323,18 +332,23 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             if (!lastTime) lastTime = t;
             const dt = (t - lastTime) * 0.001;
             lastTime = t;
-            const voiceLevel = levelRef.current;
-            if (voiceLevel > SPEECH_THRESHOLD) {
-                activeTimeRef.current += dt;
-                currentRot += dt * (BASE_ROT_SPEED + voiceLevel * MAX_ROT_SPEED * 2.0);
-            }
+
+            const db = dbRef.current;
+            const targetActivity = db >= SPEECH_DB ? 1 : db <= SILENCE_DB ? 0 : (db - SILENCE_DB) / (SPEECH_DB - SILENCE_DB);
+            const rate = targetActivity > activityRef.current ? ACTIVITY_ATTACK : ACTIVITY_RELEASE;
+            activityRef.current += (targetActivity - activityRef.current) * rate;
+            const activity = activityRef.current;
+
+            activeTimeRef.current += dt * activity;
+            currentRot += dt * activity * (BASE_ROT_SPEED + activity * MAX_ROT_SPEED * 2.0);
+
             setOrbUniforms({
                 iTime: activeTimeRef.current,
                 iResolution: [ORB_SIZE, ORB_SIZE, 1],
                 hue: 0,
-                hover: Math.min(voiceLevel * 2.0, 1.0),
+                hover: activity,
                 rot: currentRot,
-                hoverIntensity: Math.min(voiceLevel * MAX_HOVER_INTENSITY * 0.8, MAX_HOVER_INTENSITY),
+                hoverIntensity: activity * MAX_HOVER_INTENSITY,
             });
             raf = requestAnimationFrame(tick);
         };
@@ -379,10 +393,12 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     }, [recorderState.metering, phase, locked]);
 
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
+    const db = recorderState.metering ?? -160;
     useEffect(() => {
         levelRef.current = level;
+        dbRef.current = db;
         Animated.spring(pulse, { toValue: level, useNativeDriver: true, friction: 6 }).start();
-    }, [level, pulse]);
+    }, [level, db, pulse]);
     useEffect(() => {
         if (phase !== "recording") return;
         const loop = Animated.loop(
