@@ -4,8 +4,11 @@ import "server-only";
  * Transaction understanding (server-side only).
  *
  * Text/vision extraction and field cleanup go through the internal Hermes
- * bridge (HERMES_BRIDGE_URL/KEY); voice transcription stays on Groq (uses
- * GROQ_KEY) since Hermes has no audio API.
+ * bridge (HERMES_BRIDGE_URL/KEY); voice transcription is ALSO Hermes-first
+ * (the bridge's /transcribe runs the same local faster-whisper install the
+ * Hermes WhatsApp voice notes use), with Groq Whisper large-v3 as fallback
+ * when the bridge is down — and as a second opinion when the smaller local
+ * model hears nothing.
  *
  * Every function returns null on ANY failure (missing key, network, refusal,
  * malformed JSON) so callers can fall back to the regex parser in
@@ -280,7 +283,45 @@ export type TranscribeResult =
     | { ok: true; text: string }
     | { ok: false; reason: "no_speech" | "unavailable" };
 
-export const llmTranscribe = async (
+/**
+ * Local STT on the Hermes server — the bridge's /transcribe endpoint runs
+ * the same faster-whisper install (and cached model) Hermes' own WhatsApp
+ * voice-note transcription uses. Returns the transcript ("" for a clip the
+ * model genuinely heard nothing in) or null when the bridge is
+ * unconfigured, unreachable, or errored.
+ */
+const hermesTranscribe = async (
+    audio: Blob,
+    filename: string,
+    vocabulary: string[],
+): Promise<string | null> => {
+    const cfg = hermesConfig();
+    if (!cfg) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 50_000);
+    try {
+        const prompt = vocabulary.filter(Boolean).slice(0, 40).join(", ");
+        const qs = new URLSearchParams({ name: filename, prompt });
+        const res = await fetch(`${cfg.url}/transcribe?${qs.toString()}`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${cfg.key}`,
+                "Content-Type": audio.type || "application/octet-stream",
+            },
+            body: audio,
+            signal: controller.signal,
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as { text?: unknown };
+        return typeof data?.text === "string" ? data.text.trim() : null;
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+};
+
+const groqTranscribe = async (
     audio: Blob,
     filename: string,
     vocabulary: string[] = [],
@@ -338,6 +379,29 @@ export const llmTranscribe = async (
         }
     }
     return { ok: false, reason: "unavailable" };
+};
+
+/**
+ * Hermes-first, Groq-fallback. The self-hosted model has no key pool that
+ * can silently die (which took voice notes down entirely once); Groq's
+ * large-v3 still gets a say when the bridge is down, or when the smaller
+ * local model heard nothing — faint speech it misses may still be
+ * recoverable, and a real no_speech verdict costs one extra call only on
+ * genuinely-silent clips.
+ */
+export const llmTranscribe = async (
+    audio: Blob,
+    filename: string,
+    vocabulary: string[] = [],
+): Promise<TranscribeResult> => {
+    const local = await hermesTranscribe(audio, filename, vocabulary);
+    if (local && !isHallucinatedSilence(local)) return { ok: true, text: local };
+
+    const viaGroq = await groqTranscribe(audio, filename, vocabulary);
+    if (viaGroq.ok || viaGroq.reason === "no_speech") return viaGroq;
+    // Groq unavailable: a local "" was still a working provider hearing
+    // nothing — report that rather than a service outage.
+    return local !== null ? { ok: false, reason: "no_speech" } : viaGroq;
 };
 
 /**
