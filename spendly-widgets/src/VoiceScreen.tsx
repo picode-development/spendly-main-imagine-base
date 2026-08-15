@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Animated,
@@ -30,25 +30,69 @@ const SILENCE_DB = -38;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 
-// A light, grayish-white palette used only on this screen — deliberately
-// distinct from the rest of the (dark) app, per design reference.
+// A light theme used only on this screen, sourced exactly from the main
+// app's real :root design tokens (app/globals.css) rather than invented
+// colors — background/card/border/foreground/muted-foreground/destructive
+// converted from their oklch values, accent from --header-gradient-to
+// (already plain hex). No --success token exists anywhere in the site's
+// CSS (light or dark), so `green` stays a plain Tailwind green-600
+// stopgap, same as it was before this pass.
 const LIGHT = {
-    bg: "#f1f0f7",
+    bg: "#f1f5f9",
     card: "#ffffff",
-    border: "#e2e0ee",
-    text: "#1e1b2e",
-    label: "#6b6880",
-    danger: "#dc2626",
+    border: "#e2e8f0",
+    text: "#020618",
+    label: "#62748e",
+    danger: "#e7000b",
     green: "#16a34a",
-    accent: "#7c6ef2",
+    accent: "#3b82f6",
+    accentDeep: "#1d4ed8",
 } as const;
 
-const GRADIENT = ["#60a5fa", "#a78bfa", "#f472b6"] as const;
 const ORB_SIZE = 176;
-const BLOB_CORE = 104;
-const BLOB_WRAP = Math.round(BLOB_CORE * 1.6);
-const ORBIT_R = 36;
+const PARTICLE_COUNT = 30;
+const PARTICLE_MIN_R = 52;
+const PARTICLE_MAX_R = 92;
+const DRIVER_MS = 3000;
 const INTRO_MS = 600;
+
+type Particle = {
+    x: number;
+    y: number;
+    size: number;
+    color: string;
+    phase: number;
+    maxOpacity: number;
+    driftX: number;
+    driftY: number;
+};
+
+const pickParticleColor = () => {
+    const r = Math.random();
+    if (r < 0.7) return LIGHT.accent;
+    if (r < 0.9) return LIGHT.accentDeep;
+    return "#ffffff";
+};
+
+// Fixed at mount, never reshuffled — a scattered sparkle field, not two
+// shapes orbiting the mic. Even area density via sqrt(random) radius
+// sampling (uniform random radius would clump particles near center).
+const generateParticles = (count: number): Particle[] =>
+    Array.from({ length: count }, () => {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.sqrt(Math.random()) * (PARTICLE_MAX_R - PARTICLE_MIN_R) + PARTICLE_MIN_R;
+        const driftPx = 2 + Math.random() * 3;
+        return {
+            x: Math.cos(angle) * radius,
+            y: Math.sin(angle) * radius,
+            size: 2 + Math.random() * 3,
+            color: pickParticleColor(),
+            phase: Math.random(),
+            maxOpacity: 0.6 + Math.random() * 0.4,
+            driftX: Math.cos(angle) * driftPx,
+            driftY: Math.sin(angle) * driftPx,
+        };
+    });
 
 type Props = {
     baseUrl: string;
@@ -61,9 +105,11 @@ type Phase = "starting" | "recording" | "uploading" | "done" | "error";
 // A widget button opens this as its own full-screen page (PopupActivity),
 // not a floating card — Android can't render a truly transparent Activity
 // reliably, so this owns its own background and a real header like any
-// other screen in the app. The recording view intentionally breaks from
-// the app's dark theme (grayish-white, per design reference) with a
-// gradient orb that flows in before the mic appears and recording begins.
+// other screen in the app. The recording view breaks from the app's dark
+// theme (a light theme sourced from the main site's real tokens, per
+// design reference) with a sparkle particle field — not shapes rotating
+// around the mic — that flows in before the mic icon appears and
+// recording begins.
 export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const recorder = useAudioRecorder({
         ...RecordingPresets.HIGH_QUALITY,
@@ -81,8 +127,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
+    const particlesRef = useRef<Particle[] | null>(null);
+    if (!particlesRef.current) particlesRef.current = generateParticles(PARTICLE_COUNT);
+    const particles = particlesRef.current;
 
-    const spin = useRef(new Animated.Value(0)).current;
+    const driver = useRef(new Animated.Value(0)).current;
     const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
     const dotBlink = useRef(new Animated.Value(1)).current;
@@ -141,21 +190,23 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // The orb: two gradient blobs flow around an empty center as soon as
-    // recording starts, then the mic icon fades in a beat later. Audio
-    // capture already began above — this delay is purely visual.
+    // The particle field: one shared clock drives every particle's
+    // twinkle + drift via phase-shifted interpolation, so nothing pulses
+    // in unison and only one native-driven loop is ever running. The mic
+    // icon fades in a beat later — audio capture already began above,
+    // this delay is purely visual.
     useEffect(() => {
         if (phase !== "recording") return;
-        const spinLoop = Animated.loop(
-            Animated.timing(spin, { toValue: 1, duration: 6000, easing: Easing.linear, useNativeDriver: true }),
+        const loop = Animated.loop(
+            Animated.timing(driver, { toValue: 1, duration: DRIVER_MS, easing: Easing.linear, useNativeDriver: true }),
         );
-        spinLoop.start();
+        loop.start();
         const introTimer = setTimeout(() => {
             iconVisibleRef.current = true;
             Animated.timing(iconAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
         }, INTRO_MS);
         return () => {
-            spinLoop.stop();
+            loop.stop();
             clearTimeout(introTimer);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,7 +255,27 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         return () => loop.stop();
     }, [phase, dotBlink]);
 
-    const spinDeg = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+    // Each particle reads the one shared driver at its own phase offset
+    // via Animated.modulo — computed once since particles/driver are
+    // stable for the life of this screen.
+    const particleAnims = useMemo(
+        () =>
+            particles.map((p) => {
+                const clock = Animated.modulo(Animated.add(driver, p.phase), 1);
+                const opacity = clock.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.15, p.maxOpacity, 0.15] });
+                const drift = clock.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 1, 0] });
+                const scale = clock.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.85, 1.15, 0.85] });
+                return {
+                    opacity,
+                    scale,
+                    translateX: Animated.multiply(drift, p.driftX),
+                    translateY: Animated.multiply(drift, p.driftY),
+                };
+            }),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [],
+    );
+
     const iconScale = iconAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] });
     const corePulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
 
@@ -234,14 +305,41 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                         </View>
 
                         <Pressable onPress={handleOrbTap} hitSlop={20} style={styles.orbWrap}>
-                            <Animated.View style={[styles.orbitLayer, { transform: [{ rotate: spinDeg }] }]}>
-                                <View style={[styles.blobSlot, { transform: [{ translateX: ORBIT_R }] }]}>
-                                    <GradientBlob start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }} />
-                                </View>
-                                <View style={[styles.blobSlot, { transform: [{ translateX: -ORBIT_R }] }]}>
-                                    <GradientBlob start={{ x: 0.9, y: 0 }} end={{ x: 0.1, y: 1 }} />
-                                </View>
-                            </Animated.View>
+                            <LinearGradient
+                                colors={[LIGHT.accent, `${LIGHT.accent}00`]}
+                                start={{ x: 0.35, y: 0.25 }}
+                                end={{ x: 0.9, y: 0.9 }}
+                                style={styles.glowOuter}
+                            />
+                            <LinearGradient
+                                colors={[LIGHT.accent, `${LIGHT.accent}00`]}
+                                start={{ x: 0.35, y: 0.25 }}
+                                end={{ x: 0.9, y: 0.9 }}
+                                style={styles.glowMid}
+                            />
+
+                            {particles.map((p, i) => (
+                                <Animated.View
+                                    key={i}
+                                    style={[
+                                        styles.particle,
+                                        {
+                                            left: ORB_SIZE / 2 + p.x - p.size / 2,
+                                            top: ORB_SIZE / 2 + p.y - p.size / 2,
+                                            width: p.size,
+                                            height: p.size,
+                                            borderRadius: p.size / 2,
+                                            backgroundColor: p.color,
+                                            opacity: particleAnims[i].opacity,
+                                            transform: [
+                                                { translateX: particleAnims[i].translateX },
+                                                { translateY: particleAnims[i].translateY },
+                                                { scale: particleAnims[i].scale },
+                                            ],
+                                        },
+                                    ]}
+                                />
+                            ))}
 
                             <Animated.View
                                 style={[
@@ -323,17 +421,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     );
 };
 
-// Three same-gradient circles layered at decreasing size/increasing
-// opacity fake a soft glow falloff — there's no blur primitive available
-// without adding expo-blur, and this reads close enough at this scale.
-const GradientBlob = ({ start, end }: { start: { x: number; y: number }; end: { x: number; y: number } }) => (
-    <View style={styles.blob}>
-        <LinearGradient colors={GRADIENT} start={start} end={end} style={[styles.blobLayer, styles.blobLayerOuter]} />
-        <LinearGradient colors={GRADIENT} start={start} end={end} style={[styles.blobLayer, styles.blobLayerMid]} />
-        <LinearGradient colors={GRADIENT} start={start} end={end} style={[styles.blobLayer, styles.blobLayerCore]} />
-    </View>
-);
-
 const styles = StyleSheet.create({
     screen: { flex: 1, backgroundColor: LIGHT.bg },
     header: {
@@ -372,25 +459,21 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         marginVertical: 6,
     },
-    orbitLayer: {
+    glowOuter: {
         position: "absolute",
         width: ORB_SIZE,
         height: ORB_SIZE,
+        borderRadius: ORB_SIZE / 2,
+        opacity: 0.05,
     },
-    blobSlot: {
+    glowMid: {
         position: "absolute",
-        left: (ORB_SIZE - BLOB_WRAP) / 2,
-        top: (ORB_SIZE - BLOB_WRAP) / 2,
-        width: BLOB_WRAP,
-        height: BLOB_WRAP,
-        alignItems: "center",
-        justifyContent: "center",
+        width: 130,
+        height: 130,
+        borderRadius: 65,
+        opacity: 0.09,
     },
-    blob: { width: BLOB_WRAP, height: BLOB_WRAP, alignItems: "center", justifyContent: "center" },
-    blobLayer: { position: "absolute", borderRadius: 999 },
-    blobLayerOuter: { width: BLOB_WRAP, height: BLOB_WRAP, opacity: 0.15 },
-    blobLayerMid: { width: Math.round(BLOB_CORE * 1.3), height: Math.round(BLOB_CORE * 1.3), opacity: 0.35 },
-    blobLayerCore: { width: BLOB_CORE, height: BLOB_CORE, opacity: 1 },
+    particle: { position: "absolute" },
     micCore: {
         position: "absolute",
         width: 88,
