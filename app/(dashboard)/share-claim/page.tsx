@@ -16,8 +16,9 @@ import { uploadImageWithProgress, makeImagePreview } from "@/features/transactio
 import { toAiDataUrl } from "@/features/transactions/lib/image-data-url";
 
 const MAX_SHARE_IMAGES = 25;
-// The server pins each concurrent extraction to a different Groq key, so run
-// as many at once as we have keys; the rest queue and start as workers free.
+// Extraction now runs through the Hermes bridge (a single dedicated
+// backend), not Groq's per-key rate-limited free tier — this just bounds
+// how many images read in parallel, not a key-pool sizing.
 const CONCURRENCY = 6;
 
 type ItemStatus = "queued" | "working" | "retry" | "done" | "empty" | "error";
@@ -169,10 +170,6 @@ const ShareClaimHandler = () => {
             });
             setItems(seeded);
 
-            // Rows that came back blank but have a hosted image — retried
-            // after the first pass, once rate-limit windows have refilled
-            const toRetry: { index: number; pendingId: string; url: string }[] = [];
-
             const extractFrom = async (image: string) => {
                 const res = await client.api["pending-transactions"]["extract-image"]
                     .$post({ json: { image, text: meta.text || null } })
@@ -230,13 +227,17 @@ const ShareClaimHandler = () => {
                 const hasData = data?.amount != null || !!data?.payee;
                 if (hasData) {
                     updateItem(index, { status: "done", amount: data?.amount ?? null, payee: data?.payee ?? null });
-                } else if (data && hosted) {
-                    // Blank for now — keep it visibly "retrying" (never a
-                    // premature "add manually"); store how to re-read it later
-                    updateItem(index, { status: "retry", url: hosted.url, pendingId: data.id });
-                    toRetry.push({ index, pendingId: data.id, url: hosted.url });
                 } else {
-                    updateItem(index, { status: "empty" });
+                    // Genuinely incomplete after the read(s) above — stored with
+                    // its hosted URL/pendingId (if we have them) so the "Retry N"
+                    // button below can re-read it on request. Not marked "retry"
+                    // here: no further attempt is in flight yet, that would only
+                    // be true once the user actually asks for one.
+                    updateItem(index, {
+                        status: "empty",
+                        url: data && hosted ? hosted.url : undefined,
+                        pendingId: data && hosted ? data.id : undefined,
+                    });
                 }
             };
 
@@ -250,27 +251,13 @@ const ShareClaimHandler = () => {
                 }),
             );
 
-            // Automatic retry pass — the key pool waits for a refilled window,
-            // so most blanks resolve here without the user doing anything
-            if (toRetry.length > 0) {
-                const retryQueue = [...toRetry];
-                await Promise.all(
-                    Array.from({ length: Math.min(CONCURRENCY, retryQueue.length) }, async () => {
-                        while (retryQueue.length > 0) {
-                            const { index, pendingId, url } = retryQueue.shift()!;
-                            await extractAndFill(index, url, pendingId).catch(() => updateItem(index, { status: "empty" }));
-                        }
-                    }),
-                );
-            }
-
             queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
             setPhase("done");
             // If some rows are still blank, DON'T auto-redirect — let the user
             // choose to retry them or continue. Only auto-leave when all clean.
             const anyBlank = itemsRef.current.some((it) => it.status === "empty" || it.status === "error");
             if (!anyBlank) {
-                setTimeout(() => router.replace("/transactions"), Math.min(6000, 2500 + files.length * 250));
+                setTimeout(() => router.replace("/transactions"), Math.min(3500, 1200 + files.length * 150));
             }
         };
 
@@ -442,7 +429,7 @@ const ShareClaimHandler = () => {
                                         // Some couldn't be read — let the user choose
                                         <div className="space-y-2 pt-1">
                                             <p className="text-center text-xs text-muted-foreground">
-                                                {blankCount} couldn&apos;t be read (rate limits). Retry them, or continue and use Fill with AI later.
+                                                {blankCount} couldn&apos;t be read. Retry them, or continue and use Fill with AI later.
                                             </p>
                                             <div className="flex gap-2">
                                                 <Button

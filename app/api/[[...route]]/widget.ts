@@ -455,11 +455,12 @@ const app = new Hono()
                 return c.json({ error: "Couldn't understand the recording" }, 502);
             }
 
-            let parsed = await llmExtractFromText(transcript, ctx);
-            if (!parsed || (parsed.amount == null && !parsed.payee)) {
-                await new Promise((resolve) => setTimeout(resolve, 1000));
-                parsed = await llmExtractFromText(transcript, ctx);
-            }
+            // A retry-after-1s-sleep here used to double the extraction
+            // latency (a second full Hermes round-trip) on any voice note
+            // without an explicit payee — a very common case for casual
+            // dictation. A single attempt is trusted; an incomplete result
+            // still stages a pending transaction the user can fill in.
+            const parsed = await llmExtractFromText(transcript, ctx);
 
             const [pending] = await db.insert(pendingTransactions).values({
                 id: createId(),

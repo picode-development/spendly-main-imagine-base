@@ -197,8 +197,9 @@ const app = new Hono()
 
     // Extraction-only. Accepts a local data-URL copy (the initial detection,
     // before hosting completes) or a hosted https URL (every AI task after
-    // the upload). Retries once — a single transient Groq failure must not
-    // produce a silently empty detection.
+    // the upload). Single attempt, no retry — matches llmExtractFromImage's
+    // own contract (hermesPost is one-shot; a failure resolves to null, not
+    // a throw), same as every other Hermes-backed extraction call site.
     .post(
         "/extract-image",
         clerkMiddleware(),

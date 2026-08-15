@@ -17,8 +17,11 @@ type Props = {
 };
 
 // Re-runs AI extraction on the attached screenshot — the recovery for a
-// detection that came back blank (usually a momentary rate-limit at share
-// time, long since cooled by the time the user is reviewing).
+// detection that came back blank. Single attempt: extraction runs through
+// the Hermes bridge (a single dedicated backend, not Groq's rate-limited
+// free-tier key pool), so the multi-attempt-with-cooldown pattern that
+// made sense for Groq no longer applies — a failure here is a real error,
+// not a rate limit that clears itself in a few seconds.
 export const FillWithAiButton = ({ imageUrl, onParsed, disabled }: Props) => {
     const [loading, setLoading] = useState(false);
 
@@ -27,18 +30,12 @@ export const FillWithAiButton = ({ imageUrl, onParsed, disabled }: Props) => {
     const run = async () => {
         setLoading(true);
         try {
-            // A few attempts with gaps — if a batch just spent the keys, the
-            // rate-limit windows refill within a few seconds
-            let data = null;
-            for (let attempt = 0; attempt < 3 && !data; attempt++) {
-                if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
-                const res = await client.api["pending-transactions"]["extract-image"]
-                    .$post({ json: { image: imageUrl } })
-                    .catch(() => null);
-                data = res?.ok ? (await res.json()).data : null;
-            }
+            const res = await client.api["pending-transactions"]["extract-image"]
+                .$post({ json: { image: imageUrl } })
+                .catch(() => null);
+            const data = res?.ok ? (await res.json()).data : null;
             if (!data) {
-                toast.error("Still catching up on reads — try again in a moment.");
+                toast.error("Couldn't read the screenshot. Try again or fill it in.");
                 return;
             }
             onParsed({
