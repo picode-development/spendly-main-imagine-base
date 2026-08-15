@@ -31,9 +31,10 @@ const NO_SPEECH_TIMEOUT_MS = 8000;
 
 const ORB_SIZE = 200;
 const INTRO_MS = 600;
-const BASE_ROT_SPEED = 0.3;
-const MAX_ROT_SPEED = 1.2;
-const MAX_HOVER_INTENSITY = 0.8;
+// Kept low — a soft, subtle reaction, not an aggressive pulse.
+const BASE_ROT_SPEED = 0.12;
+const MAX_ROT_SPEED = 0.4;
+const MAX_HOVER_INTENSITY = 0.3;
 // The orb's "activity" (0..1) eases toward a target derived from the same
 // SPEECH_DB/SILENCE_DB thresholds the auto-stop logic already uses, not a
 // separate hand-picked cutoff — ambient room noise sits well below
@@ -148,15 +149,14 @@ vec4 draw(vec2 uv) {
     float invLen = len > 0.0 ? 1.0 / len : 0.0;
 
     float n0 = snoise3(vec3(uv * noiseScale, iTime * 0.5)) * 0.5 + 0.5;
-    // A second, finer/faster noise octave blends in proportional to
-    // hover (live voice activity) -- at rest the ring is a single calm
-    // wobble; speaking adds independent-looking local detail across
-    // different parts of the ring, not just a uniform pulse everywhere.
-    float n1 = snoise3(vec3(uv * noiseScale * 2.6, iTime * 1.1 + 7.0)) * 0.5 + 0.5;
-    float n = mix(n0, n1, hover * 0.4);
-    float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n);
+    // A second, lower-frequency noise layer blends in gently with hover
+    // (live voice activity) -- a soft secondary undulation, not sharp
+    // spikes. Kept subtle: low blend weight, close frequency to n0.
+    float n1 = snoise3(vec3(uv * noiseScale * 1.4, iTime * 0.8 + 7.0)) * 0.5 + 0.5;
+    float n = mix(n0, n1, hover * 0.12);
+    float r0 = mix(mix(innerRadius, 1.0, 0.46), mix(innerRadius, 1.0, 0.54), n);
     float d0 = distance(uv, (r0 * invLen) * uv);
-    float v0 = light1(1.0, 10.0, d0);
+    float v0 = light1(1.0, 6.0, d0);
     v0 *= smoothstep(r0 * 1.05, r0, len);
     float cl = cos(ang + iTime * 2.0) * 0.5 + 0.5;
 
@@ -463,7 +463,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                                     { opacity: iconAnim, transform: [{ scale: iconScale }, { scale: corePulseScale }] },
                                 ]}
                             >
-                                <Feather name="mic" size={30} color={UI.accent} />
+                                <Feather name="mic" size={30} color="#ffffff" />
                             </Animated.View>
                         </Pressable>
 
