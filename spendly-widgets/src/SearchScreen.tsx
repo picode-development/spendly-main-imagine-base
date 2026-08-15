@@ -20,6 +20,7 @@ import ReAnimated, {
     withDelay,
     withSpring,
     ZoomIn,
+    ZoomOut,
 } from "react-native-reanimated";
 import { Blur, Canvas, Circle, ColorMatrix, Group, Paint, RoundedRect } from "@shopify/react-native-skia";
 import { fetchTransactions, pair } from "./api";
@@ -365,8 +366,14 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                         // entrance that scales up from the top-right corner reads
                         // as "this panel came out of that button" — cheaper and
                         // more robust than measuring the button's live position.
+                        // .springify() with the SAME damping/stiffness as the
+                        // shortcuts' own spring (SPRING, above) — a fixed-duration
+                        // curve here would have felt like a different animation
+                        // engine entirely next to the shortcuts' physics-based
+                        // settle, which is exactly what read as "not matching".
                         <ReAnimated.View
-                            entering={ZoomIn.duration(220)}
+                            entering={ZoomIn.springify().damping(SPRING.damping).stiffness(SPRING.stiffness)}
+                            exiting={ZoomOut.springify().damping(SPRING.damping).stiffness(SPRING.stiffness)}
                             style={[styles.filterPanel, { transformOrigin: "right top" }]}
                         >
                             {filterLoading ? (

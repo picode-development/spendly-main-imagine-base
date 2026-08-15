@@ -1,7 +1,6 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
     Animated,
-    Easing,
     FlatList,
     Modal,
     Pressable,
@@ -149,6 +148,50 @@ export const Button = ({
 
 export type SelectOption = { value: string; label: string };
 
+// Same damping/stiffness the widgets app's search screen uses for its
+// shortcut buttons (SearchScreen.tsx's SPRING) — core Animated.spring
+// accepts the identical stiffness/damping/mass config Reanimated's
+// withSpring does, so this dropdown settles with the exact same physical
+// character instead of a generically-eased timing curve next to it.
+const SELECT_SPRING = { damping: 32, stiffness: 240, mass: 1 };
+
+// The check glyph for the active row pops in with its own small spring
+// rather than snapping into existence — reacts to `active` flipping true
+// (both on open, showing the current selection, and live if the parent's
+// value changes while the sheet is still open).
+const OptionRow = ({
+    label,
+    active,
+    onPress,
+}: {
+    label: string;
+    active: boolean;
+    onPress: () => void;
+}) => {
+    const checkAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
+    useEffect(() => {
+        Animated.spring(checkAnim, { toValue: active ? 1 : 0, useNativeDriver: true, ...SELECT_SPRING }).start();
+    }, [active, checkAnim]);
+
+    return (
+        <Pressable
+            style={({ pressed }) => [
+                styles.optionRow,
+                active && styles.optionRowActive,
+                pressed && { backgroundColor: UI.cardSubtle },
+            ]}
+            onPress={onPress}
+        >
+            <Text style={[styles.optionText, active && { fontWeight: "600" }]} numberOfLines={1}>
+                {label}
+            </Text>
+            <Animated.View style={{ opacity: checkAnim, transform: [{ scale: checkAnim }] }}>
+                <Feather name="check" size={16} color={UI.accent} />
+            </Animated.View>
+        </Pressable>
+    );
+};
+
 // An anchored combobox-style dropdown, not a centered popup: the options
 // list grows directly out of the trigger's own position (measured on open
 // via `measureInWindow`) with no dimmed backdrop behind it — matching how
@@ -185,12 +228,21 @@ export const Select = ({
         sheetAnim.setValue(0);
         Animated.parallel([
             Animated.timing(chevronAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
-            Animated.timing(sheetAnim, { toValue: 1, duration: 160, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.spring(sheetAnim, { toValue: 1, useNativeDriver: true, ...SELECT_SPRING }),
         ]).start();
     };
     const closeSheet = () => {
         Animated.timing(chevronAnim, { toValue: 0, duration: 120, useNativeDriver: true }).start();
         setOpen(false);
+    };
+    // Picking an option closes immediately from a tap in the abstract, but
+    // that gave the check-pop animation (above) no time to actually play —
+    // the sheet unmounted the same frame it started. A short pause lets you
+    // SEE the selection land before the sheet dismisses; tapping outside to
+    // dismiss without choosing stays instant (closeSheet directly).
+    const selectOption = (v: string) => {
+        onChange(v);
+        setTimeout(closeSheet, 200);
     };
 
     const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] });
@@ -236,27 +288,13 @@ export const Select = ({
                                 data={options}
                                 keyExtractor={(o) => o.value}
                                 ItemSeparatorComponent={() => <View style={styles.optionSeparator} />}
-                                renderItem={({ item }) => {
-                                    const active = item.value === value;
-                                    return (
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.optionRow,
-                                                active && styles.optionRowActive,
-                                                pressed && { backgroundColor: UI.cardSubtle },
-                                            ]}
-                                            onPress={() => {
-                                                onChange(item.value);
-                                                closeSheet();
-                                            }}
-                                        >
-                                            <Text style={[styles.optionText, active && { color: UI.accent, fontWeight: "600" }]} numberOfLines={1}>
-                                                {item.label}
-                                            </Text>
-                                            {active && <Feather name="check" size={16} color={UI.accent} />}
-                                        </Pressable>
-                                    );
-                                }}
+                                renderItem={({ item }) => (
+                                    <OptionRow
+                                        label={item.label}
+                                        active={item.value === value}
+                                        onPress={() => selectOption(item.value)}
+                                    />
+                                )}
                             />
                         </Animated.View>
                     )}
@@ -378,7 +416,10 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         borderRadius: 10,
     },
-    optionRowActive: { backgroundColor: `${UI.accent}1a` },
+    // Neutral, not the app's blue accent — a whole tinted-blue row read as
+    // too loud; the accent color now shows up only on the small check
+    // glyph, a single deliberate cue rather than the row itself shouting.
+    optionRowActive: { backgroundColor: `${UI.text}0d` },
     optionSeparator: { height: 1, backgroundColor: UI.border, marginVertical: 2, opacity: 0.5 },
     optionText: { color: UI.text, fontSize: 15, flex: 1, marginRight: 8 },
 });
