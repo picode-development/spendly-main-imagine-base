@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Animated,
-    Easing,
     Linking,
     Pressable,
     StatusBar,
@@ -11,7 +10,7 @@ import {
     View,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { Canvas, Fill, Shader, Skia } from "@shopify/react-native-skia";
 import {
     RecordingPresets,
     requestRecordingPermissionsAsync,
@@ -36,7 +35,7 @@ const NO_SPEECH_TIMEOUT_MS = 8000;
 // converted from their oklch values, accent from --header-gradient-to
 // (already plain hex). No --success token exists anywhere in the site's
 // CSS (light or dark), so `green` stays a plain Tailwind green-600
-// stopgap, same as it was before this pass.
+// stopgap.
 const LIGHT = {
     bg: "#f1f5f9",
     card: "#ffffff",
@@ -46,53 +45,181 @@ const LIGHT = {
     danger: "#e7000b",
     green: "#16a34a",
     accent: "#3b82f6",
-    accentDeep: "#1d4ed8",
 } as const;
 
-const ORB_SIZE = 176;
-const PARTICLE_COUNT = 30;
-const PARTICLE_MIN_R = 52;
-const PARTICLE_MAX_R = 92;
-const DRIVER_MS = 3000;
+const ORB_SIZE = 200;
 const INTRO_MS = 600;
+const BASE_ROT_SPEED = 0.3;
+const MAX_ROT_SPEED = 1.2;
+const MAX_HOVER_INTENSITY = 0.8;
 
-type Particle = {
-    x: number;
-    y: number;
-    size: number;
-    color: string;
-    phase: number;
-    maxOpacity: number;
-    driftX: number;
-    driftY: number;
+// A noise-driven "voice orb" shader — an organic wobbling ring with a
+// slowly orbiting hotspot and a hue sweep around its edge, ported from a
+// WebGL reference (github.com Shadertoy-style GLSL) almost verbatim: SKSL
+// is a GLSL-ES subset, the only structural change is the entry point
+// (fragCoord is a function argument here, not gl_FragCoord) and dropping
+// precision qualifiers, which SKSL doesn't use.
+const ORB_SHADER_SOURCE = `
+uniform float iTime;
+uniform vec3 iResolution;
+uniform float hue;
+uniform float hover;
+uniform float rot;
+uniform float hoverIntensity;
+
+vec3 rgb2yiq(vec3 c) {
+    float y = dot(c, vec3(0.299, 0.587, 0.114));
+    float i = dot(c, vec3(0.596, -0.274, -0.322));
+    float q = dot(c, vec3(0.211, -0.523, 0.312));
+    return vec3(y, i, q);
+}
+
+vec3 yiq2rgb(vec3 c) {
+    float r = c.x + 0.956 * c.y + 0.621 * c.z;
+    float g = c.x - 0.272 * c.y - 0.647 * c.z;
+    float b = c.x - 1.106 * c.y + 1.703 * c.z;
+    return vec3(r, g, b);
+}
+
+vec3 adjustHue(vec3 color, float hueDeg) {
+    float hueRad = hueDeg * 3.14159265 / 180.0;
+    vec3 yiq = rgb2yiq(color);
+    float cosA = cos(hueRad);
+    float sinA = sin(hueRad);
+    float i = yiq.y * cosA - yiq.z * sinA;
+    float q = yiq.y * sinA + yiq.z * cosA;
+    yiq.y = i;
+    yiq.z = q;
+    return yiq2rgb(yiq);
+}
+
+vec3 hash33(vec3 p3) {
+    p3 = fract(p3 * vec3(0.1031, 0.11369, 0.13787));
+    p3 += dot(p3, p3.yxz + 19.19);
+    return -1.0 + 2.0 * fract(vec3(
+        p3.x + p3.y,
+        p3.x + p3.z,
+        p3.y + p3.z
+    ) * p3.zyx);
+}
+
+float snoise3(vec3 p) {
+    const float K1 = 0.333333333;
+    const float K2 = 0.166666667;
+    vec3 i = floor(p + (p.x + p.y + p.z) * K1);
+    vec3 d0 = p - (i - (i.x + i.y + i.z) * K2);
+    vec3 e = step(vec3(0.0), d0 - d0.yzx);
+    vec3 i1 = e * (1.0 - e.zxy);
+    vec3 i2 = 1.0 - e.zxy * (1.0 - e);
+    vec3 d1 = d0 - (i1 - K2);
+    vec3 d2 = d0 - (i2 - K1);
+    vec3 d3 = d0 - 0.5;
+    vec4 h = max(0.6 - vec4(
+        dot(d0, d0),
+        dot(d1, d1),
+        dot(d2, d2),
+        dot(d3, d3)
+    ), 0.0);
+    vec4 n = h * h * h * h * vec4(
+        dot(d0, hash33(i)),
+        dot(d1, hash33(i + i1)),
+        dot(d2, hash33(i + i2)),
+        dot(d3, hash33(i + 1.0))
+    );
+    return dot(vec4(31.316), n);
+}
+
+vec4 extractAlpha(vec3 colorIn) {
+    float a = max(max(colorIn.r, colorIn.g), colorIn.b);
+    return vec4(colorIn.rgb / (a + 1e-5), a);
+}
+
+const vec3 baseColor1 = vec3(0.611765, 0.262745, 0.996078);
+const vec3 baseColor2 = vec3(0.298039, 0.760784, 0.913725);
+const vec3 baseColor3 = vec3(0.062745, 0.078431, 0.600000);
+const float innerRadius = 0.6;
+const float noiseScale = 0.65;
+
+float light1(float intensity, float attenuation, float dist) {
+    return intensity / (1.0 + dist * attenuation);
+}
+
+float light2(float intensity, float attenuation, float dist) {
+    return intensity / (1.0 + dist * dist * attenuation);
+}
+
+vec4 draw(vec2 uv) {
+    vec3 color1 = adjustHue(baseColor1, hue);
+    vec3 color2 = adjustHue(baseColor2, hue);
+    vec3 color3 = adjustHue(baseColor3, hue);
+
+    float ang = atan(uv.y, uv.x);
+    float len = length(uv);
+    float invLen = len > 0.0 ? 1.0 / len : 0.0;
+
+    float n0 = snoise3(vec3(uv * noiseScale, iTime * 0.5)) * 0.5 + 0.5;
+    float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n0);
+    float d0 = distance(uv, (r0 * invLen) * uv);
+    float v0 = light1(1.0, 10.0, d0);
+    v0 *= smoothstep(r0 * 1.05, r0, len);
+    float cl = cos(ang + iTime * 2.0) * 0.5 + 0.5;
+
+    float a = iTime * -1.0;
+    vec2 pos = vec2(cos(a), sin(a)) * r0;
+    float d = distance(uv, pos);
+    float v1 = light2(1.5, 5.0, d);
+    v1 *= light1(1.0, 50.0, d0);
+
+    float v2 = smoothstep(1.0, mix(innerRadius, 1.0, n0 * 0.5), len);
+    float v3 = smoothstep(innerRadius, mix(innerRadius, 1.0, 0.5), len);
+
+    vec3 col = mix(color1, color2, cl);
+    col = mix(color3, col, v0);
+    col = (col + v1) * v2 * v3;
+    col = clamp(col, 0.0, 1.0);
+
+    return extractAlpha(col);
+}
+
+vec4 mainImage(vec2 fragCoord) {
+    vec2 center = iResolution.xy * 0.5;
+    float size = min(iResolution.x, iResolution.y);
+    vec2 uv = (fragCoord - center) / size * 2.0;
+
+    float angle = rot;
+    float s = sin(angle);
+    float c = cos(angle);
+    uv = vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y);
+
+    uv.x += hover * hoverIntensity * 0.1 * sin(uv.y * 10.0 + iTime);
+    uv.y += hover * hoverIntensity * 0.1 * sin(uv.x * 10.0 + iTime);
+
+    return draw(uv);
+}
+
+vec4 main(vec2 fragCoord) {
+    vec4 col = mainImage(fragCoord);
+    return vec4(col.rgb * col.a, col.a);
+}
+`;
+
+type OrbUniforms = {
+    iTime: number;
+    iResolution: [number, number, number];
+    hue: number;
+    hover: number;
+    rot: number;
+    hoverIntensity: number;
 };
 
-const pickParticleColor = () => {
-    const r = Math.random();
-    if (r < 0.7) return LIGHT.accent;
-    if (r < 0.9) return LIGHT.accentDeep;
-    return "#ffffff";
+const INITIAL_UNIFORMS: OrbUniforms = {
+    iTime: 0,
+    iResolution: [ORB_SIZE, ORB_SIZE, 1],
+    hue: 0,
+    hover: 0,
+    rot: 0,
+    hoverIntensity: 0,
 };
-
-// Fixed at mount, never reshuffled — a scattered sparkle field, not two
-// shapes orbiting the mic. Even area density via sqrt(random) radius
-// sampling (uniform random radius would clump particles near center).
-const generateParticles = (count: number): Particle[] =>
-    Array.from({ length: count }, () => {
-        const angle = Math.random() * Math.PI * 2;
-        const radius = Math.sqrt(Math.random()) * (PARTICLE_MAX_R - PARTICLE_MIN_R) + PARTICLE_MIN_R;
-        const driftPx = 2 + Math.random() * 3;
-        return {
-            x: Math.cos(angle) * radius,
-            y: Math.sin(angle) * radius,
-            size: 2 + Math.random() * 3,
-            color: pickParticleColor(),
-            phase: Math.random(),
-            maxOpacity: 0.6 + Math.random() * 0.4,
-            driftX: Math.cos(angle) * driftPx,
-            driftY: Math.sin(angle) * driftPx,
-        };
-    });
 
 type Props = {
     baseUrl: string;
@@ -106,10 +233,10 @@ type Phase = "starting" | "recording" | "uploading" | "done" | "error";
 // not a floating card — Android can't render a truly transparent Activity
 // reliably, so this owns its own background and a real header like any
 // other screen in the app. The recording view breaks from the app's dark
-// theme (a light theme sourced from the main site's real tokens, per
-// design reference) with a sparkle particle field — not shapes rotating
-// around the mic — that flows in before the mic icon appears and
-// recording begins.
+// theme (a light theme sourced from the main site's real tokens) with a
+// live shader orb behind the mic — a wobbling, noise-driven ring with an
+// orbiting hotspot and a hue sweep, reacting to live mic volume — rather
+// than a flat CSS approximation.
 export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const recorder = useAudioRecorder({
         ...RecordingPresets.HIGH_QUALITY,
@@ -121,20 +248,24 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const [locked, setLocked] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<VoiceResult | null>(null);
+    const [orbUniforms, setOrbUniforms] = useState<OrbUniforms>(INITIAL_UNIFORMS);
 
     const hasSpokenRef = useRef(false);
     const quietSinceRef = useRef<number | null>(null);
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
-    const particlesRef = useRef<Particle[] | null>(null);
-    if (!particlesRef.current) particlesRef.current = generateParticles(PARTICLE_COUNT);
-    const particles = particlesRef.current;
+    const levelRef = useRef(0);
 
-    const driver = useRef(new Animated.Value(0)).current;
     const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
     const dotBlink = useRef(new Animated.Value(1)).current;
+
+    // Guarded rather than asserted non-null: this shader was hand-ported
+    // from GLSL to SKSL and hasn't been run through a device compile yet,
+    // so a bad port should fall back to no orb (mic icon still works)
+    // instead of crashing the whole recording screen.
+    const orbShader = useMemo(() => Skia.RuntimeEffect.Make(ORB_SHADER_SOURCE), []);
 
     const stopAndUpload = async () => {
         if (stoppingRef.current) return;
@@ -190,23 +321,41 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // The particle field: one shared clock drives every particle's
-    // twinkle + drift via phase-shifted interpolation, so nothing pulses
-    // in unison and only one native-driven loop is ever running. The mic
-    // icon fades in a beat later — audio capture already began above,
-    // this delay is purely visual.
+    // Drives the shader orb every frame: rotation speed and ripple
+    // intensity both scale with live mic volume, same as the reference.
+    // No reanimated — plain rAF + state is fine for a single full-screen
+    // canvas. The mic icon fades in a beat later; the orb itself is live
+    // from the first frame.
     useEffect(() => {
         if (phase !== "recording") return;
-        const loop = Animated.loop(
-            Animated.timing(driver, { toValue: 1, duration: DRIVER_MS, easing: Easing.linear, useNativeDriver: true }),
-        );
-        loop.start();
+        let raf: number;
+        let lastTime = 0;
+        let currentRot = 0;
+        const tick = (t: number) => {
+            if (!lastTime) lastTime = t;
+            const dt = (t - lastTime) * 0.001;
+            lastTime = t;
+            const voiceLevel = levelRef.current;
+            const voiceRotSpeed = BASE_ROT_SPEED + voiceLevel * MAX_ROT_SPEED * 2.0;
+            if (voiceLevel > 0.05) currentRot += dt * voiceRotSpeed;
+            setOrbUniforms({
+                iTime: t * 0.001,
+                iResolution: [ORB_SIZE, ORB_SIZE, 1],
+                hue: 0,
+                hover: Math.min(voiceLevel * 2.0, 1.0),
+                rot: currentRot,
+                hoverIntensity: Math.min(voiceLevel * MAX_HOVER_INTENSITY * 0.8, MAX_HOVER_INTENSITY),
+            });
+            raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+
         const introTimer = setTimeout(() => {
             iconVisibleRef.current = true;
             Animated.timing(iconAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
         }, INTRO_MS);
         return () => {
-            loop.stop();
+            cancelAnimationFrame(raf);
             clearTimeout(introTimer);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -241,6 +390,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
     useEffect(() => {
+        levelRef.current = level;
         Animated.spring(pulse, { toValue: level, useNativeDriver: true, friction: 6 }).start();
     }, [level, pulse]);
     useEffect(() => {
@@ -254,27 +404,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         loop.start();
         return () => loop.stop();
     }, [phase, dotBlink]);
-
-    // Each particle reads the one shared driver at its own phase offset
-    // via Animated.modulo — computed once since particles/driver are
-    // stable for the life of this screen.
-    const particleAnims = useMemo(
-        () =>
-            particles.map((p) => {
-                const clock = Animated.modulo(Animated.add(driver, p.phase), 1);
-                const opacity = clock.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.15, p.maxOpacity, 0.15] });
-                const drift = clock.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 1, 0] });
-                const scale = clock.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.85, 1.15, 0.85] });
-                return {
-                    opacity,
-                    scale,
-                    translateX: Animated.multiply(drift, p.driftX),
-                    translateY: Animated.multiply(drift, p.driftY),
-                };
-            }),
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [],
-    );
 
     const iconScale = iconAnim.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] });
     const corePulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
@@ -305,41 +434,13 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                         </View>
 
                         <Pressable onPress={handleOrbTap} hitSlop={20} style={styles.orbWrap}>
-                            <LinearGradient
-                                colors={[LIGHT.accent, `${LIGHT.accent}00`]}
-                                start={{ x: 0.35, y: 0.25 }}
-                                end={{ x: 0.9, y: 0.9 }}
-                                style={styles.glowOuter}
-                            />
-                            <LinearGradient
-                                colors={[LIGHT.accent, `${LIGHT.accent}00`]}
-                                start={{ x: 0.35, y: 0.25 }}
-                                end={{ x: 0.9, y: 0.9 }}
-                                style={styles.glowMid}
-                            />
-
-                            {particles.map((p, i) => (
-                                <Animated.View
-                                    key={i}
-                                    style={[
-                                        styles.particle,
-                                        {
-                                            left: ORB_SIZE / 2 + p.x - p.size / 2,
-                                            top: ORB_SIZE / 2 + p.y - p.size / 2,
-                                            width: p.size,
-                                            height: p.size,
-                                            borderRadius: p.size / 2,
-                                            backgroundColor: p.color,
-                                            opacity: particleAnims[i].opacity,
-                                            transform: [
-                                                { translateX: particleAnims[i].translateX },
-                                                { translateY: particleAnims[i].translateY },
-                                                { scale: particleAnims[i].scale },
-                                            ],
-                                        },
-                                    ]}
-                                />
-                            ))}
+                            {orbShader && (
+                                <Canvas style={styles.orbCanvas}>
+                                    <Fill>
+                                        <Shader source={orbShader} uniforms={orbUniforms} />
+                                    </Fill>
+                                </Canvas>
+                            )}
 
                             <Animated.View
                                 style={[
@@ -459,21 +560,11 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         marginVertical: 6,
     },
-    glowOuter: {
+    orbCanvas: {
         position: "absolute",
         width: ORB_SIZE,
         height: ORB_SIZE,
-        borderRadius: ORB_SIZE / 2,
-        opacity: 0.05,
     },
-    glowMid: {
-        position: "absolute",
-        width: 130,
-        height: 130,
-        borderRadius: 65,
-        opacity: 0.09,
-    },
-    particle: { position: "absolute" },
     micCore: {
         position: "absolute",
         width: 88,

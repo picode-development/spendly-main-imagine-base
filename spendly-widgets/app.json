@@ -2,8 +2,8 @@
   "expo": {
     "name": "Spendly Widgets",
     "slug": "picode-development",
-    "version": "1.6.3",
-    "runtimeVersion": "native-9",
+    "version": "1.6.4",
+    "runtimeVersion": "native-10",
     "updates": {
       "url": "https://u.expo.dev/78f05329-5676-4306-becb-ce80c19d9f93",
       "requestHeaders": {
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.spendly.widgets",
-      "versionCode": 10,
+      "versionCode": 11,
       "adaptiveIcon": {
         "backgroundColor": "#0f172a",
         "foregroundImage": "./assets/android-icon-foreground.png"

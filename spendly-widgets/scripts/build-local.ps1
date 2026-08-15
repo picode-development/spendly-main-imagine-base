@@ -71,9 +71,15 @@ Write-Host "==> ANDROID_HOME=$env:ANDROID_HOME"
 Write-Host "==> JAVA_HOME=$env:JAVA_HOME"
 
 # 5. Build
-Write-Host "==> gradlew assembleRelease"
+# Restricted to arm64-v8a: this is a sideloaded APK (not a Play Store App
+# Bundle that auto-selects per device), and a universal build packaging
+# native libs for all 4 ABIs blows past GitHub's 100MB file limit once a
+# library with real native code (e.g. react-native-skia) is added.
+# arm64-v8a covers essentially all real Android devices from the last
+# several years; only old 32-bit hardware and x86 emulators lose out.
+Write-Host "==> gradlew assembleRelease (arm64-v8a only)"
 Set-Location "android"
-.\gradlew.bat assembleRelease --no-daemon
+.\gradlew.bat assembleRelease --no-daemon "-PreactNativeArchitectures=arm64-v8a"
 if ($LASTEXITCODE -ne 0) { Set-Location $appDir; throw "gradle build failed" }
 Set-Location $buildDir
 
