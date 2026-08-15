@@ -267,18 +267,26 @@ export const llmExtractFromImage = async (
 };
 
 /**
- * Transcribe spoken audio with Whisper. Returns null on any failure.
+ * Transcribe spoken audio with Whisper. Distinguishes "a working provider
+ * heard nothing in this audio" (no_speech) from "no provider call ever
+ * succeeded" (unavailable — dead/rate-limited keys, network, bad file):
+ * the first is the speaker's problem, the second is ours, and collapsing
+ * them into one error made a dead key pool undiagnosable from the app.
  * Pass the user's account/category names as `vocabulary` — priming Whisper
  * with the proper nouns it should expect is what makes names like "Webhub"
  * transcribe correctly instead of being guessed as English words.
  */
+export type TranscribeResult =
+    | { ok: true; text: string }
+    | { ok: false; reason: "no_speech" | "unavailable" };
+
 export const llmTranscribe = async (
     audio: Blob,
     filename: string,
     vocabulary: string[] = [],
-): Promise<string | null> => {
+): Promise<TranscribeResult> => {
     const keys = groqKeys();
-    if (keys.length === 0) return null;
+    if (keys.length === 0) return { ok: false, reason: "unavailable" };
 
     const names = vocabulary.filter(Boolean).slice(0, 40).join(", ");
     const startedAt = Date.now();
@@ -286,7 +294,7 @@ export const llmTranscribe = async (
     for (const model of WHISPER_MODELS) {
         const maxTurns = keys.length * 2 + 1;
         for (let turn = 0; turn < maxTurns; turn++) {
-            if ((Date.now() - startedAt) / 1000 > 22) return null;
+            if ((Date.now() - startedAt) / 1000 > 22) return { ok: false, reason: "unavailable" };
             const pick = pickGroqKey(keys, model);
             if (!pick) break;
             if (pick.waitMs > 0) {
@@ -319,15 +327,17 @@ export const llmTranscribe = async (
                 }
                 const data = await response.json();
                 const text = typeof data?.text === "string" ? data.text.trim() : "";
-                // Silence → Whisper hallucination → treat as nothing said
-                if (text && isHallucinatedSilence(text)) return null;
-                if (text) return text;
+                // A successful call that heard nothing (empty, or a known
+                // Whisper silence-hallucination) is a definitive verdict on
+                // the AUDIO — don't burn more keys re-asking.
+                if (!text || isHallucinatedSilence(text)) return { ok: false, reason: "no_speech" };
+                return { ok: true, text };
             } catch (e) {
                 console.error(`Transcription error on ${model}:`, e);
             }
         }
     }
-    return null;
+    return { ok: false, reason: "unavailable" };
 };
 
 /**

@@ -446,14 +446,19 @@ const app = new Hono()
             }
 
             const ctx = await getLlmContext(tokenRow.userId);
-            const transcript = await llmTranscribe(
+            const transcribed = await llmTranscribe(
                 audio,
                 audio.name || "voice.m4a",
                 [...ctx.accounts, ...ctx.categories],
             );
-            if (!transcript) {
-                return c.json({ error: "Couldn't understand the recording" }, 502);
+            if (!transcribed.ok) {
+                return c.json({
+                    error: transcribed.reason === "no_speech"
+                        ? "Couldn't understand the recording"
+                        : "Voice service is unavailable right now — try again shortly",
+                }, 502);
             }
+            const transcript = transcribed.text;
 
             // A retry-after-1s-sleep here used to double the extraction
             // latency (a second full Hermes round-trip) on any voice note

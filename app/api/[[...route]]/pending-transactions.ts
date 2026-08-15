@@ -409,14 +409,19 @@ const app = new Hono()
             // Prime Whisper with the user's own account/category names so
             // spoken proper nouns transcribe correctly
             const ctx = await getLlmContext(auth.userId);
-            const transcript = await llmTranscribe(
+            const transcribed = await llmTranscribe(
                 audio,
                 audio.name || "voice.webm",
                 [...ctx.accounts, ...ctx.categories],
             );
-            if (!transcript) {
-                return c.json({ error: "Couldn't understand the recording" }, 502);
+            if (!transcribed.ok) {
+                return c.json({
+                    error: transcribed.reason === "no_speech"
+                        ? "Couldn't understand the recording"
+                        : "Voice service is unavailable right now — try again shortly",
+                }, 502);
             }
+            const transcript = transcribed.text;
 
             if (mode === "transcribe") {
                 // Per-field dictation: clean the raw transcript into just the
