@@ -270,6 +270,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<VoiceResult | null>(null);
     const [orbUniforms, setOrbUniforms] = useState<OrbUniforms>(INITIAL_UNIFORMS);
+    // TEMPORARY diagnostic overlay — five straight blind fixes for
+    // auto-stop failed, so this surfaces the real live numbers instead of
+    // guessing again. Remove once the underlying issue is confirmed fixed.
+    const [debugInfo, setDebugInfo] = useState("");
+    const debugThrottleRef = useRef(0);
 
     const hasSpokenRef = useRef(false);
     const quietSinceRef = useRef<number | null>(null);
@@ -277,11 +282,6 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
     const levelRef = useRef(0);
-    // null = no real metering sample has arrived yet (there's a brief gap
-    // between the recorder starting and the native side actually reporting
-    // levels) — kept distinct from any real reading, including a real very
-    // quiet one, so that gap can never be mistaken for calibration data.
-    const dbRef = useRef<number | null>(null);
     const lockedRef = useRef(false);
     const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
@@ -342,11 +342,15 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 return;
             }
             await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-            // isMeteringEnabled passed only to useAudioRecorder's initial
-            // config is unreliable on some expo-audio versions — passing it
-            // here too is the documented workaround (expo/expo#37241) and
-            // is very likely why metering-based auto-stop never worked at
-            // all, regardless of how the threshold logic was tuned.
+            // Redundant with isMeteringEnabled already in useAudioRecorder's
+            // config below, confirmed by reading the installed version's
+            // own Android source (AudioRecorder.kt): `meteringEnabled` is a
+            // field set once from the constructor's options and never
+            // reassigned by prepareRecording's options — so this call
+            // can't be what's toggling it. Kept anyway since it's a
+            // harmless, documented call shape (expo/expo#37241 reported it
+            // as necessary on some version); the actual fix for metering
+            // going stale is below, reading recorder.getStatus() directly.
             await recorder.prepareToRecordAsync({ isMeteringEnabled: true });
             recorder.record();
             startedAtRef.current = Date.now();
@@ -371,15 +375,21 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     // keys off `iTime` (noise wobble, hue sweep, orbiting hotspot) smoothly
     // decelerates to a stop rather than freezing/unfreezing abruptly.
     //
-    // The silence check runs HERE (every animation frame via dbRef.current)
-    // rather than in its own useEffect keyed on recorderState.metering —
-    // that was the actual auto-stop bug. A plain dependency-array effect
-    // only re-runs when the value changes; dead silence routinely reports
-    // the exact same dBFS reading for consecutive polls, so the effect
-    // could go seconds without re-running, and the "has 2.5s of quiet
-    // elapsed" check never got evaluated during that stretch. Piggybacking
-    // on this already-running ~60fps loop guarantees the check happens
-    // regardless of whether the underlying reading changed.
+    // The silence check reads recorder.getStatus().metering DIRECTLY every
+    // frame here, bypassing useAudioRecorderState/recorderState entirely
+    // for this critical path. Confirmed by reading expo-audio's own source
+    // (node_modules/expo-audio/src/utils/useAudioRecorderState.ts): that
+    // hook deliberately SUPPRESSES its own state update — and therefore a
+    // React re-render — whenever the new metering reading is within 0.1dB
+    // of the previous one. Real silence is acoustically stable frame to
+    // frame, so it routinely stays within that 0.1dB band, meaning
+    // recorderState.metering (and anything derived from it, no matter how
+    // it's consumed downstream) can simply stop updating for the rest of a
+    // quiet stretch. No amount of restructuring the CONSUMING code could
+    // ever fix that — the suppression happens upstream, inside the library
+    // hook itself. recorder.getStatus() is the same plain method that hook
+    // calls internally; calling it ourselves here gets the untouched,
+    // unsuppressed native value on every single frame instead.
     //
     // No reanimated — plain rAF + state is fine for a single full-screen
     // canvas. The mic icon fades in a beat later.
@@ -399,7 +409,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             // clamp minimum (this was the actual bug: everything after
             // that read as "louder than silence" forever, since nothing
             // could ever be quieter than an artificial rock-bottom floor).
-            const rawDb = dbRef.current;
+            const rawDb = recorder.getStatus().metering ?? null;
             if (rawDb !== null) {
                 noiseFloorRef.current = Math.max(NOISE_FLOOR_CLAMP_MIN, Math.min(noiseFloorRef.current, rawDb));
             }
@@ -425,8 +435,8 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 hoverIntensity: activity * MAX_HOVER_INTENSITY,
             });
 
+            const now = Date.now();
             if (!lockedRef.current) {
-                const now = Date.now();
                 if (db >= speechFloor) {
                     hasSpokenRef.current = true;
                     quietSinceRef.current = null;
@@ -445,6 +455,17 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                 }
             } else {
                 quietSinceRef.current = null;
+            }
+
+            if (t - debugThrottleRef.current > 200) {
+                debugThrottleRef.current = t;
+                const quietFor = quietSinceRef.current ? ((now - quietSinceRef.current) / 1000).toFixed(1) + "s" : "-";
+                setDebugInfo(
+                    `metering raw: ${rawDb === null ? "NULL (no sample yet)" : rawDb.toFixed(1) + " dB"}\n` +
+                    `floor: ${noiseFloorRef.current.toFixed(1)}  silence<=${silenceCeiling.toFixed(1)}  speech>=${speechFloor.toFixed(1)}\n` +
+                    `hasSpoken: ${hasSpokenRef.current}  quietFor: ${quietFor}  locked: ${lockedRef.current}\n` +
+                    `activity: ${activity.toFixed(2)}`,
+                );
             }
 
             raf = requestAnimationFrame(tick);
@@ -501,13 +522,14 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         if (locked) quietSinceRef.current = null;
     }, [locked]);
 
+    // Cosmetic only (the mic core's subtle scale-with-volume pulse) — fine
+    // to source from the hook's possibly-suppressed value, unlike the
+    // auto-stop path above which reads recorder.getStatus() directly.
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
-    const db = recorderState.metering ?? null;
     useEffect(() => {
         levelRef.current = level;
-        dbRef.current = db;
         Animated.spring(pulse, { toValue: level, useNativeDriver: true, friction: 6 }).start();
-    }, [level, db, pulse]);
+    }, [level, pulse]);
     useEffect(() => {
         if (phase !== "recording") return;
         const loop = Animated.loop(
@@ -602,6 +624,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
                                 {locked ? "Locked" : "Lock"}
                             </Text>
                         </Pressable>
+
+                        {/* TEMPORARY diagnostic overlay — remove once
+                            auto-stop is confirmed fixed on-device. */}
+                        {!!debugInfo && <Text style={styles.debugText}>{debugInfo}</Text>}
                     </View>
                 )}
 
@@ -735,6 +761,17 @@ const styles = StyleSheet.create({
     lockToggleActive: { backgroundColor: `${UI.accent}26` },
     lockTogglePressed: { opacity: 0.7 },
     lockLabel: { color: UI.label, fontSize: 12, fontWeight: "600" },
+    debugText: {
+        marginTop: 8,
+        color: "#84cc16",
+        fontSize: 10,
+        fontFamily: "monospace",
+        textAlign: "center",
+        backgroundColor: "#00000066",
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        borderRadius: 6,
+    },
     row: { flexDirection: "row", justifyContent: "center", gap: 10, marginTop: 4 },
     payee: { color: UI.text, fontSize: 17, fontWeight: "600" },
     sub: { color: UI.label, fontSize: 13 },
