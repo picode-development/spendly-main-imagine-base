@@ -2,7 +2,7 @@ import { z } from "zod";
 import { db } from "@/db/drizzle";
 import { pendingTransactions, sharedStash } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
-import { hasGroqKey, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { hasGroqKey, hasHermesBridge, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { Hono } from "hono";
@@ -392,9 +392,10 @@ const app = new Hono()
             if (!auth?.userId) {
                 return c.json({ error: "Unauthorized" }, 401);
             }
-            if (!hasGroqKey()) {
-                // Whisper is Groq-only; Gemini can't transcribe here
-                return c.json({ error: "Voice input needs a Groq API key" }, 501);
+            // Transcription is Hermes-first (local whisper on the bridge)
+            // with Groq as fallback — either backend alone is enough.
+            if (!hasHermesBridge() && !hasGroqKey()) {
+                return c.json({ error: "No voice transcription backend is configured" }, 501);
             }
 
             const body = await c.req.parseBody();

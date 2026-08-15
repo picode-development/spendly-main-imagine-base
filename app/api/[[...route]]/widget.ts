@@ -1,6 +1,6 @@
 import { db } from "@/db/drizzle";
 import { accounts, categories, pendingTransactions, transactions, widgetTokens } from "@/db/schema";
-import { hasGroqKey, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { hasGroqKey, hasHermesBridge, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { getLlmContext } from "@/lib/parse-message";
 import { calculatePercentageChange } from "@/lib/utils";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
@@ -432,8 +432,10 @@ const app = new Hono()
             if (!tokenRow) {
                 return c.json({ error: "Unauthorized" }, 401);
             }
-            if (!hasGroqKey()) {
-                return c.json({ error: "Voice input needs a Groq API key" }, 501);
+            // Transcription is Hermes-first (local whisper on the bridge)
+            // with Groq as fallback — either backend alone is enough.
+            if (!hasHermesBridge() && !hasGroqKey()) {
+                return c.json({ error: "No voice transcription backend is configured" }, 501);
             }
 
             const body = await c.req.parseBody();
