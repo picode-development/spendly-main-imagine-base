@@ -24,11 +24,23 @@ import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
 
 // Mirrors the web app's silence auto-stop: once the user has spoken,
 // sustained quiet ends the recording; never-spoke bails out sooner.
-// Levels are dBFS (negative; closer to 0 = louder).
-const SPEECH_DB = -25;
-// -38 was too strict — normal room/mic noise floor rarely dips that low,
-// so genuine silence never registered and auto-stop never fired.
-const SILENCE_DB = -32;
+// Levels are dBFS (negative; closer to 0 = louder) — but unlike the web
+// app (a real Web Audio AnalyserNode, consistently calibrated), Android's
+// MediaRecorder-based metering varies a lot by device/manufacturer: a
+// fixed absolute cutoff tuned against one phone's "silence" can sit well
+// above another phone's actual noise floor, so genuine silence never
+// crosses it and auto-stop never fires. Fixed thresholds were tried twice
+// (-38, then -32) and still failed on-device. Replaced with an adaptive
+// floor: track the quietest reading actually observed this recording
+// (see noiseFloorRef in the component) and define speech/silence as
+// margins ABOVE that floor, so it self-calibrates to whatever a given
+// phone's real silence reads as, instead of guessing a universal number.
+const SILENCE_MARGIN_DB = 8;
+const SPEECH_MARGIN_DB = 16;
+const LOUD_MARGIN_DB = 40;
+// Never let a single anomalously-quiet reading drag the floor down to
+// something unrealistic.
+const NOISE_FLOOR_CLAMP_MIN = -70;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 
@@ -38,14 +50,6 @@ const INTRO_MS = 600;
 const BASE_ROT_SPEED = 0.12;
 const MAX_ROT_SPEED = 0.4;
 const MAX_HOVER_INTENSITY = 0.3;
-// SILENCE_DB (shared with the auto-stop logic) is still the floor: below
-// it the orb is fully still, so ambient noise never registers. But the
-// ceiling for full-intensity reaction is deliberately louder than
-// SPEECH_DB — SPEECH_DB just marks "this counts as speech" for auto-stop,
-// a fairly low bar that a soft "hi" already clears. LOUD_DB stretches the
-// range out toward shouting, so a soft voice reacts gently and a loud
-// voice reacts strongly instead of both instantly maxing out the orb.
-const LOUD_DB = -8;
 // The orb's "activity" (0..1) eases toward that target rather than
 // snapping to it, so starting/stopping speech ramps smoothly instead of
 // the orb jumping between a reacting and an idle state.
@@ -266,6 +270,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const lockedRef = useRef(false);
     const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
+    // Seeded loud (0dBFS) so the running minimum converges DOWN to
+    // whatever this phone's real ambient floor is, whatever that turns
+    // out to be, rather than assuming a guessed starting point.
+    const noiseFloorRef = useRef(0);
 
     const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
@@ -335,7 +343,8 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
     // Drives the shader orb every frame AND the silence auto-stop check.
     // `activity` (0..1) eases toward a target that scales with how loud
-    // you actually are (SILENCE_DB..LOUD_DB), with a fast attack (quick to
+    // you actually are relative to this recording's adaptive noise floor
+    // (silenceCeiling..loudCeiling), with a fast attack (quick to
     // pick up when you start talking) and a slow release (eases back down
     // instead of snapping off) — an envelope, not a hard gate. `iTime` and
     // `rot` advance proportionally to `activity`, so everything the shader
@@ -365,7 +374,12 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             lastTime = t;
 
             const db = dbRef.current;
-            const targetActivity = db <= SILENCE_DB ? 0 : Math.min(1, (db - SILENCE_DB) / (LOUD_DB - SILENCE_DB));
+            noiseFloorRef.current = Math.max(NOISE_FLOOR_CLAMP_MIN, Math.min(noiseFloorRef.current, db));
+            const silenceCeiling = noiseFloorRef.current + SILENCE_MARGIN_DB;
+            const speechFloor = noiseFloorRef.current + SPEECH_MARGIN_DB;
+            const loudCeiling = noiseFloorRef.current + LOUD_MARGIN_DB;
+
+            const targetActivity = db <= silenceCeiling ? 0 : Math.min(1, (db - silenceCeiling) / (loudCeiling - silenceCeiling));
             const rate = targetActivity > activityRef.current ? ACTIVITY_ATTACK : ACTIVITY_RELEASE;
             activityRef.current += (targetActivity - activityRef.current) * rate;
             const activity = activityRef.current;
@@ -384,10 +398,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
             if (!lockedRef.current) {
                 const now = Date.now();
-                if (db >= SPEECH_DB) {
+                if (db >= speechFloor) {
                     hasSpokenRef.current = true;
                     quietSinceRef.current = null;
-                } else if (db <= SILENCE_DB) {
+                } else if (db <= silenceCeiling) {
                     quietSinceRef.current ??= now;
                     const quietFor = now - quietSinceRef.current;
                     if (hasSpokenRef.current && quietFor >= TRAILING_SILENCE_MS) void stopAndUpload();
