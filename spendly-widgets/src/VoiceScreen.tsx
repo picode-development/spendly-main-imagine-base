@@ -54,6 +54,17 @@ const NO_SPEECH_TIMEOUT_MS = 8000;
 // forever. This guarantees recording always ends and gets processed
 // eventually no matter what, same as tapping the orb manually.
 const MAX_RECORDING_MS = 45_000;
+// Android's underlying amplitude reading (MediaRecorder.getMaxAmplitude,
+// which recorder.getStatus().metering wraps) reports the PEAK since the
+// last time it was read, and reading it resets that peak-hold register.
+// On-device diagnostics showed metering flapping wildly between -160
+// (silence) and real values within the same second while nothing about
+// the actual sound had changed that fast — reading it once per animation
+// frame (~16ms) was resetting the register before a real peak could
+// accumulate, so most reads just saw near-nothing. Polled on its own
+// slower interval instead of every rAF frame; the orb's visual smoothing
+// (ACTIVITY_ATTACK/RELEASE) still animates at 60fps between readings.
+const METERING_POLL_MS = 150;
 
 const ORB_SIZE = 200;
 const INTRO_MS = 600;
@@ -289,6 +300,9 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     // whatever this phone's real ambient floor is, whatever that turns
     // out to be, rather than assuming a guessed starting point.
     const noiseFloorRef = useRef(0);
+    // Populated by a slower interval, not every animation frame — see the
+    // METERING_POLL_MS effect below for why.
+    const rawMeterRef = useRef<number | null>(null);
 
     const iconAnim = useRef(new Animated.Value(0)).current;
     const pulse = useRef(new Animated.Value(0)).current;
@@ -388,13 +402,23 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     // quiet stretch. No amount of restructuring the CONSUMING code could
     // ever fix that — the suppression happens upstream, inside the library
     // hook itself. recorder.getStatus() is the same plain method that hook
-    // calls internally; calling it ourselves here gets the untouched,
-    // unsuppressed native value on every single frame instead.
+    // calls internally, but rawMeterRef (populated by the slower
+    // METERING_POLL_MS interval below, not this loop) reads it unsuppressed
+    // AND at a rate that doesn't fight the underlying peak-hold reset
+    // behavior — see METERING_POLL_MS's own comment for that second issue,
+    // confirmed from on-device diagnostics after the suppression fix alone
+    // still wasn't enough.
     //
     // No reanimated — plain rAF + state is fine for a single full-screen
     // canvas. The mic icon fades in a beat later.
     useEffect(() => {
         if (phase !== "recording") return;
+        rawMeterRef.current = null;
+        const pollMeter = () => {
+            rawMeterRef.current = recorder.getStatus().metering ?? null;
+        };
+        pollMeter();
+        const meterInterval = setInterval(pollMeter, METERING_POLL_MS);
         let raf: number;
         let lastTime = 0;
         let currentRot = 0;
@@ -409,7 +433,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             // clamp minimum (this was the actual bug: everything after
             // that read as "louder than silence" forever, since nothing
             // could ever be quieter than an artificial rock-bottom floor).
-            const rawDb = recorder.getStatus().metering ?? null;
+            const rawDb = rawMeterRef.current;
             if (rawDb !== null) {
                 noiseFloorRef.current = Math.max(NOISE_FLOOR_CLAMP_MIN, Math.min(noiseFloorRef.current, rawDb));
             }
@@ -483,6 +507,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         const maxDurationTimer = setTimeout(() => void stopAndUpload(), MAX_RECORDING_MS);
         return () => {
             cancelAnimationFrame(raf);
+            clearInterval(meterInterval);
             clearTimeout(introTimer);
             clearTimeout(maxDurationTimer);
         };
