@@ -501,13 +501,26 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
             if (cls === "speech") {
                 speechStreakRef.current += 1;
-                if (speechStreakRef.current >= SPEECH_CONFIRM_POLLS) hasSpokenRef.current = true;
+                if (speechStreakRef.current >= SPEECH_CONFIRM_POLLS && !hasSpokenRef.current) {
+                    hasSpokenRef.current = true;
+                    // The countdown measures TRAILING silence — quiet time
+                    // accumulated BEFORE the first speech (opening the
+                    // screen, gathering your thought) must not count, or
+                    // the first breath pause after your first words meets
+                    // an already-full bucket and cuts the recording off
+                    // mid-sentence. (Exactly that happened: ~2s of leading
+                    // quiet capped the bucket, then one quiet syllable gap
+                    // after hasSpoken latched stopped it instantly — the
+                    // upload contained fan noise plus half a word, and the
+                    // server rightly said it couldn't understand it.)
+                    quietAccumMsRef.current = 0;
+                }
                 quietAccumMsRef.current = Math.max(0, quietAccumMsRef.current - BLIP_PENALTY_MS);
             } else {
                 speechStreakRef.current = 0;
-                if (cls === "silence") {
+                if (cls === "silence" && hasSpokenRef.current) {
                     quietAccumMsRef.current = Math.min(TRAILING_SILENCE_MS, quietAccumMsRef.current + elapsed);
-                    if (hasSpokenRef.current && quietAccumMsRef.current >= TRAILING_SILENCE_MS) void stopAndUpload();
+                    if (quietAccumMsRef.current >= TRAILING_SILENCE_MS) void stopAndUpload();
                 }
             }
             if (!hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
