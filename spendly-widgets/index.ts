@@ -1,5 +1,3 @@
-import 'react-native-reanimated';
-
 import { registerRootComponent } from 'expo';
 import {
     registerWidgetConfigurationScreen,
