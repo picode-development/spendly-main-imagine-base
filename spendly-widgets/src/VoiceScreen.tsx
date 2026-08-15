@@ -47,6 +47,19 @@ const LOUD_MARGIN_DB = 40;
 const NOISE_FLOOR_CLAMP_MIN = -55;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
+// On-device diagnostics showed isolated loud readings recurring roughly
+// every 1-1.5s during confirmed silence (likely breathing near the mic,
+// or another periodic sound) at the SAME amplitude as real speech — no
+// threshold could tell them apart by loudness alone, and each one was
+// resetting the quiet countdown to zero, so it never reached 2.5s.
+// TRAILING_SILENCE_MS is now tracked as a "leaky bucket"
+// (quietAccumMsRef) instead of a since-when timestamp: it fills while
+// quiet and drains by a fixed penalty on each confirmed-loud poll,
+// rather than resetting to zero outright. A single blip costs some
+// progress but doesn't restart the whole countdown; genuinely sustained
+// speech (many consecutive loud polls) still drains it fast enough to
+// never falsely trigger mid-sentence.
+const BLIP_PENALTY_MS = 600;
 // Unconditional backstop, independent of metering entirely: if metering
 // itself isn't reporting real values on a given device (a known issue in
 // some expo-audio versions — see the prepareToRecordAsync fix below),
@@ -288,7 +301,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const debugThrottleRef = useRef(0);
 
     const hasSpokenRef = useRef(false);
-    const quietSinceRef = useRef<number | null>(null);
+    // Accumulated quiet time in ms, capped at TRAILING_SILENCE_MS — see
+    // BLIP_PENALTY_MS's comment for why this is a leaky bucket rather
+    // than a since-when timestamp.
+    const quietAccumMsRef = useRef(0);
     const startedAtRef = useRef(0);
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
@@ -463,31 +479,33 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             if (!lockedRef.current) {
                 if (db >= speechFloor) {
                     hasSpokenRef.current = true;
-                    quietSinceRef.current = null;
+                    // A confirmed-loud poll costs progress rather than
+                    // wiping the countdown out entirely — see
+                    // BLIP_PENALTY_MS's comment.
+                    quietAccumMsRef.current = Math.max(0, quietAccumMsRef.current - BLIP_PENALTY_MS);
                 } else if (db <= silenceCeiling) {
-                    quietSinceRef.current ??= now;
-                    const quietFor = now - quietSinceRef.current;
-                    if (hasSpokenRef.current && quietFor >= TRAILING_SILENCE_MS) void stopAndUpload();
+                    quietAccumMsRef.current = Math.min(TRAILING_SILENCE_MS, quietAccumMsRef.current + dt * 1000);
+                    if (hasSpokenRef.current && quietAccumMsRef.current >= TRAILING_SILENCE_MS) void stopAndUpload();
                     else if (!hasSpokenRef.current && now - startedAtRef.current >= NO_SPEECH_TIMEOUT_MS) {
                         setError("Didn't hear anything.");
                         setPhase("error");
                         stoppingRef.current = true;
                         recorder.stop().catch(() => {});
                     }
-                } else {
-                    quietSinceRef.current = null;
                 }
+                // Ambiguous zone (between silenceCeiling and speechFloor):
+                // leave the accumulator untouched — neither progress nor
+                // penalty.
             } else {
-                quietSinceRef.current = null;
+                quietAccumMsRef.current = 0;
             }
 
             if (t - debugThrottleRef.current > 200) {
                 debugThrottleRef.current = t;
-                const quietFor = quietSinceRef.current ? ((now - quietSinceRef.current) / 1000).toFixed(1) + "s" : "-";
                 setDebugInfo(
                     `metering raw: ${rawDb === null ? "NULL (no sample yet)" : rawDb.toFixed(1) + " dB"}\n` +
                     `floor: ${noiseFloorRef.current.toFixed(1)}  silence<=${silenceCeiling.toFixed(1)}  speech>=${speechFloor.toFixed(1)}\n` +
-                    `hasSpoken: ${hasSpokenRef.current}  quietFor: ${quietFor}  locked: ${lockedRef.current}\n` +
+                    `hasSpoken: ${hasSpokenRef.current}  quietAccum: ${(quietAccumMsRef.current / 1000).toFixed(1)}s / ${(TRAILING_SILENCE_MS / 1000).toFixed(1)}s  locked: ${lockedRef.current}\n` +
                     `activity: ${activity.toFixed(2)}`,
                 );
             }
@@ -544,7 +562,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
 
     useEffect(() => {
         lockedRef.current = locked;
-        if (locked) quietSinceRef.current = null;
+        if (locked) quietAccumMsRef.current = 0;
     }, [locked]);
 
     // Cosmetic only (the mic core's subtle scale-with-volume pulse) — fine
