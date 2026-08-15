@@ -209,7 +209,14 @@ const hermesPost = async (path: string, body: unknown): Promise<unknown | null> 
     if (!cfg) return null;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000); // under Vercel's function timeout
+    // Real observed vision-extraction latency is 9-12s, and under
+    // concurrent load (a multi-image share batch) some calls were
+    // exceeding the old 20s ceiling and silently failing — the bridge's
+    // own internal timeout was raised to 45s to match; this is a backstop
+    // slightly above that (still safely under Vercel's 60s maxDuration on
+    // this route) so the bridge gets a chance to time out and respond
+    // cleanly first, rather than the client cutting it off mid-response.
+    const timeout = setTimeout(() => controller.abort(), 50_000);
     try {
         const response = await fetch(`${cfg.url}${path}`, {
             method: "POST",

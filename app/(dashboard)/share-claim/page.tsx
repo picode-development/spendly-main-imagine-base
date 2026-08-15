@@ -60,9 +60,15 @@ const ShareClaimHandler = () => {
 
     useEffect(() => () => previews.current.forEach((u) => URL.revokeObjectURL(u)), []);
 
-    // Re-read a hosted screenshot and fill its blank pending row
+    // Re-read a hosted screenshot and fill its blank pending row. url/
+    // pendingId are re-stamped on every outcome (not just success) so a
+    // failed attempt still leaves the row retryable — this is called both
+    // as the single automatic retry right after the first read (from
+    // processOne) and from the manual "Retry N" button below; either way,
+    // if this attempt also comes up blank, the row must still carry what
+    // the NEXT retry needs.
     const extractAndFill = async (index: number, url: string, pendingId: string) => {
-        updateItem(index, { status: "retry" });
+        updateItem(index, { status: "retry", url, pendingId });
         const res = await client.api["pending-transactions"]["extract-image"]
             .$post({ json: { image: url } }).catch(() => null);
         const data = res?.ok ? (await res.json()).data : null;
@@ -82,7 +88,7 @@ const ShareClaimHandler = () => {
             updateItem(index, { status: "done", amount: data.amount ?? null, payee: data.payee ?? null });
             return true;
         }
-        updateItem(index, { status: "empty" });
+        updateItem(index, { status: "empty", url, pendingId });
         return false;
     };
 
@@ -227,17 +233,16 @@ const ShareClaimHandler = () => {
                 const hasData = data?.amount != null || !!data?.payee;
                 if (hasData) {
                     updateItem(index, { status: "done", amount: data?.amount ?? null, payee: data?.payee ?? null });
+                } else if (hosted && data?.id) {
+                    // One automatic retry, right now — not deferred to a
+                    // later batch-wide pass. extractAndFill correctly shows
+                    // "retry" only while this real second attempt is
+                    // actually in flight, and leaves the row retryable via
+                    // "Retry N" if it fails too.
+                    await extractAndFill(index, hosted.url, data.id)
+                        .catch(() => updateItem(index, { status: "empty", url: hosted.url, pendingId: data.id }));
                 } else {
-                    // Genuinely incomplete after the read(s) above — stored with
-                    // its hosted URL/pendingId (if we have them) so the "Retry N"
-                    // button below can re-read it on request. Not marked "retry"
-                    // here: no further attempt is in flight yet, that would only
-                    // be true once the user actually asks for one.
-                    updateItem(index, {
-                        status: "empty",
-                        url: data && hosted ? hosted.url : undefined,
-                        pendingId: data && hosted ? data.id : undefined,
-                    });
+                    updateItem(index, { status: "empty" });
                 }
             };
 
