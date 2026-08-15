@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    FlatList,
     Linking,
     Pressable,
     StatusBar,
@@ -50,11 +51,12 @@ const SHORTCUTS_W = SHORTCUTS_COUNT * SHORTCUT_SIZE + (SHORTCUTS_COUNT - 1) * SH
 const BAR_GAP = 10;
 const ROW_H = 52;
 const BAR_H = 44;
-// Tighter than the first pass (was damping:15/stiffness:170, which is
-// noticeably underdamped — it overshoots and takes a few visible bounces
-// to settle, reading as "long"). This ratio is close to critically damped:
-// a quick, decisive settle with barely a hint of give, not a bouncy sweep.
-const SPRING = { damping: 26, stiffness: 260 };
+// damping/stiffness ratio ≈1.03 — just past critically damped, so it settles
+// directly into place with no oscillation at all. The previous pass
+// (26/260 ≈ 0.81) was still underdamped enough to visibly wobble once it
+// reached the goo blobs, which read as a "liquid jiggle" on top of the
+// blur/merge effect rather than a clean settle.
+const SPRING = { damping: 32, stiffness: 240 };
 const STAGGER_MS = 30;
 
 // Small, CAPPED slide-in distance — not proportional to index (the first
@@ -268,18 +270,17 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                             <Canvas style={styles.gooCanvas} pointerEvents="none">
                                 <Group layer={
                                     <Paint>
-                                        {/* Toned down from the first pass (blur 12, alpha 20/-10) —
-                                            that combination fully melted the circles into one
-                                            indistinct blob at rest. Lower blur + a gentler alpha
-                                            threshold keeps each shortcut visually distinct and only
-                                            merges them right as they touch, matching the reference's
-                                            subtle goo rather than an aggressive one. */}
-                                        <Blur blur={6} />
+                                        {/* Same recipe as before, dialed down again — this is
+                                            now a light touch: blobs stay visibly separate
+                                            circles and only pull together right as they'd
+                                            physically overlap, instead of merging from a
+                                            visible distance. */}
+                                        <Blur blur={3} />
                                         <ColorMatrix matrix={[
                                             1, 0, 0, 0, 0,
                                             0, 1, 0, 0, 0,
                                             0, 0, 1, 0, 0,
-                                            0, 0, 0, 10, -4,
+                                            0, 0, 0, 6, -2,
                                         ]} />
                                     </Paint>
                                 }>
@@ -390,54 +391,64 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                         <ActivityIndicator color={UI.accent} style={{ marginTop: 24 }} />
                     ) : (
                         <Card style={styles.resultsCard}>
-                            {(rows ?? []).length === 0 ? (
-                                <View style={styles.emptyState}>
-                                    <View style={styles.emptyIcon}>
-                                        <Feather name={query ? "search" : "inbox"} size={22} color={UI.label} />
+                            <FlatList
+                                style={styles.list}
+                                data={rows ?? []}
+                                keyExtractor={(item) => item.id}
+                                // A plain `.map()` in a non-scrolling View has no
+                                // bounded height and no clipping, so past a
+                                // handful of rows the list silently overflowed
+                                // past the Card and rendered ON TOP OF the "Open
+                                // in Spendly" button below it — the "list gets
+                                // corrupted" symptom. FlatList scrolls and clips
+                                // properly, same as v1 did before this rewrite.
+                                ListEmptyComponent={
+                                    <View style={styles.emptyState}>
+                                        <View style={styles.emptyIcon}>
+                                            <Feather name={query ? "search" : "inbox"} size={22} color={UI.label} />
+                                        </View>
+                                        <Hint>{query ? "No matches." : "Your latest transactions appear here."}</Hint>
                                     </View>
-                                    <Hint>{query ? "No matches." : "Your latest transactions appear here."}</Hint>
-                                </View>
-                            ) : (
-                                <View style={styles.list}>
-                                    {(rows ?? []).map((item, index) => {
-                                        const isLast = index === (rows?.length ?? 0) - 1;
-                                        const income = item.amount >= 0;
-                                        const badgeColor = income ? UI.green : UI.danger;
-                                        return (
-                                            <ReAnimated.View key={item.id} entering={FadeIn.delay(index * 60).duration(200)}>
-                                                <Pressable
-                                                    style={({ pressed }) => [
-                                                        styles.row,
-                                                        !isLast && styles.rowDivider,
-                                                        pressed && styles.rowPressed,
-                                                    ]}
-                                                    onPress={() => Linking.openURL(`${baseUrl}/transactions?edit=${item.id}`)}
-                                                >
-                                                    <Text style={styles.rowDate} numberOfLines={1}>{item.date}</Text>
-                                                    <View style={styles.rowMain}>
-                                                        <View style={styles.rowValueLine}>
-                                                            <Text style={styles.payee} numberOfLines={1}>{item.payee}</Text>
-                                                            <Text style={[styles.rowAmount, { color: badgeColor }]} numberOfLines={1}>
-                                                                {income ? "+" : ""}{formatINR(item.amount)}
-                                                            </Text>
-                                                        </View>
-                                                        <Text style={styles.sub} numberOfLines={1}>
-                                                            {item.category ?? "Uncategorized"} · {item.account}
+                                }
+                                renderItem={({ item, index }) => {
+                                    const isLast = index === (rows?.length ?? 0) - 1;
+                                    const income = item.amount >= 0;
+                                    const badgeColor = income ? UI.green : UI.danger;
+                                    return (
+                                        <ReAnimated.View entering={FadeIn.delay(Math.min(index, 8) * 40).duration(180)}>
+                                            <Pressable
+                                                style={({ pressed }) => [
+                                                    styles.row,
+                                                    !isLast && styles.rowDivider,
+                                                    pressed && styles.rowPressed,
+                                                ]}
+                                                onPress={() => Linking.openURL(`${baseUrl}/transactions?edit=${item.id}`)}
+                                            >
+                                                <View style={styles.rowMain}>
+                                                    <View style={styles.rowValueLine}>
+                                                        <Text style={styles.payee} numberOfLines={1}>{item.payee}</Text>
+                                                        <Text style={[styles.rowAmount, { color: badgeColor }]} numberOfLines={1}>
+                                                            {income ? "+" : ""}{formatINR(item.amount)}
                                                         </Text>
                                                     </View>
-                                                    <View style={[styles.rowBadge, { backgroundColor: `${badgeColor}22` }]}>
-                                                        <Feather
-                                                            name={income ? "arrow-up-right" : "arrow-down-left"}
-                                                            size={15}
-                                                            color={badgeColor}
-                                                        />
-                                                    </View>
-                                                </Pressable>
-                                            </ReAnimated.View>
-                                        );
-                                    })}
-                                </View>
-                            )}
+                                                    {/* Date folded into the description line, like a
+                                                        note, rather than its own column. */}
+                                                    <Text style={styles.sub} numberOfLines={1}>
+                                                        {item.date} · {item.category ?? "Uncategorized"} · {item.account}
+                                                    </Text>
+                                                </View>
+                                                <View style={[styles.rowBadge, { backgroundColor: `${badgeColor}22` }]}>
+                                                    <Feather
+                                                        name={income ? "arrow-up-right" : "arrow-down-left"}
+                                                        size={15}
+                                                        color={badgeColor}
+                                                    />
+                                                </View>
+                                            </Pressable>
+                                        </ReAnimated.View>
+                                    );
+                                }}
+                            />
                         </Card>
                     )}
                     <Button icon="external-link" variant="outline" onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}>
@@ -529,10 +540,9 @@ const styles = StyleSheet.create({
     },
     rowDivider: { borderBottomColor: UI.border, borderBottomWidth: StyleSheet.hairlineWidth },
     rowPressed: { backgroundColor: UI.cardSubtle },
-    // Mirrors PointsAwards' actual grid: fixed-width muted date on the
-    // left, a bold-value + colored-companion-value pair in the middle,
-    // an icon badge on the right — not a generic transaction-row layout.
-    rowDate: { width: 60, color: UI.label, fontSize: 12 },
+    // PointsAwards-style value pairing (bold label + colored companion
+    // value) on the top line; date/category/account folded into a single
+    // muted description line beneath, like a note — not a separate column.
     rowMain: { flex: 1, marginRight: 10 },
     rowValueLine: { flexDirection: "row", alignItems: "baseline", gap: 8 },
     payee: { color: UI.text, fontSize: 15, fontWeight: "600", flexShrink: 1 },

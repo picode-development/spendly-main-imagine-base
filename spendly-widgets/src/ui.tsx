@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
+    Animated,
+    Easing,
     FlatList,
     Modal,
     Pressable,
@@ -147,8 +149,14 @@ export const Button = ({
 
 export type SelectOption = { value: string; label: string };
 
-// The web app's Select, RN-style: bordered trigger with a chevron, options
-// in a dark sheet with a check on the active row.
+// A shadcn-style Select: bordered trigger with a chevron that rotates open,
+// options in an elevated rounded sheet that fades + scales in from its
+// resting position, a real check glyph and a tinted highlight on the
+// active row. Deliberately core RN `Animated`, NOT reanimated — this file
+// is imported by App.tsx at module scope, and reanimated throws at import
+// time if its native side isn't ready (see SearchScreen.tsx's comment on
+// why that took the whole app down once already). A shared file that
+// every screen depends on can't risk that.
 export const Select = ({
     value,
     options,
@@ -162,40 +170,78 @@ export const Select = ({
 }) => {
     const [open, setOpen] = useState(false);
     const current = options.find((o) => o.value === value);
+    const chevronAnim = useRef(new Animated.Value(0)).current;
+    const sheetAnim = useRef(new Animated.Value(0)).current;
+
+    const openSheet = () => {
+        setOpen(true);
+        sheetAnim.setValue(0);
+        Animated.parallel([
+            Animated.timing(chevronAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
+            Animated.timing(sheetAnim, { toValue: 1, duration: 160, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        ]).start();
+    };
+    const closeSheet = () => {
+        Animated.timing(chevronAnim, { toValue: 0, duration: 120, useNativeDriver: true }).start();
+        setOpen(false);
+    };
+
+    const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] });
+    const sheetOpacity = sheetAnim;
+    const sheetScale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
+    const sheetTranslateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] });
 
     return (
         <>
-            <Pressable style={styles.selectTrigger} onPress={() => setOpen(true)}>
+            <Pressable
+                style={({ pressed }) => [styles.selectTrigger, pressed && styles.selectTriggerPressed]}
+                onPress={openSheet}
+            >
                 <Text
                     style={[styles.selectValue, !current && { color: UI.label }]}
                     numberOfLines={1}
                 >
                     {current?.label ?? placeholder}
                 </Text>
-                <Text style={styles.selectChevron}>▾</Text>
+                <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+                    <Feather name="chevron-down" size={16} color={UI.label} />
+                </Animated.View>
             </Pressable>
-            <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
-                <Pressable style={styles.modalBackdrop} onPress={() => setOpen(false)}>
-                    <View style={styles.modalCard}>
+            <Modal transparent visible={open} animationType="none" onRequestClose={closeSheet}>
+                <Pressable style={styles.modalBackdrop} onPress={closeSheet}>
+                    <Animated.View
+                        style={[
+                            styles.modalCard,
+                            { opacity: sheetOpacity, transform: [{ scale: sheetScale }, { translateY: sheetTranslateY }] },
+                        ]}
+                    >
                         <FlatList
                             data={options}
                             keyExtractor={(o) => o.value}
-                            renderItem={({ item }) => (
-                                <Pressable
-                                    style={({ pressed }) => [styles.optionRow, pressed && { backgroundColor: UI.cardSubtle }]}
-                                    onPress={() => {
-                                        onChange(item.value);
-                                        setOpen(false);
-                                    }}
-                                >
-                                    <Text style={[styles.optionText, item.value === value && { color: UI.accent, fontWeight: "600" }]}>
-                                        {item.label}
-                                    </Text>
-                                    {item.value === value && <Text style={{ color: UI.accent }}>✓</Text>}
-                                </Pressable>
-                            )}
+                            ItemSeparatorComponent={() => <View style={styles.optionSeparator} />}
+                            renderItem={({ item }) => {
+                                const active = item.value === value;
+                                return (
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.optionRow,
+                                            active && styles.optionRowActive,
+                                            pressed && { backgroundColor: UI.cardSubtle },
+                                        ]}
+                                        onPress={() => {
+                                            onChange(item.value);
+                                            closeSheet();
+                                        }}
+                                    >
+                                        <Text style={[styles.optionText, active && { color: UI.accent, fontWeight: "600" }]} numberOfLines={1}>
+                                            {item.label}
+                                        </Text>
+                                        {active && <Feather name="check" size={16} color={UI.accent} />}
+                                    </Pressable>
+                                );
+                            }}
                         />
-                    </View>
+                    </Animated.View>
                 </Pressable>
             </Modal>
         </>
@@ -283,8 +329,8 @@ const styles = StyleSheet.create({
         paddingVertical: 11,
         backgroundColor: UI.bg,
     },
+    selectTriggerPressed: { backgroundColor: UI.cardSubtle },
     selectValue: { color: UI.text, fontSize: 15, flex: 1, marginRight: 8 },
-    selectChevron: { color: UI.label, fontSize: 13 },
     modalBackdrop: {
         flex: 1,
         backgroundColor: "rgba(2, 6, 23, 0.75)",
@@ -295,16 +341,27 @@ const styles = StyleSheet.create({
         backgroundColor: UI.card,
         borderColor: UI.border,
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 14,
+        borderRadius: 16,
         maxHeight: 420,
-        paddingVertical: 6,
+        padding: 6,
+        // Real elevation, matching Card — a flat hairline box read as
+        // basic; a floating menu should look like it's sitting above
+        // the page.
+        elevation: 8,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 16,
     },
     optionRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        paddingHorizontal: 16,
+        paddingHorizontal: 14,
         paddingVertical: 12,
+        borderRadius: 10,
     },
+    optionRowActive: { backgroundColor: `${UI.accent}1a` },
+    optionSeparator: { height: 1, backgroundColor: UI.border, marginVertical: 2, opacity: 0.5 },
     optionText: { color: UI.text, fontSize: 15, flex: 1, marginRight: 8 },
 });
