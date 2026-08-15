@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
     Animated,
+    Easing,
     FlatList,
     Modal,
     Pressable,
@@ -148,17 +149,16 @@ export const Button = ({
 
 export type SelectOption = { value: string; label: string };
 
-// Same damping/stiffness the widgets app's search screen uses for its
-// shortcut buttons (SearchScreen.tsx's SPRING) — core Animated.spring
-// accepts the identical stiffness/damping/mass config Reanimated's
-// withSpring does, so this dropdown settles with the exact same physical
-// character instead of a generically-eased timing curve next to it.
-const SELECT_SPRING = { damping: 32, stiffness: 240, mass: 1 };
+// Plain timing, NOT spring — see [[animation-preferences-disliked]]: a
+// spring (even a settled, no-overshoot one) reads as "alive"/organic,
+// which isn't the register a compact menu/dropdown wants. shadcn's own
+// actual motion is a fast opacity+tiny-scale ease, no bounce at all —
+// matched here with a plain duration + Easing curve.
+const MENU_TIMING = { duration: 130 };
 
-// The check glyph for the active row pops in with its own small spring
-// rather than snapping into existence — reacts to `active` flipping true
-// (both on open, showing the current selection, and live if the parent's
-// value changes while the sheet is still open).
+// The check glyph fades/scales in quickly rather than snapping — reacts
+// to `active` flipping true (both on open, showing the current selection,
+// and live if the parent's value changes while the sheet is still open).
 const OptionRow = ({
     label,
     active,
@@ -170,7 +170,7 @@ const OptionRow = ({
 }) => {
     const checkAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
     useEffect(() => {
-        Animated.spring(checkAnim, { toValue: active ? 1 : 0, useNativeDriver: true, ...SELECT_SPRING }).start();
+        Animated.timing(checkAnim, { toValue: active ? 1 : 0, useNativeDriver: true, ...MENU_TIMING }).start();
     }, [active, checkAnim]);
 
     return (
@@ -228,7 +228,7 @@ export const Select = ({
         sheetAnim.setValue(0);
         Animated.parallel([
             Animated.timing(chevronAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
-            Animated.spring(sheetAnim, { toValue: 1, useNativeDriver: true, ...SELECT_SPRING }),
+            Animated.timing(sheetAnim, { toValue: 1, easing: Easing.out(Easing.cubic), useNativeDriver: true, ...MENU_TIMING }),
         ]).start();
     };
     const closeSheet = () => {
@@ -249,7 +249,7 @@ export const Select = ({
     // Anchored at the top edge (transformOrigin below), so this genuinely
     // grows downward out of the trigger rather than scaling from its center.
     const sheetOpacity = sheetAnim;
-    const sheetScale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] });
+    const sheetScale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
 
     return (
         <>

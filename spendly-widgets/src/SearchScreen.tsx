@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
     Linking,
+    Modal,
     Pressable,
     StatusBar,
     StyleSheet,
@@ -11,6 +12,7 @@ import {
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import ReAnimated, {
+    Easing,
     FadeIn,
     LinearTransition,
     SharedValue,
@@ -19,8 +21,7 @@ import ReAnimated, {
     useSharedValue,
     withDelay,
     withSpring,
-    ZoomIn,
-    ZoomOut,
+    withTiming,
 } from "react-native-reanimated";
 import { Blur, Canvas, Circle, ColorMatrix, Group, Paint, RoundedRect } from "@shopify/react-native-skia";
 import { fetchTransactions, pair } from "./api";
@@ -53,6 +54,7 @@ const SHORTCUTS_W = SHORTCUTS_COUNT * SHORTCUT_SIZE + (SHORTCUTS_COUNT - 1) * SH
 const BAR_GAP = 10;
 const ROW_H = 52;
 const BAR_H = 44;
+const FILTER_MENU_W = 240;
 // damping/stiffness ratio ≈1.03 — just past critically damped, so it settles
 // directly into place with no oscillation at all. The previous pass
 // (26/260 ≈ 0.81) was still underdamped enough to visibly wobble once it
@@ -95,9 +97,12 @@ type QuickActionProps = {
     t: SharedValue<number>;
     onPress: () => void;
     active?: boolean;
+    // Only the Filter button needs this — lets the filter popup measure
+    // exactly where to anchor itself.
+    pressableRef?: React.RefObject<View | null>;
 };
 
-const QuickAction = ({ icon, label, left, index, t, onPress, active }: QuickActionProps) => {
+const QuickAction = ({ icon, label, left, index, t, onPress, active, pressableRef }: QuickActionProps) => {
     // Precomputed on the JS thread and captured as a plain number: a
     // worklet body may only call other worklets, so calling hiddenOffset()
     // inside useAnimatedStyle would throw on the UI thread.
@@ -112,6 +117,7 @@ const QuickAction = ({ icon, label, left, index, t, onPress, active }: QuickActi
     return (
         <ReAnimated.View style={[styles.shortcut, { left }, animStyle]}>
             <Pressable
+                ref={pressableRef}
                 onPress={onPress}
                 accessibilityLabel={label}
                 style={({ pressed }) => [styles.shortcutInner, pressed && styles.shortcutPressed]}
@@ -133,16 +139,31 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
     const [busy, setBusy] = useState(false);
     const [zoneWidth, setZoneWidth] = useState(0);
 
-    // Filter-by-account/category panel, opened from the Filter shortcut.
-    // Options are fetched lazily (re-uses `pair()` — the token IS the
-    // pairing code, same trick ConfigScreen.tsx already relies on) and
-    // cached so reopening the panel doesn't refetch.
+    // Filter menu, opened from the Filter shortcut — a real floating popup
+    // anchored to that button (measured on open), NOT inline content that
+    // pushes the results list down. Options are fetched lazily (re-uses
+    // `pair()` — the token IS the pairing code, same trick ConfigScreen.tsx
+    // already relies on) and cached so reopening doesn't refetch.
     const [filterOpen, setFilterOpen] = useState(false);
+    const [filterAnchor, setFilterAnchor] = useState<{ top: number; left: number } | null>(null);
     const [filterOptions, setFilterOptions] = useState<{ accounts: SelectOption[]; categories: SelectOption[] } | null>(null);
     const [filterLoading, setFilterLoading] = useState(false);
     const [filterAccountId, setFilterAccountId] = useState<string | undefined>(undefined);
     const [filterCategoryId, setFilterCategoryId] = useState<string | undefined>(undefined);
     const hasFilters = !!filterAccountId || !!filterCategoryId;
+    const filterTriggerRef = useRef<View>(null);
+    // Minimal, shadcn-style motion: a plain timing fade + tiny scale/slide,
+    // no spring/bounce at all — see [[animation-preferences-disliked]] on
+    // why a spring here (even a settled one) read as the wrong register
+    // for what should feel like a crisp, restrained menu.
+    const menuAnim = useSharedValue(0);
+    const menuStyle = useAnimatedStyle(() => ({
+        opacity: menuAnim.value,
+        transform: [
+            { scale: 0.96 + 0.04 * menuAnim.value },
+            { translateY: -6 * (1 - menuAnim.value) },
+        ],
+    }));
 
     const s0 = useShortcut(0);
     const s1 = useShortcut(1);
@@ -225,10 +246,17 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
         return () => clearTimeout(timer);
     }, [query, token, baseUrl, filterAccountId, filterCategoryId, hasFilters]);
 
-    const toggleFilter = async () => {
-        const next = !filterOpen;
-        setFilterOpen(next);
-        if (next && !filterOptions && token) {
+    const openFilterMenu = async () => {
+        filterTriggerRef.current?.measureInWindow((x, y, width, height) => {
+            // Anchored via `left`, computed so the popup's RIGHT edge lines
+            // up with the button's right edge — using `right` here would
+            // need the window width; this needs only the button's own
+            // measured position and the popup's known fixed width.
+            setFilterAnchor({ top: y + height + 6, left: Math.max(8, x + width - FILTER_MENU_W) });
+        });
+        setFilterOpen(true);
+        menuAnim.value = withTiming(1, { duration: 150, easing: Easing.out(Easing.cubic) });
+        if (!filterOptions && token) {
             setFilterLoading(true);
             const result = await pair(baseUrl, token);
             if (result.ok) {
@@ -240,6 +268,19 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
             setFilterLoading(false);
         }
     };
+    const closeFilterMenu = () => {
+        menuAnim.value = withTiming(0, { duration: 120, easing: Easing.in(Easing.cubic) });
+        setFilterOpen(false);
+    };
+    const toggleFilter = () => (filterOpen ? closeFilterMenu() : openFilterMenu());
+
+    // Typing hides the shortcuts (and with them, conceptually, the Filter
+    // button) — close the menu along with them rather than leaving it
+    // floating with nothing to anchor to anymore.
+    useEffect(() => {
+        if (!visible && filterOpen) closeFilterMenu();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible]);
 
     return (
         <View style={styles.screen}>
@@ -356,51 +397,11 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                                     left={shortcutLeft(3)}
                                     onPress={toggleFilter}
                                     active={hasFilters}
+                                    pressableRef={filterTriggerRef}
                                 />
                             </View>
                         )}
                     </View>
-
-                    {filterOpen && visible && (
-                        // The Filter shortcut sits at the row's right edge, so an
-                        // entrance that scales up from the top-right corner reads
-                        // as "this panel came out of that button" — cheaper and
-                        // more robust than measuring the button's live position.
-                        // .springify() with the SAME damping/stiffness as the
-                        // shortcuts' own spring (SPRING, above) — a fixed-duration
-                        // curve here would have felt like a different animation
-                        // engine entirely next to the shortcuts' physics-based
-                        // settle, which is exactly what read as "not matching".
-                        <ReAnimated.View
-                            entering={ZoomIn.springify().damping(SPRING.damping).stiffness(SPRING.stiffness)}
-                            exiting={ZoomOut.springify().damping(SPRING.damping).stiffness(SPRING.stiffness)}
-                            style={[styles.filterPanel, { transformOrigin: "right top" }]}
-                        >
-                            {filterLoading ? (
-                                <ActivityIndicator color={UI.accent} />
-                            ) : filterOptions ? (
-                                <>
-                                    <Select
-                                        value={filterAccountId ?? "__all__"}
-                                        options={[{ value: "__all__", label: "All accounts" }, ...filterOptions.accounts]}
-                                        onChange={(v) => setFilterAccountId(v === "__all__" ? undefined : v)}
-                                    />
-                                    <Select
-                                        value={filterCategoryId ?? "__all__"}
-                                        options={[{ value: "__all__", label: "All categories" }, ...filterOptions.categories]}
-                                        onChange={(v) => setFilterCategoryId(v === "__all__" ? undefined : v)}
-                                    />
-                                    {hasFilters && (
-                                        <Pressable onPress={() => { setFilterAccountId(undefined); setFilterCategoryId(undefined); }}>
-                                            <Text style={styles.clearFilters}>Clear filters</Text>
-                                        </Pressable>
-                                    )}
-                                </>
-                            ) : (
-                                <Hint>Couldn&apos;t load accounts/categories.</Hint>
-                            )}
-                        </ReAnimated.View>
-                    )}
 
                     {busy && !rows ? (
                         <ActivityIndicator color={UI.accent} style={{ marginTop: 24 }} />
@@ -471,6 +472,49 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                     </Button>
                 </ReAnimated.View>
             )}
+
+            {/* A real floating popup menu anchored to the Filter button —
+                not inline content, so it never pushes the results list
+                down. Renders in its own native window (like Select's
+                dropdown), so it sits above everything regardless of where
+                it lives in this tree. */}
+            <Modal transparent visible={filterOpen} animationType="none" onRequestClose={closeFilterMenu}>
+                <Pressable style={styles.filterMenuBackdrop} onPress={closeFilterMenu}>
+                    {filterAnchor && (
+                        <ReAnimated.View
+                            style={[
+                                styles.filterMenuCard,
+                                { top: filterAnchor.top, left: filterAnchor.left, transformOrigin: "top right" },
+                                menuStyle,
+                            ]}
+                        >
+                            {filterLoading ? (
+                                <ActivityIndicator color={UI.accent} />
+                            ) : filterOptions ? (
+                                <>
+                                    <Select
+                                        value={filterAccountId ?? "__all__"}
+                                        options={[{ value: "__all__", label: "All accounts" }, ...filterOptions.accounts]}
+                                        onChange={(v) => setFilterAccountId(v === "__all__" ? undefined : v)}
+                                    />
+                                    <Select
+                                        value={filterCategoryId ?? "__all__"}
+                                        options={[{ value: "__all__", label: "All categories" }, ...filterOptions.categories]}
+                                        onChange={(v) => setFilterCategoryId(v === "__all__" ? undefined : v)}
+                                    />
+                                    {hasFilters && (
+                                        <Pressable onPress={() => { setFilterAccountId(undefined); setFilterCategoryId(undefined); }}>
+                                            <Text style={styles.clearFilters}>Clear filters</Text>
+                                        </Pressable>
+                                    )}
+                                </>
+                            ) : (
+                                <Hint>Couldn&apos;t load accounts/categories.</Hint>
+                            )}
+                        </ReAnimated.View>
+                    )}
+                </Pressable>
+            </Modal>
         </View>
     );
 };
@@ -532,7 +576,24 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: UI.card,
     },
-    filterPanel: { gap: 8 },
+    // No dim behind it — same reasoning as Select's dropdown: a real menu
+    // doesn't darken the page, this View only exists to catch outside taps.
+    filterMenuBackdrop: { flex: 1 },
+    filterMenuCard: {
+        position: "absolute",
+        width: FILTER_MENU_W,
+        gap: 8,
+        backgroundColor: UI.card,
+        borderColor: UI.border,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 12,
+        padding: 10,
+        elevation: 8,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 16,
+    },
     clearFilters: { color: UI.accent, fontSize: 13, fontWeight: "600", textAlign: "center", paddingVertical: 4 },
     resultsCard: { flex: 1, padding: 8, gap: 0 },
     list: { flex: 1 },
