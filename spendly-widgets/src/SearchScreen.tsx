@@ -50,13 +50,24 @@ const SHORTCUTS_W = SHORTCUTS_COUNT * SHORTCUT_SIZE + (SHORTCUTS_COUNT - 1) * SH
 const BAR_GAP = 10;
 const ROW_H = 52;
 const BAR_H = 44;
-const SPRING = { damping: 15, stiffness: 170 };
-const STAGGER_MS = 45;
+// Tighter than the first pass (was damping:15/stiffness:170, which is
+// noticeably underdamped — it overshoots and takes a few visible bounces
+// to settle, reading as "long"). This ratio is close to critically damped:
+// a quick, decisive settle with barely a hint of give, not a bouncy sweep.
+const SPRING = { damping: 26, stiffness: 260 };
+const STAGGER_MS = 30;
 
-// Hidden offset per index mirrors the reference's `x: -1 * (64 * (i + 1))`
-// cascade: each shortcut tucks further left, i.e. behind the (then
-// full-width) search bar, so revealing looks like they slide out of it.
-const hiddenOffset = (index: number) => -(SHORTCUT_STEP * (index + 1));
+// Small, CAPPED slide-in distance — not proportional to index (the first
+// pass grew this up to -232px for the last icon, i.e. the icon started
+// nearly a whole row-width off to the side). Two problems with that: it
+// read as a long sweeping motion rather than a settled pop-in, and the
+// goo blob tracking this same offset traveled outside the Skia canvas's
+// own bounds partway through, where canvases hard-clip (unlike RN views,
+// which default to overflow:visible) — the literal cause of the visible
+// horizontal cut. A small fixed offset keeps every blob within the canvas
+// for the whole animation, and reads as "settle into place" rather than
+// "slide in from off-screen".
+const hiddenOffset = (_index: number) => -18;
 
 const useShortcut = (index: number) => {
     // Single 0..1 progress per shortcut — position, scale and the matching
