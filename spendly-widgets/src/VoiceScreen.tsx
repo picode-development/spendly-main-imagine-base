@@ -148,7 +148,13 @@ vec4 draw(vec2 uv) {
     float invLen = len > 0.0 ? 1.0 / len : 0.0;
 
     float n0 = snoise3(vec3(uv * noiseScale, iTime * 0.5)) * 0.5 + 0.5;
-    float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n0);
+    // A second, finer/faster noise octave blends in proportional to
+    // hover (live voice activity) -- at rest the ring is a single calm
+    // wobble; speaking adds independent-looking local detail across
+    // different parts of the ring, not just a uniform pulse everywhere.
+    float n1 = snoise3(vec3(uv * noiseScale * 2.6, iTime * 1.1 + 7.0)) * 0.5 + 0.5;
+    float n = mix(n0, n1, hover * 0.4);
+    float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n);
     float d0 = distance(uv, (r0 * invLen) * uv);
     float v0 = light1(1.0, 10.0, d0);
     v0 *= smoothstep(r0 * 1.05, r0, len);
@@ -231,7 +237,10 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
         ...RecordingPresets.HIGH_QUALITY,
         isMeteringEnabled: true,
     });
-    const recorderState = useAudioRecorderState(recorder, 150);
+    // Faster than the 150ms used before — the orb's own attack/release
+    // envelope already smooths frame-to-frame, but it can only react as
+    // fast as new metering values actually arrive.
+    const recorderState = useAudioRecorderState(recorder, 60);
 
     const [phase, setPhase] = useState<Phase>("starting");
     const [locked, setLocked] = useState(false);
