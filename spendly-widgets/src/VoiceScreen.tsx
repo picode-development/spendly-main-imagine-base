@@ -38,9 +38,13 @@ import { AmountPill, Button, Card, Hint, IconBox, UI } from "./ui";
 const SILENCE_MARGIN_DB = 8;
 const SPEECH_MARGIN_DB = 16;
 const LOUD_MARGIN_DB = 40;
-// Never let a single anomalously-quiet reading drag the floor down to
-// something unrealistic.
-const NOISE_FLOOR_CLAMP_MIN = -70;
+// Never let an anomalously-quiet reading drag the floor down further than
+// a real phone mic's self-noise floor realistically goes — this was the
+// actual bug: an uninitialized "no data yet" placeholder briefly got
+// treated as a real reading and permanently pinned the floor here, and
+// with the old -70 clamp that meant NOTHING real (including genuine
+// silence) ever registered as quiet again for the rest of the recording.
+const NOISE_FLOOR_CLAMP_MIN = -55;
 const TRAILING_SILENCE_MS = 2500;
 const NO_SPEECH_TIMEOUT_MS = 8000;
 
@@ -266,7 +270,11 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     const stoppingRef = useRef(false);
     const iconVisibleRef = useRef(false);
     const levelRef = useRef(0);
-    const dbRef = useRef(-160);
+    // null = no real metering sample has arrived yet (there's a brief gap
+    // between the recorder starting and the native side actually reporting
+    // levels) — kept distinct from any real reading, including a real very
+    // quiet one, so that gap can never be mistaken for calibration data.
+    const dbRef = useRef<number | null>(null);
     const lockedRef = useRef(false);
     const activityRef = useRef(0);
     const activeTimeRef = useRef(0);
@@ -373,8 +381,17 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
             const dt = (t - lastTime) * 0.001;
             lastTime = t;
 
-            const db = dbRef.current;
-            noiseFloorRef.current = Math.max(NOISE_FLOOR_CLAMP_MIN, Math.min(noiseFloorRef.current, db));
+            // Only real samples calibrate the floor — the brief gap before
+            // the recorder's first metering sample arrives must NOT be
+            // treated as data, or it permanently anchors the floor at the
+            // clamp minimum (this was the actual bug: everything after
+            // that read as "louder than silence" forever, since nothing
+            // could ever be quieter than an artificial rock-bottom floor).
+            const rawDb = dbRef.current;
+            if (rawDb !== null) {
+                noiseFloorRef.current = Math.max(NOISE_FLOOR_CLAMP_MIN, Math.min(noiseFloorRef.current, rawDb));
+            }
+            const db = rawDb ?? -160;
             const silenceCeiling = noiseFloorRef.current + SILENCE_MARGIN_DB;
             const speechFloor = noiseFloorRef.current + SPEECH_MARGIN_DB;
             const loudCeiling = noiseFloorRef.current + LOUD_MARGIN_DB;
@@ -467,7 +484,7 @@ export const VoiceScreen = ({ baseUrl, token, onClose }: Props) => {
     }, [locked]);
 
     const level = Math.max(0, Math.min(1, ((recorderState.metering ?? -60) + 60) / 60));
-    const db = recorderState.metering ?? -160;
+    const db = recorderState.metering ?? null;
     useEffect(() => {
         levelRef.current = level;
         dbRef.current = db;
