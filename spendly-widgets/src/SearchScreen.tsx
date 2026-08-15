@@ -159,24 +159,31 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
     const hx3 = hiddenOffset(3);
     const halfShortcut = SHORTCUT_SIZE / 2;
 
-    const barStyle = useAnimatedStyle(() => {
-        if (zw <= 0) return {};
-        return { width: zw - openness.value * openW };
-    });
+    // Always returns the same key. Returning `{}` instead is legal but
+    // leaves the last-applied width stuck on the native view, since
+    // reanimated doesn't unset keys that disappear from the style object.
+    const barStyle = useAnimatedStyle(() => ({
+        width: zw <= 0 ? undefined : zw - openness.value * openW,
+    }));
 
     // Goo blobs track the same progress values as the real buttons, so the
     // blurred shapes merge into the search bar exactly as the buttons slide
     // out of it. r shrinks to 0 when hidden, so nothing lingers on canvas.
+    // Capture the SharedValues themselves, not the {t, show, hide} objects
+    // they live on — a worklet closure serializes whole captured objects,
+    // which would drag the non-worklet show/hide functions into the UI
+    // runtime on every recreation.
+    const t0 = s0.t, t1 = s1.t, t2 = s2.t, t3 = s3.t;
     const barW = useDerivedValue(() => Math.max(0, zw - openness.value * openW));
     const cy = ROW_H / 2;
-    const cx0 = useDerivedValue(() => restCx0 + hx0 * (1 - s0.t.value));
-    const cx1 = useDerivedValue(() => restCx1 + hx1 * (1 - s1.t.value));
-    const cx2 = useDerivedValue(() => restCx2 + hx2 * (1 - s2.t.value));
-    const cx3 = useDerivedValue(() => restCx3 + hx3 * (1 - s3.t.value));
-    const r0 = useDerivedValue(() => halfShortcut * s0.t.value);
-    const r1 = useDerivedValue(() => halfShortcut * s1.t.value);
-    const r2 = useDerivedValue(() => halfShortcut * s2.t.value);
-    const r3 = useDerivedValue(() => halfShortcut * s3.t.value);
+    const cx0 = useDerivedValue(() => restCx0 + hx0 * (1 - t0.value));
+    const cx1 = useDerivedValue(() => restCx1 + hx1 * (1 - t1.value));
+    const cx2 = useDerivedValue(() => restCx2 + hx2 * (1 - t2.value));
+    const cx3 = useDerivedValue(() => restCx3 + hx3 * (1 - t3.value));
+    const r0 = useDerivedValue(() => halfShortcut * t0.value);
+    const r1 = useDerivedValue(() => halfShortcut * t1.value);
+    const r2 = useDerivedValue(() => halfShortcut * t2.value);
+    const r3 = useDerivedValue(() => halfShortcut * t3.value);
 
     useEffect(() => {
         if (!token) return;
@@ -519,3 +526,8 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
 });
+
+// Default export so App.tsx can React.lazy() this screen — keeping it out
+// of the root module means a failure in its native-dependent imports
+// (reanimated/Skia) can no longer prevent registerRootComponent() from running.
+export default SearchScreen;

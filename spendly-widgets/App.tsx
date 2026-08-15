@@ -24,7 +24,7 @@ import {
     WidgetTransaction,
 } from "./src/config";
 import { formatINR } from "./src/format";
-import { SearchScreen } from "./src/SearchScreen";
+import { ErrorBoundary } from "./src/ErrorBoundary";
 import {
     fetchLatestVersion,
     installedVersionCode,
@@ -46,13 +46,25 @@ import {
 } from "./src/storage";
 import { AmountPill, Button, Card, CardTitle, Field, Hint, IconBox, UI } from "./src/ui";
 import { useOtaUpdateCheck } from "./src/useOtaUpdateCheck";
-import { VoiceScreen } from "./src/VoiceScreen";
 import { ActionsWidget } from "./src/widgets/ActionsWidget";
 import { CategoriesWidget } from "./src/widgets/CategoriesWidget";
 import { ChartWidget } from "./src/widgets/ChartWidget";
 import { SummaryWidget } from "./src/widgets/SummaryWidget";
 import { themedPair } from "./src/widgets/theme";
 import { TransactionsWidget } from "./src/widgets/TransactionsWidget";
+
+// Loaded lazily, NOT imported at module scope. These two screens are the
+// only ones pulling in native-dependent libraries (react-native-reanimated,
+// @shopify/react-native-skia), and reanimated THROWS AT IMPORT TIME when its
+// native side isn't initialized. Because ES imports are hoisted, a top-level
+// import here meant that throw happened before index.ts could call
+// registerRootComponent(App) — so nothing was registered for the "main"
+// component and Android rendered only the bare window background (#0f172a),
+// which is exactly the "blank dark blue screen, whole app dead" symptom.
+// Lazy + ErrorBoundary keeps any such failure contained to the screen that
+// caused it, instead of taking down the entire app.
+const SearchScreen = React.lazy(() => import("./src/SearchScreen"));
+const VoiceScreen = React.lazy(() => import("./src/VoiceScreen"));
 
 type Screen = "home" | "search" | "voice";
 
@@ -229,23 +241,33 @@ export default function App() {
 
     useEffect(() => {
         (async () => {
-            const [storedToken, storedMetrics, storedUrl, initialUrl] = await Promise.all([
-                getToken(),
-                getMetrics(),
-                getBaseUrl(),
-                Linking.getInitialURL(),
-            ]);
-            setMetrics(storedMetrics);
-            setBaseUrl(storedUrl);
-            setToken(storedToken);
-            const initialScreen = screenFromUrl(initialUrl);
-            setScreen(initialScreen);
-            setPopupLaunch(initialScreen !== "home");
-            setLoading(false);
-            if (storedToken) {
-                loadSummary(storedUrl, storedToken).then((fresh) => checkForRevokedToken(storedUrl, storedToken, fresh));
+            // Every step is guarded: an unhandled rejection here used to
+            // leave `loading` true forever, rendering a bare dark-blue
+            // screen that looks identical to a dead JS bundle.
+            try {
+                const [storedToken, storedMetrics, storedUrl, initialUrl] = await Promise.all([
+                    getToken(),
+                    getMetrics(),
+                    getBaseUrl(),
+                    Linking.getInitialURL(),
+                ]);
+                setMetrics(storedMetrics);
+                setBaseUrl(storedUrl);
+                setToken(storedToken);
+                const initialScreen = screenFromUrl(initialUrl);
+                setScreen(initialScreen);
+                setPopupLaunch(initialScreen !== "home");
+                if (storedToken) {
+                    loadSummary(storedUrl, storedToken)
+                        .then((fresh) => checkForRevokedToken(storedUrl, storedToken, fresh))
+                        .catch((e) => console.error("[App] summary load failed", e));
+                }
+                void fetchLatestVersion(storedUrl).then(setLatest).catch(() => {});
+            } catch (e) {
+                console.error("[App] startup failed", e);
+            } finally {
+                setLoading(false);
             }
-            void fetchLatestVersion(storedUrl).then(setLatest);
         })();
         const sub = Linking.addEventListener("url", ({ url }) => setScreen(screenFromUrl(url)));
         return () => sub.remove();
@@ -308,10 +330,22 @@ export default function App() {
         else setScreen("home");
     };
     if (screen === "search") {
-        return <SearchScreen baseUrl={baseUrl} token={token} onClose={closePopup} onOpenVoice={() => setScreen("voice")} />;
+        return (
+            <ErrorBoundary label="Search is unavailable" onClose={closePopup}>
+                <React.Suspense fallback={<View style={[styles.screen, styles.center]}><ActivityIndicator color={UI.accent} /></View>}>
+                    <SearchScreen baseUrl={baseUrl} token={token} onClose={closePopup} onOpenVoice={() => setScreen("voice")} />
+                </React.Suspense>
+            </ErrorBoundary>
+        );
     }
     if (screen === "voice") {
-        return <VoiceScreen baseUrl={baseUrl} token={token} onClose={closePopup} />;
+        return (
+            <ErrorBoundary label="Voice notes are unavailable" onClose={closePopup}>
+                <React.Suspense fallback={<View style={[styles.screen, styles.center]}><ActivityIndicator color={UI.accent} /></View>}>
+                    <VoiceScreen baseUrl={baseUrl} token={token} onClose={closePopup} />
+                </React.Suspense>
+            </ErrorBoundary>
+        );
     }
 
     return (

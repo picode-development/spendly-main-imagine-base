@@ -852,3 +852,6 @@ const styles = StyleSheet.create({
     transcript: { color: UI.label, fontSize: 12, fontStyle: "italic", flex: 1 },
     error: { color: UI.danger, fontSize: 14, textAlign: "center" },
 });
+
+// Default export so App.tsx can React.lazy() this screen — see SearchScreen.tsx.
+export default VoiceScreen;
