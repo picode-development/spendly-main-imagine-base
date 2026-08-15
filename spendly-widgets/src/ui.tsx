@@ -149,14 +149,16 @@ export const Button = ({
 
 export type SelectOption = { value: string; label: string };
 
-// A shadcn-style Select: bordered trigger with a chevron that rotates open,
-// options in an elevated rounded sheet that fades + scales in from its
-// resting position, a real check glyph and a tinted highlight on the
-// active row. Deliberately core RN `Animated`, NOT reanimated — this file
-// is imported by App.tsx at module scope, and reanimated throws at import
-// time if its native side isn't ready (see SearchScreen.tsx's comment on
-// why that took the whole app down once already). A shared file that
-// every screen depends on can't risk that.
+// An anchored combobox-style dropdown, not a centered popup: the options
+// list grows directly out of the trigger's own position (measured on open
+// via `measureInWindow`) with no dimmed backdrop behind it — matching how
+// a real combobox behaves rather than a modal sheet. A transparent
+// full-screen Pressable still sits behind it purely to catch outside taps
+// and close it. Deliberately core RN `Animated`, NOT reanimated — this
+// file is imported by App.tsx at module scope, and reanimated throws at
+// import time if its native side isn't ready (see SearchScreen.tsx's
+// comment on why that took the whole app down once already). A shared
+// file every screen depends on can't risk that.
 export const Select = ({
     value,
     options,
@@ -169,11 +171,16 @@ export const Select = ({
     placeholder?: string;
 }) => {
     const [open, setOpen] = useState(false);
+    const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
+    const triggerRef = useRef<View>(null);
     const current = options.find((o) => o.value === value);
     const chevronAnim = useRef(new Animated.Value(0)).current;
     const sheetAnim = useRef(new Animated.Value(0)).current;
 
     const openSheet = () => {
+        triggerRef.current?.measureInWindow((x, y, width, height) => {
+            setAnchor({ x, y: y + height + 6, width });
+        });
         setOpen(true);
         sheetAnim.setValue(0);
         Animated.parallel([
@@ -187,13 +194,15 @@ export const Select = ({
     };
 
     const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] });
+    // Anchored at the top edge (transformOrigin below), so this genuinely
+    // grows downward out of the trigger rather than scaling from its center.
     const sheetOpacity = sheetAnim;
-    const sheetScale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
-    const sheetTranslateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] });
+    const sheetScale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] });
 
     return (
         <>
             <Pressable
+                ref={triggerRef}
                 style={({ pressed }) => [styles.selectTrigger, pressed && styles.selectTriggerPressed]}
                 onPress={openSheet}
             >
@@ -208,40 +217,49 @@ export const Select = ({
                 </Animated.View>
             </Pressable>
             <Modal transparent visible={open} animationType="none" onRequestClose={closeSheet}>
-                <Pressable style={styles.modalBackdrop} onPress={closeSheet}>
-                    <Animated.View
-                        style={[
-                            styles.modalCard,
-                            { opacity: sheetOpacity, transform: [{ scale: sheetScale }, { translateY: sheetTranslateY }] },
-                        ]}
-                    >
-                        <FlatList
-                            data={options}
-                            keyExtractor={(o) => o.value}
-                            ItemSeparatorComponent={() => <View style={styles.optionSeparator} />}
-                            renderItem={({ item }) => {
-                                const active = item.value === value;
-                                return (
-                                    <Pressable
-                                        style={({ pressed }) => [
-                                            styles.optionRow,
-                                            active && styles.optionRowActive,
-                                            pressed && { backgroundColor: UI.cardSubtle },
-                                        ]}
-                                        onPress={() => {
-                                            onChange(item.value);
-                                            closeSheet();
-                                        }}
-                                    >
-                                        <Text style={[styles.optionText, active && { color: UI.accent, fontWeight: "600" }]} numberOfLines={1}>
-                                            {item.label}
-                                        </Text>
-                                        {active && <Feather name="check" size={16} color={UI.accent} />}
-                                    </Pressable>
-                                );
-                            }}
-                        />
-                    </Animated.View>
+                <Pressable style={styles.dropdownBackdrop} onPress={closeSheet}>
+                    {anchor && (
+                        <Animated.View
+                            style={[
+                                styles.dropdownCard,
+                                {
+                                    top: anchor.y,
+                                    left: anchor.x,
+                                    width: anchor.width,
+                                    transformOrigin: "top",
+                                    opacity: sheetOpacity,
+                                    transform: [{ scaleY: sheetScale }],
+                                },
+                            ]}
+                        >
+                            <FlatList
+                                data={options}
+                                keyExtractor={(o) => o.value}
+                                ItemSeparatorComponent={() => <View style={styles.optionSeparator} />}
+                                renderItem={({ item }) => {
+                                    const active = item.value === value;
+                                    return (
+                                        <Pressable
+                                            style={({ pressed }) => [
+                                                styles.optionRow,
+                                                active && styles.optionRowActive,
+                                                pressed && { backgroundColor: UI.cardSubtle },
+                                            ]}
+                                            onPress={() => {
+                                                onChange(item.value);
+                                                closeSheet();
+                                            }}
+                                        >
+                                            <Text style={[styles.optionText, active && { color: UI.accent, fontWeight: "600" }]} numberOfLines={1}>
+                                                {item.label}
+                                            </Text>
+                                            {active && <Feather name="check" size={16} color={UI.accent} />}
+                                        </Pressable>
+                                    );
+                                }}
+                            />
+                        </Animated.View>
+                    )}
                 </Pressable>
             </Modal>
         </>
@@ -331,18 +349,17 @@ const styles = StyleSheet.create({
     },
     selectTriggerPressed: { backgroundColor: UI.cardSubtle },
     selectValue: { color: UI.text, fontSize: 15, flex: 1, marginRight: 8 },
-    modalBackdrop: {
-        flex: 1,
-        backgroundColor: "rgba(2, 6, 23, 0.75)",
-        justifyContent: "center",
-        padding: 28,
-    },
-    modalCard: {
+    // No dim/tint — a real dropdown doesn't darken the page behind it,
+    // only a modal sheet does. This View exists purely to catch
+    // outside-taps and close the menu.
+    dropdownBackdrop: { flex: 1 },
+    dropdownCard: {
+        position: "absolute",
         backgroundColor: UI.card,
         borderColor: UI.border,
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-        maxHeight: 420,
+        borderRadius: 12,
+        maxHeight: 280,
         padding: 6,
         // Real elevation, matching Card — a flat hairline box read as
         // basic; a floating menu should look like it's sitting above

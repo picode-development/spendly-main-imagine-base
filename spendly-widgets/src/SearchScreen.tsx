@@ -19,6 +19,7 @@ import ReAnimated, {
     useSharedValue,
     withDelay,
     withSpring,
+    ZoomIn,
 } from "react-native-reanimated";
 import { Blur, Canvas, Circle, ColorMatrix, Group, Paint, RoundedRect } from "@shopify/react-native-skia";
 import { fetchTransactions, pair } from "./api";
@@ -360,7 +361,14 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                     </View>
 
                     {filterOpen && visible && (
-                        <View style={styles.filterPanel}>
+                        // The Filter shortcut sits at the row's right edge, so an
+                        // entrance that scales up from the top-right corner reads
+                        // as "this panel came out of that button" — cheaper and
+                        // more robust than measuring the button's live position.
+                        <ReAnimated.View
+                            entering={ZoomIn.duration(220)}
+                            style={[styles.filterPanel, { transformOrigin: "right top" }]}
+                        >
                             {filterLoading ? (
                                 <ActivityIndicator color={UI.accent} />
                             ) : filterOptions ? (
@@ -384,7 +392,7 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                             ) : (
                                 <Hint>Couldn&apos;t load accounts/categories.</Hint>
                             )}
-                        </View>
+                        </ReAnimated.View>
                     )}
 
                     {busy && !rows ? (
