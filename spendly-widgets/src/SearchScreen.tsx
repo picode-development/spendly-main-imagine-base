@@ -40,7 +40,10 @@ type Props = {
 // behind it; typing (or blurring) sends them back under the bar and the bar
 // reclaims the full width. Icons only, no labels — matching the reference.
 const SHORTCUT_SIZE = 44;
-const SHORTCUT_GAP = 8;
+// Wider gap than the first pass — the goo blur was strong enough that
+// tightly-packed circles read as one indistinct blob rather than four
+// separate buttons with a subtle merge effect.
+const SHORTCUT_GAP = 14;
 const SHORTCUT_STEP = SHORTCUT_SIZE + SHORTCUT_GAP;
 const SHORTCUTS_COUNT = 4;
 const SHORTCUTS_W = SHORTCUTS_COUNT * SHORTCUT_SIZE + (SHORTCUTS_COUNT - 1) * SHORTCUT_GAP;
@@ -254,12 +257,18 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                             <Canvas style={styles.gooCanvas} pointerEvents="none">
                                 <Group layer={
                                     <Paint>
-                                        <Blur blur={12} />
+                                        {/* Toned down from the first pass (blur 12, alpha 20/-10) —
+                                            that combination fully melted the circles into one
+                                            indistinct blob at rest. Lower blur + a gentler alpha
+                                            threshold keeps each shortcut visually distinct and only
+                                            merges them right as they touch, matching the reference's
+                                            subtle goo rather than an aggressive one. */}
+                                        <Blur blur={6} />
                                         <ColorMatrix matrix={[
                                             1, 0, 0, 0, 0,
                                             0, 1, 0, 0, 0,
                                             0, 0, 1, 0, 0,
-                                            0, 0, 0, 20, -10,
+                                            0, 0, 0, 10, -4,
                                         ]} />
                                     </Paint>
                                 }>
@@ -391,7 +400,7 @@ export const SearchScreen = ({ baseUrl, token, onClose, onOpenVoice }: Props) =>
                                                         !isLast && styles.rowDivider,
                                                         pressed && styles.rowPressed,
                                                     ]}
-                                                    onPress={() => Linking.openURL(`${baseUrl}/transactions?search=1`)}
+                                                    onPress={() => Linking.openURL(`${baseUrl}/transactions?edit=${item.id}`)}
                                                 >
                                                     <Text style={styles.rowDate} numberOfLines={1}>{item.date}</Text>
                                                     <View style={styles.rowMain}>
