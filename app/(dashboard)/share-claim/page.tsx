@@ -51,6 +51,10 @@ const ShareClaimHandler = () => {
     const [retrying, setRetrying] = useState(false);
     // Non-image single spinner (text share / server-stash fallback)
     const [simple, setSimple] = useState(false);
+    // Which of the top-level throw sites fired — shown under the error
+    // card so a report carries the real cause instead of just the generic
+    // "Couldn't read that" text.
+    const [errorReason, setErrorReason] = useState<string | null>(null);
 
     const itemsRef = useRef<Item[]>([]);
     itemsRef.current = items;
@@ -139,7 +143,7 @@ const ShareClaimHandler = () => {
         const claimLocal = async (id: string) => {
             const cache = await caches.open("spendly-share-stash");
             const metaRes = await cache.match(`/__share/${id}/meta`);
-            if (!metaRes) throw new Error("share expired");
+            if (!metaRes) throw new Error("share-expired");
             const meta = (await metaRes.json()) as { text: string; count: number; dropped?: number };
             if (meta.dropped && meta.dropped > 0) {
                 toast.info(`${meta.dropped} more skipped — share up to ${MAX_SHARE_IMAGES} at a time.`);
@@ -157,12 +161,18 @@ const ShareClaimHandler = () => {
 
             // Text-only share → single spinner path
             if (files.length === 0) {
-                if (!meta.text) throw new Error("nothing to read");
+                if (!meta.text) throw new Error("nothing-to-read");
                 setSimple(true);
                 const res = await client.api["pending-transactions"]["from-share"].$post({
                     json: { text: meta.text, images: [] },
                 });
-                if (!res.ok) throw new Error("extraction failed");
+                if (!res.ok) {
+                    const body: unknown = await res.json().catch(() => null);
+                    const serverError = body && typeof body === "object" && "error" in body
+                        ? String((body as { error: unknown }).error)
+                        : null;
+                    throw new Error(`extraction-failed${serverError ? `: ${serverError}` : ""}`);
+                }
                 queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
                 router.replace("/transactions");
                 return;
@@ -270,7 +280,13 @@ const ShareClaimHandler = () => {
         const claimToken = async (t: string) => {
             setSimple(true);
             const res = await client.api["pending-transactions"]["claim-share"].$post({ json: { token: t } });
-            if (!res.ok) throw new Error("claim failed");
+            if (!res.ok) {
+                const body: unknown = await res.json().catch(() => null);
+                const serverError = body && typeof body === "object" && "error" in body
+                    ? String((body as { error: unknown }).error)
+                    : null;
+                throw new Error(`claim-failed${serverError ? `: ${serverError}` : ""} (status ${res.status})`);
+            }
             queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
             router.replace("/transactions");
         };
@@ -279,7 +295,9 @@ const ShareClaimHandler = () => {
             try {
                 if (localId) await claimLocal(localId);
                 else await claimToken(token!);
-            } catch {
+            } catch (err) {
+                console.error("[share-claim] claim failed:", err);
+                setErrorReason(err instanceof Error ? err.message : String(err));
                 setPhase("error");
                 setTimeout(() => router.replace("/transactions"), 3000);
             }
@@ -309,6 +327,11 @@ const ShareClaimHandler = () => {
                                     <p className="text-sm text-muted-foreground">
                                         The share didn&apos;t come through. Try sharing it again.
                                     </p>
+                                    {errorReason && (
+                                        <p className="text-xs text-muted-foreground/70">
+                                            Reason: {errorReason}
+                                        </p>
+                                    )}
                                 </div>
                                 <Button size="sm" onClick={() => router.replace("/transactions")}>
                                     Go to transactions

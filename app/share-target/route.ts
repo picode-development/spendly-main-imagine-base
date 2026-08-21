@@ -25,7 +25,11 @@ const uploadToImgBB = async (buffer: Buffer): Promise<string | null> => {
             body: form,
         });
         const data = await res.json();
-        return data?.success ? (data.data.url as string) : null;
+        if (!data?.success) {
+            console.error("Share-target ImgBB upload failed:", data?.error);
+            return null;
+        }
+        return data.data.url as string;
     } catch (e) {
         console.error("Share-target ImgBB upload failed:", e);
         return null;

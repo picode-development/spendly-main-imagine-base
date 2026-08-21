@@ -55,7 +55,7 @@ export function uploadImageWithProgress(
                 if (data.success) {
                     resolve(data.data.url as string);
                 } else {
-                    reject(new Error("ImgBB upload failed"));
+                    reject(new Error(data.error?.message || "ImgBB upload failed"));
                 }
             } catch {
                 reject(new Error("ImgBB upload failed"));
