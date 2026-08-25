@@ -12,7 +12,11 @@ import { AppType } from "@/app/api/[[...route]]/route";
 // from scratch, matching exactly what already happens on a normal reopen.
 const authAwareFetch: typeof fetch = async (...args) => {
     const response = await fetch(...args);
-    if (response.status === 401 && typeof window !== "undefined") {
+    if (
+        response.status === 401 &&
+        typeof window !== "undefined" &&
+        !window.location.pathname.startsWith("/sign-in")
+    ) {
         window.location.href = "/sign-in";
     }
     return response;

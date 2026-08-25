@@ -12,7 +12,7 @@ import { AppLockGate } from "@/components/app-lock-gate";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthPage = pathname === "/sign-in" || pathname === "/sign-up";
+  const isAuthPage = pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
   const [isLoading, setIsLoading] = useState(true);
 
@@ -39,7 +39,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   if (isAuthPage) {
     return (
       <QueryProvider>
-        <SheetProvider />
         <Toaster />
         {children}
       </QueryProvider>
