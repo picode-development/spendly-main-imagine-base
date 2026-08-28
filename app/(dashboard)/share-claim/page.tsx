@@ -16,9 +16,9 @@ import { uploadImageWithProgress, makeImagePreview } from "@/features/transactio
 import { toAiDataUrl } from "@/features/transactions/lib/image-data-url";
 
 const MAX_SHARE_IMAGES = 25;
-// Extraction now runs through the Hermes bridge (a single dedicated
-// backend), not Groq's per-key rate-limited free tier — this just bounds
-// how many images read in parallel, not a key-pool sizing.
+// Extraction runs directly against Groq's rotating key pool (lib/groq.ts
+// already spreads load across keys and cools down rate-limited ones), so
+// this just bounds how many images are read/uploaded in parallel client-side.
 const CONCURRENCY = 6;
 
 type ItemStatus = "queued" | "working" | "retry" | "done" | "empty" | "error";

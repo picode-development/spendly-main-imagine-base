@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/db/drizzle";
 import { pendingTransactions, sharedStash } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
-import { hasGroqKey, hasHermesBridge, isTrustedImageUrl, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { hasGroqKey, isTrustedImageUrl, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { sendPushToUser } from "@/lib/push-send";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq, lt } from "drizzle-orm";
@@ -223,9 +223,9 @@ const app = new Hono()
 
     // Extraction-only. Accepts a local data-URL copy (the initial detection,
     // before hosting completes) or a hosted https URL (every AI task after
-    // the upload). Single attempt, no retry — matches llmExtractFromImage's
-    // own contract (hermesPost is one-shot; a failure resolves to null, not
-    // a throw), same as every other Hermes-backed extraction call site.
+    // the upload). llmExtractFromImage already retries across Groq's key
+    // pool and both vision models internally; a failure resolves to null,
+    // not a throw, same as every other extraction call site.
     .post(
         "/extract-image",
         clerkMiddleware(),
@@ -421,9 +421,7 @@ const app = new Hono()
             if (!auth?.userId) {
                 return c.json({ error: "Unauthorized" }, 401);
             }
-            // Transcription is Hermes-first (local whisper on the bridge)
-            // with Groq as fallback — either backend alone is enough.
-            if (!hasHermesBridge() && !hasGroqKey()) {
+            if (!hasGroqKey()) {
                 return c.json({ error: "No voice transcription backend is configured" }, 501);
             }
 

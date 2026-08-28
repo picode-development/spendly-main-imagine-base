@@ -17,11 +17,10 @@ type Props = {
 };
 
 // Re-runs AI extraction on the attached screenshot — the recovery for a
-// detection that came back blank. Single attempt: extraction runs through
-// the Hermes bridge (a single dedicated backend, not Groq's rate-limited
-// free-tier key pool), so the multi-attempt-with-cooldown pattern that
-// made sense for Groq no longer applies — a failure here is a real error,
-// not a rate limit that clears itself in a few seconds.
+// detection that came back blank. llmExtractFromImage already retries
+// across Groq's key pool and both vision models internally before this
+// resolves, so one click here is one full attempt; the button itself is
+// the user-facing retry if that still comes back empty.
 export const FillWithAiButton = ({ imageUrl, onParsed, disabled }: Props) => {
     const [loading, setLoading] = useState(false);
 

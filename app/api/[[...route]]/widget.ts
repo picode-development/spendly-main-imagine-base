@@ -1,6 +1,6 @@
 import { db } from "@/db/drizzle";
 import { accounts, categories, pendingTransactions, transactions, widgetTokens } from "@/db/schema";
-import { hasGroqKey, hasHermesBridge, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { hasGroqKey, llmExtractFromText, llmTranscribe } from "@/lib/groq";
 import { getLlmContext } from "@/lib/parse-message";
 import { calculatePercentageChange } from "@/lib/utils";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
@@ -448,9 +448,7 @@ const app = new Hono()
             if (!tokenRow) {
                 return c.json({ error: "Unauthorized" }, 401);
             }
-            // Transcription is Hermes-first (local whisper on the bridge)
-            // with Groq as fallback — either backend alone is enough.
-            if (!hasHermesBridge() && !hasGroqKey()) {
+            if (!hasGroqKey()) {
                 return c.json({ error: "No voice transcription backend is configured" }, 501);
             }
 
@@ -479,7 +477,7 @@ const app = new Hono()
             const transcript = transcribed.text;
 
             // A retry-after-1s-sleep here used to double the extraction
-            // latency (a second full Hermes round-trip) on any voice note
+            // latency (a second full Groq round-trip) on any voice note
             // without an explicit payee — a very common case for casual
             // dictation. A single attempt is trusted; an incomplete result
             // still stages a pending transaction the user can fill in.

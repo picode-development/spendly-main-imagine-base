@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const CHECK_INTERVAL_MS = 60 * 1000;
 
 /**
  * Keeps long-running sessions fresh. Two independent signals both lead to
@@ -62,6 +62,9 @@ export const UpdatePrompt = () => {
         window.addEventListener("sw-update-available", onSwUpdate);
 
         checkVersion();
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.getRegistration().then((reg) => reg?.update());
+        }
         const interval = setInterval(checkVersion, CHECK_INTERVAL_MS);
         const onVisible = () => {
             if (document.visibilityState !== "visible") return;
