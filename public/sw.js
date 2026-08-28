@@ -4,7 +4,9 @@
  * fetch handling, in priority order:
  *   1. Web Share Target intercept — unchanged from the original, always wins.
  *   2. Static asset cache-first (icons, Next's hashed _next/static bundles).
- *   3. Stale-while-revalidate for a small allowlist of read-only API GETs.
+ *   3. Network-first for a small allowlist of read-only API GETs — cache is
+ *      only ever a fallback for offline reads, never served ahead of a live
+ *      fetch (mutations need to see their own writes immediately).
  *   4. Navigations — network-first with a timeout, offline page on failure.
  *
  * Also: push notifications, an offline-write outbox drained via Background
@@ -14,7 +16,7 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v1";
+const SW_VERSION = "v2";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
@@ -125,9 +127,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 3. Allowlisted API reads — stale-while-revalidate.
+  // 3. Allowlisted API reads — network-first, cache only as an offline fallback.
   if (CACHEABLE_API_PATHS.includes(url.pathname)) {
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(networkFirstApi(request));
     return;
   }
 
@@ -161,27 +163,24 @@ async function cacheFirst(request) {
   }
 }
 
-async function staleWhileRevalidate(request) {
+// Network-first: these endpoints back live UI state (a mutation's own
+// invalidate-and-refetch must see its own write immediately), so a cached
+// response is only ever a fallback for genuinely offline reads, never
+// served ahead of a live network attempt.
+async function networkFirstApi(request) {
   const cache = await caches.open(CACHE_API);
-  const cached = await cache.match(request);
-  const network = fetch(request)
-    .then((response) => {
-      if (response.ok) cache.put(request, response.clone());
-      return response;
-    })
-    .catch(() => null);
-
-  if (cached) {
-    // Refresh in the background; the caller already got the cached copy.
-    network.catch(() => {});
-    return cached;
+  try {
+    const response = await fetch(request);
+    if (response.ok) cache.put(request, response.clone());
+    return response;
+  } catch {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    return new Response(JSON.stringify({ offline: true }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
   }
-  const fresh = await network;
-  if (fresh) return fresh;
-  return new Response(JSON.stringify({ offline: true }), {
-    status: 503,
-    headers: { "Content-Type": "application/json" },
-  });
 }
 
 async function networkFirstNavigation(request) {
