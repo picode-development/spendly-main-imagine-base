@@ -1,8 +1,0 @@
-[{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "app.spendly.com",
-        "sha256_cert_fingerprints": ["EC:63:E8:5D:0B:EA:5A:FC:51:77:FE:91:91:48:78:14:8D:47:64:2C:9B:2F:92:EE:F9:72:CF:E4:E9:04:02:5E"]
-      }
-    }]

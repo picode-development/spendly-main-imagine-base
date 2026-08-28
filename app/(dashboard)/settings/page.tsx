@@ -341,39 +341,6 @@ const SettingsPage = () => {
           <div className="relative flex items-center justify-between py-2 px-1">
             <div className="flex flex-col pr-4">
               <Label className="text-md font-medium">
-                Download native app
-              </Label>
-              <span className="text-sm text-muted-foreground">
-                {platform === "ios"
-                  ? "Not available for iOS — use \"Install Spendly\" above instead."
-                  : "A packaged version of this same site for Android or Windows, built with PWABuilder."}
-              </span>
-            </div>
-            <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row">
-              {(platform === "android" || platform === "other") && (
-                <Button size="sm" className="shrink-0" asChild>
-                  <a href="/spendly-android.apk" download>
-                    <Smartphone className="size-4 mr-2" />
-                    Android APK
-                  </a>
-                </Button>
-              )}
-              {platform === "other" && (
-                <Button size="sm" variant="outline" className="shrink-0" asChild>
-                  <a href="/spendly-windows.zip" download>
-                    <MonitorSmartphone className="size-4 mr-2" />
-                    Windows
-                  </a>
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <Separator className="my-2" />
-
-          <div className="relative flex items-center justify-between py-2 px-1">
-            <div className="flex flex-col pr-4">
-              <Label className="text-md font-medium">
                 Detected transactions
               </Label>
               <span className="text-sm text-muted-foreground">
