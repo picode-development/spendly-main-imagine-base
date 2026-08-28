@@ -8,8 +8,11 @@ export default function manifest(): MetadataRoute.Manifest {
         name: "Spendly",
         short_name: "Spendly",
         description: "Track spending, receipts, and transfers.",
+        id: "/",
         start_url: "/",
+        scope: "/",
         display: "standalone",
+        orientation: "any",
         background_color: "#0d1122",
         theme_color: "#0d1122",
         icons: [
