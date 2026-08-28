@@ -12,7 +12,12 @@ export default function manifest(): MetadataRoute.Manifest {
         start_url: "/",
         scope: "/",
         display: "standalone",
+        display_override: ["standalone", "minimal-ui"],
         orientation: "any",
+        lang: "en",
+        dir: "ltr",
+        // No native app to prefer over the PWA/no Play Store listing to link
+        prefer_related_applications: false,
         background_color: "#0d1122",
         theme_color: "#0d1122",
         icons: [
