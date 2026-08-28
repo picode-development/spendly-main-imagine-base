@@ -14,6 +14,7 @@ import { PendingTransactionsPopup } from "@/features/transactions/components/pen
 import { VoiceFab } from "@/features/transactions/components/voice-fab";
 import { UpdatePrompt } from "@/components/update-prompt";
 import { SwRegister } from "@/components/sw-register";
+import { OfflineOutboxListener } from "@/components/offline-outbox-listener";
 
 export const SheetProvider = () => {
     const isMounted = useMountedState();
@@ -35,6 +36,7 @@ export const SheetProvider = () => {
             <VoiceFab />
             <UpdatePrompt />
             <SwRegister />
+            <OfflineOutboxListener />
         </>
     )
 }

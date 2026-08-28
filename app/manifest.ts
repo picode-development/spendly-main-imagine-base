@@ -29,5 +29,23 @@ export default function manifest(): MetadataRoute.Manifest {
                 files: [{ name: "media", accept: ["image/*"] }],
             },
         },
+        categories: ["finance", "productivity"],
+        shortcuts: [
+            {
+                name: "Add Transaction",
+                url: "/?new=true",
+                icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+            },
+            {
+                name: "Dashboard",
+                url: "/",
+                icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+            },
+            {
+                name: "Transactions",
+                url: "/transactions",
+                icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+            },
+        ],
     } as MetadataRoute.Manifest;
 }

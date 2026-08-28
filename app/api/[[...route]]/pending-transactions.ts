@@ -4,11 +4,22 @@ import { db } from "@/db/drizzle";
 import { pendingTransactions, sharedStash } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
 import { hasGroqKey, hasHermesBridge, isTrustedImageUrl, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { sendPushToUser } from "@/lib/push-send";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { zValidator } from "@hono/zod-validator";
+
+// Fired after every successful pending-transaction insert, across all
+// creation paths (SMS ingest, share flows, detected screenshots) — the one
+// "new data arrived while the app may be closed" event this app has today.
+const notifyNewPending = (userId: string) =>
+    sendPushToUser(userId, {
+        title: "New transaction to review",
+        body: "Spendly detected a transaction waiting for your review.",
+        url: "/transactions",
+    });
 
 // Constant-time compare for shared-secret tokens — a plain `!==` leaks
 // timing info proportional to the matching prefix length.
@@ -94,6 +105,8 @@ const app = new Hono()
                 ...parsed,
             }).returning();
 
+            await notifyNewPending(inboxUserId);
+
             return c.json({ data });
         },
     )
@@ -123,6 +136,8 @@ const app = new Hono()
                 rawMessage: message,
                 ...(parsed ?? { date: new Date() }),
             }).returning();
+
+            await notifyNewPending(auth.userId);
 
             return c.json({ data });
         },
@@ -199,6 +214,8 @@ const app = new Hono()
             await db.delete(sharedStash).where(
                 lt(sharedStash.createdAt, new Date(Date.now() - 60 * 60 * 1000)),
             );
+
+            await notifyNewPending(auth.userId);
 
             return c.json({ data });
         },
@@ -281,6 +298,8 @@ const app = new Hono()
 
             // Conflict = this exact screenshot is already pending — a
             // re-delivered share, not a new transaction
+            if (data) await notifyNewPending(auth.userId);
+
             return c.json({ data: data ?? null });
         },
     )
@@ -381,6 +400,7 @@ const app = new Hono()
             }
 
             const data = await db.insert(pendingTransactions).values(rows).returning();
+            await notifyNewPending(auth.userId);
             return c.json({ data });
         },
     )

@@ -144,3 +144,17 @@ export const smsRules = pgTable("sms_rules", {
 });
 
 export const InsertSmsRuleSchema = createInsertSchema(smsRules);
+
+// Web Push subscriptions (Settings → Offline & Notifications). One row per
+// browser/device install — a user may have several (phone + desktop).
+export const pushSubscriptions = pgTable("push_subscriptions", {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    endpoint: text("endpoint").notNull().unique(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export const InsertPushSubscriptionSchema = createInsertSchema(pushSubscriptions);

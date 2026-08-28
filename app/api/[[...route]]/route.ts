@@ -8,6 +8,7 @@ import summary from "./summary";
 import pendingTransactions from "./pending-transactions";
 import smsRules from "./sms-rules";
 import widget from "./widget";
+import push from "./push";
 
 
 
@@ -31,6 +32,7 @@ const routes = app
   .route("/pending-transactions", pendingTransactions)
   .route("/sms-rules", smsRules)
   .route("/widget", widget)
+  .route("/push", push)
 
 export const GET = handle(app);
 export const POST = handle(app);

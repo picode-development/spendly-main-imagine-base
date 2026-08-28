@@ -66,18 +66,60 @@ const app = new Hono()
         return result.length > 0 ? result : [{ income: 0, expenses: 0, remaining: 0 }];
       };
 
-      const [currentPeriod] = await fetchData(currentFromDate, currentToDate);
-
-      let lastPeriod = { income: 0, expenses: 0, remaining: 0 };
-      
-      if (!showAllDates && currentFromDate && currentToDate) {
-        const periodLength = differenceInDays(currentToDate, currentFromDate);
-        const previousFromDate = subDays(currentFromDate, periodLength + 1);
-        const previousToDate = subDays(currentFromDate, 1);
-        
-        const [previousPeriodData] = await fetchData(previousFromDate, previousToDate);
-        lastPeriod = previousPeriodData;
+      const wantsPreviousPeriod = !showAllDates && currentFromDate && currentToDate;
+      let previousFromDate: Date | null = null;
+      let previousToDate: Date | null = null;
+      if (wantsPreviousPeriod) {
+        const periodLength = differenceInDays(currentToDate!, currentFromDate!);
+        previousFromDate = subDays(currentFromDate!, periodLength + 1);
+        previousToDate = subDays(currentFromDate!, 1);
       }
+
+      const dateConditions = [];
+      if (currentFromDate && currentToDate) {
+        dateConditions.push(
+          gte(transactions.date, currentFromDate),
+          lt(transactions.date, addDays(currentToDate, 1))
+        );
+      }
+
+      // Independent of each other — run concurrently instead of one at a time
+      const [[currentPeriod], [previousPeriodData], category, activeDays] = await Promise.all([
+        fetchData(currentFromDate, currentToDate),
+        wantsPreviousPeriod
+          ? fetchData(previousFromDate, previousToDate)
+          : Promise.resolve([{ income: 0, expenses: 0, remaining: 0 }]),
+        db
+          .select({
+            name: categories.name,
+            value: sql`SUM(ABS(${transactions.amount}))`.mapWith(Number),
+          })
+          .from(transactions)
+          .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+          .innerJoin(categories, eq(transactions.categoryId, categories.id))
+          .where(
+            and(
+              ...baseConditions.filter(Boolean),
+              ...dateConditions,
+              lt(transactions.amount, 0),
+              isNull(transactions.transferId)
+            )
+          )
+          .groupBy(categories.name)
+          .orderBy(desc(sql`SUM(ABS(${transactions.amount}))`)),
+        db
+          .select({
+            date: transactions.date,
+            income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 AND ${transactions.transferId} IS NULL THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
+            expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 AND ${transactions.transferId} IS NULL THEN ABS(${transactions.amount}) ELSE 0 END)`.mapWith(Number),
+          })
+          .from(transactions)
+          .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+          .where(and(...baseConditions.filter(Boolean), ...dateConditions))
+          .groupBy(transactions.date)
+          .orderBy(transactions.date),
+      ]);
+      const lastPeriod = previousPeriodData;
 
       const incomeChange = showAllDates
         ? 0
@@ -89,51 +131,12 @@ const app = new Hono()
         ? 0
         : calculatePercentageChange(currentPeriod.remaining, lastPeriod.remaining);
 
-      const dateConditions = [];
-      if (currentFromDate && currentToDate) {
-        dateConditions.push(
-          gte(transactions.date, currentFromDate),
-          lt(transactions.date, addDays(currentToDate, 1))
-        );
-      }
-
-      const category = await db
-        .select({
-          name: categories.name,
-          value: sql`SUM(ABS(${transactions.amount}))`.mapWith(Number),
-        })
-        .from(transactions)
-        .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-        .innerJoin(categories, eq(transactions.categoryId, categories.id))
-        .where(
-          and(
-            ...baseConditions.filter(Boolean),
-            ...dateConditions,
-            lt(transactions.amount, 0),
-            isNull(transactions.transferId)
-          )
-        )
-        .groupBy(categories.name)
-        .orderBy(desc(sql`SUM(ABS(${transactions.amount}))`));
-
       const topCategories = category.slice(0, 3);
       const otherSum = category.slice(3).reduce((sum, c) => sum + c.value, 0);
       const finalCategories = [...topCategories];
       if (category.length > 3) {
         finalCategories.push({ name: "Other", value: otherSum });
       }
-
-      const activeDays = await db
-        .select({
-          date: transactions.date,
-          income: sql`SUM(CASE WHEN ${transactions.amount} >= 0 AND ${transactions.transferId} IS NULL THEN ${transactions.amount} ELSE 0 END)`.mapWith(Number),
-          expenses: sql`SUM(CASE WHEN ${transactions.amount} < 0 AND ${transactions.transferId} IS NULL THEN ABS(${transactions.amount}) ELSE 0 END)`.mapWith(Number),
-        })
-        .from(transactions)
-        .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-        .where(and(...baseConditions.filter(Boolean), ...dateConditions))
-        .groupBy(transactions.date)
-        .orderBy(transactions.date);
 
       return c.json({
         data: {

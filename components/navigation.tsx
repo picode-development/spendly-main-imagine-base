@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useMedia } from "react-use";
 import { useTheme } from "next-themes";
 import { Home, List, MessageCircle, Bot, Mic, X, ChevronDown } from "lucide-react";
@@ -16,7 +16,6 @@ import VoiceAssistant from "./voice-assistant";
 
 export const Navigation = () => {
   const pathname = usePathname();
-  const router = useRouter();
   const { theme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const isMobile = useMedia("(max-width: 1024px)", false);
@@ -101,31 +100,31 @@ export const Navigation = () => {
         <nav className="fixed bottom-0 inset-x-0 z-50 bg-white dark:bg-slate-900 px-4 py-2 border-t border-gray-200 dark:border-slate-700 transition-colors duration-300">
           <div className="relative grid grid-cols-5 items-end text-xs">
             <div className="flex flex-col items-center gap-1">
-              <button
-                onClick={() => router.push("/")}
+              <Link
+                href="/"
                 className={`flex flex-col items-center transition-colors ${
-                  pathname === "/" 
-                    ? "text-gray-900 dark:text-white font-semibold" 
+                  pathname === "/"
+                    ? "text-gray-900 dark:text-white font-semibold"
                     : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 <Home className="size-6" />
                 <span>Home</span>
-              </button>
+              </Link>
             </div>
 
             <div className="flex flex-col items-center gap-1">
-              <button
-                onClick={() => router.push("/transactions")}
+              <Link
+                href="/transactions"
                 className={`flex flex-col items-center transition-colors ${
-                  pathname === "/transactions" 
-                    ? "text-gray-900 dark:text-white font-semibold" 
+                  pathname === "/transactions"
+                    ? "text-gray-900 dark:text-white font-semibold"
                     : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 <List className="size-6" />
                 <span>Transactions</span>
-              </button>
+              </Link>
             </div>
 
             <div className="relative flex justify-center items-end">
@@ -314,9 +313,9 @@ export const Navigation = () => {
       ].map((route) => {
         const active = isActive(route.href);
         return (
-          <button
+          <Link
             key={route.href}
-            onClick={() => router.push(route.href)}
+            href={route.href}
             className={`relative text-sm px-4 py-2 rounded-md font-medium transition-all duration-200 ${
               active
                 ? "text-white bg-white/10 shadow-[0_0_4px_rgba(255,255,255,0.2)] dark:bg-blue-900/40 dark:shadow-[0_0_6px_rgba(59,130,246,0.4)]"
@@ -327,7 +326,7 @@ export const Navigation = () => {
             {active && (
               <span className="absolute left-1/2 -bottom-0.5 w-2/3 h-0.5 bg-white/50 dark:bg-blue-400/70 rounded-full -translate-x-1/2 transition-all duration-300" />
             )}
-          </button>
+          </Link>
         );
       })}
     </nav>

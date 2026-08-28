@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect } from "react";
 import {
   Select,
   SelectContent,
@@ -16,9 +16,18 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const ROUTES = ["/accounts", "/categories", "/settings"];
+
 export const MoreDropdown = () => {
   const router = useRouter();
   const pathname = usePathname();
+
+  // These routes only ever appear inside this Select (not always-present
+  // <Link>s), so Next's hover/viewport auto-prefetch never triggers —
+  // prefetch them explicitly once the tab bar is up.
+  useEffect(() => {
+    ROUTES.forEach((route) => router.prefetch(route));
+  }, [router]);
 
   const handleNavigate = (value: string) => {
     router.push(value);

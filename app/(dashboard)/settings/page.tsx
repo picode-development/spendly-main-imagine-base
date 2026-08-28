@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { BellRing, Check, Copy, Download, Loader2, MonitorSmartphone, RefreshCw, Smartphone, Trash2 } from "lucide-react";
+import { BellRing, Check, Copy, Download, HardDrive, Loader2, MonitorSmartphone, RefreshCw, Smartphone, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -27,9 +27,11 @@ import { Separator } from "@/components/ui/separator";
 import { AppLockSwitch } from "@/components/ui/app-lock-switch";
 import { useAppLockStore } from "@/hooks/use-app-lock";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
+import { usePushSubscription } from "@/hooks/use-push-subscription";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { client } from "@/lib/hono";
 import { convertAmountFromMiliunits } from "@/lib/utils";
+import { peekOutbox, requestOutboxDrain, type OutboxItem } from "@/lib/offline-outbox";
 
 // Quotes the value and defuses spreadsheet formula injection (=, +, -, @
 // prefixes execute in Excel/Sheets — SMS-derived payees are untrusted)
@@ -64,9 +66,38 @@ const SettingsPage = () => {
 
   const { canInstall, isInstalled, promptInstall } = usePwaInstall();
   const { data: pending } = useGetPendingTransactions();
+  const {
+    supported: pushSupported,
+    permission: pushPermission,
+    isSubscribed,
+    isLoading: pushLoading,
+    subscribe,
+    unsubscribe,
+  } = usePushSubscription();
 
   const [isExporting, setIsExporting] = useState(false);
   const [platform] = useState(detectPlatform);
+  const [cacheInfo, setCacheInfo] = useState<{ staticCount: number; apiCount: number } | null>(null);
+  const [isClearingCache, setIsClearingCache] = useState(false);
+  const [outboxItems, setOutboxItems] = useState<OutboxItem[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const refreshOutbox = () => {
+    peekOutbox().then(setOutboxItems).catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshOutbox();
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "OUTBOX_DRAINED") {
+        setIsSyncing(false);
+        refreshOutbox();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, []);
 
   const queryClient = useQueryClient();
   const widgetTokenQuery = useQuery({
@@ -130,6 +161,50 @@ const SettingsPage = () => {
     if (outcome === "unavailable") {
       toast.info("Use your browser menu → Install app / Add to Home Screen");
     }
+  };
+
+  const handleToggleNotifications = async (next: boolean) => {
+    if (next) {
+      const ok = await subscribe();
+      if (ok) toast.success("Notifications enabled");
+      else if (pushPermission === "denied") toast.error("Notifications are blocked for Spendly in your browser settings");
+      else toast.error("Couldn't enable notifications");
+    } else {
+      await unsubscribe();
+      toast.success("Notifications disabled");
+    }
+  };
+
+  const handleGetCacheInfo = () => {
+    if (!("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event) => {
+      setCacheInfo({ staticCount: event.data.staticCount, apiCount: event.data.apiCount });
+    };
+    navigator.serviceWorker.controller.postMessage({ type: "GET_CACHE_INFO" }, [channel.port2]);
+  };
+
+  useEffect(() => {
+    handleGetCacheInfo();
+    // Runs once on mount — cheap, read-only status probe
+  }, []);
+
+  const handleClearCache = async () => {
+    setIsClearingCache(true);
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: "CLEAR_CACHES" });
+      queryClient.invalidateQueries();
+      toast.success("Cache cleared");
+      setTimeout(handleGetCacheInfo, 300);
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
+
+  const handleRetrySync = () => {
+    setIsSyncing(true);
+    requestOutboxDrain();
+    setTimeout(() => setIsSyncing(false), 5000); // give up spinning if nothing came back
   };
 
   const handleExport = async () => {
@@ -285,6 +360,94 @@ const SettingsPage = () => {
                 : "None waiting"}
             </Button>
           </div>
+
+          <Separator className="my-2" />
+
+          <p className="pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Offline &amp; Notifications
+          </p>
+
+          <div className="relative flex items-center justify-between py-2 px-1">
+            <div className="flex flex-col pr-4">
+              <Label htmlFor="push-notifications" className="text-md font-medium">
+                New transaction alerts
+              </Label>
+              <span className="text-sm text-muted-foreground">
+                {!pushSupported
+                  ? isInstalled
+                    ? "Not supported in this browser."
+                    : "Install Spendly to enable notifications."
+                  : "Get notified when Spendly detects a new transaction from SMS or a shared screenshot."}
+              </span>
+            </div>
+            {pushLoading ? (
+              <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+            ) : (
+              <AppLockSwitch
+                id="push-notifications"
+                checked={isSubscribed}
+                disabled={!pushSupported}
+                onCheckedChange={handleToggleNotifications}
+              />
+            )}
+          </div>
+
+          <Separator className="my-2" />
+
+          <div className="relative flex items-center justify-between py-2 px-1">
+            <div className="flex flex-col pr-4">
+              <Label className="text-md font-medium">
+                Offline data
+              </Label>
+              <span className="text-sm text-muted-foreground">
+                {cacheInfo
+                  ? `${cacheInfo.apiCount} pages of data and ${cacheInfo.staticCount} files saved for offline use.`
+                  : "Spendly saves recent data so the app still works with no signal."}
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleClearCache}
+              disabled={isClearingCache}
+              className="shrink-0"
+            >
+              {isClearingCache
+                ? <Loader2 className="size-4 mr-2 animate-spin" />
+                : <HardDrive className="size-4 mr-2" />}
+              Clear cache
+            </Button>
+          </div>
+
+          {outboxItems.length > 0 && (
+            <>
+              <Separator className="my-2" />
+              <div className="relative flex items-center justify-between py-2 px-1">
+                <div className="flex flex-col pr-4">
+                  <Label className="text-md font-medium">
+                    Pending offline changes
+                  </Label>
+                  <span className="text-sm text-muted-foreground">
+                    {outboxItems.length === 1
+                      ? "1 change made offline hasn't synced yet."
+                      : `${outboxItems.length} changes made offline haven't synced yet.`}
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRetrySync}
+                  disabled={isSyncing}
+                  className="shrink-0"
+                >
+                  {isSyncing
+                    ? <Loader2 className="size-4 mr-2 animate-spin" />
+                    : <RefreshCw className="size-4 mr-2" />}
+                  Retry sync
+                </Button>
+              </div>
+            </>
+          )}
 
           <Separator className="my-2" />
 
