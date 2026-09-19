@@ -94,36 +94,53 @@ export async function POST(req: NextRequest) {
     // the exact one-time token; nothing is written without user review).
 
     const form = await req.formData();
+    const formEntries = Array.from(form.entries());
+
+    const isFileLike = (v: unknown): v is { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string; size?: number } =>
+        v !== null && typeof v === "object" && typeof (v as { arrayBuffer?: unknown }).arrayBuffer === "function";
+
+    const isLikelyTextField = (name: string): boolean => {
+        const n = name.toLowerCase();
+        return (
+            !n.includes("file") &&
+            !n.includes("image") &&
+            !n.includes("media") &&
+            !n.includes("attachment") &&
+            !n.includes("screenshot") &&
+            !n.includes("photo") &&
+            !n.includes("document") &&
+            (n.includes("text") || n.includes("message") || n.includes("caption") || n.includes("title") || n.includes("body") || n.includes("description") || n.includes("content") || n === "url")
+        );
+    };
+
     const textPieces: string[] = [];
-    const textKeys = ["text", "title", "message", "description", "content", "body", "caption", "url", "link"];
-    for (const [key, val] of form.entries()) {
+    for (const [key, val] of formEntries) {
         if (typeof val !== "string") continue;
         const trimmed = val.trim();
         if (!trimmed) continue;
         const keyName = key.toLowerCase();
-        if (textKeys.includes(keyName) || keyName.includes("text") || keyName.includes("message") || keyName.includes("caption")) {
-            if (!textPieces.includes(trimmed)) textPieces.push(trimmed);
+        const isText =
+            isLikelyTextField(keyName) ||
+            (trimmed.length > 12 && !keyName.includes("file") && !keyName.includes("image") && !keyName.includes("media") && !keyName.includes("attachment") && !keyName.includes("screenshot"));
+        if (isText && !textPieces.includes(trimmed)) {
+            textPieces.push(trimmed);
         }
     }
     const text = textPieces.join(" ").slice(0, 2000);
     console.log("[share-target:route] text:", text);
 
-    // Extract all file parts from form — UPI apps do not agree on the field name.
-    const isFileLike = (v: unknown): v is { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string } =>
-        v !== null && typeof v === "object" && typeof (v as { arrayBuffer?: unknown }).arrayBuffer === "function";
-
-    const candidateFiles: { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string }[] = [];
-    for (const [, val] of form.entries()) {
-        if (isFileLike(val)) {
-            candidateFiles.push(val);
-        }
-    }
-    const namedKeys = ["media", "file", "files", "image", "media[]", "file[]", "image[]", "photo", "attachment", "screenshot", "receipt", "document", "upload", "payload", "content"];
-    for (const key of namedKeys) {
-        for (const f of form.getAll(key)) {
-            if (isFileLike(f) && !candidateFiles.includes(f)) {
-                candidateFiles.push(f);
-            }
+    const candidateFiles: { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string; size?: number }[] = [];
+    for (const [key, val] of formEntries) {
+        if (!isFileLike(val)) continue;
+        const file = val;
+        const fileName = (file.name || "").toLowerCase();
+        const fileType = (file.type || "").toLowerCase();
+        const isLikelyImage =
+            fileType.startsWith("image/") ||
+            /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) ||
+            ((file.size ?? 0) > 0 && !fileType && !key.toLowerCase().includes("text"));
+        if (isLikelyImage && !candidateFiles.some((existing) => existing.name === file.name && existing.type === file.type && (existing.size ?? 0) === (file.size ?? 0))) {
+            candidateFiles.push(file);
         }
     }
 

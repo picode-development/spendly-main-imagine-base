@@ -228,40 +228,34 @@ function detectMimeFromUint8Array(buf) {
 async function handleShareTarget(event) {
   try {
     const formData = await event.request.formData();
-    const formKeys = Array.from(formData.keys());
-    console.log("[share-target] keys:", formKeys);
+    const formEntries = Array.from(formData.entries());
 
-    // UPI apps are inconsistent: some send files under `media`, some under
-    // `file`, some under `image`, some under `attachment`, and some only send a
-    // screenshot without any text field. We must treat the request as a bag of
-    // blobs + strings and not assume a single canonical key.
+    const isFileLike = (value) =>
+      value && typeof value === "object" && typeof value.arrayBuffer === "function";
+
+    const isLikelyTextField = (name) => {
+      const n = String(name || "").toLowerCase();
+      return (
+        !n.includes("file") &&
+        !n.includes("image") &&
+        !n.includes("media") &&
+        !n.includes("attachment") &&
+        !n.includes("screenshot") &&
+        !n.includes("photo") &&
+        !n.includes("document") &&
+        (n.includes("text") || n.includes("message") || n.includes("caption") || n.includes("title") || n.includes("body") || n.includes("description") || n.includes("content") || n === "url")
+      );
+    };
+
     const candidateFiles = [];
-    for (const [, val] of formData.entries()) {
-      if (val && typeof val === "object" && typeof val.arrayBuffer === "function") {
-        candidateFiles.push(val);
-      }
-    }
-    const namedKeys = [
-      "media",
-      "file",
-      "files",
-      "image",
-      "media[]",
-      "file[]",
-      "image[]",
-      "photo",
-      "attachment",
-      "screenshot",
-      "receipt",
-      "document",
-      "upload",
-      "payload",
-      "content",
-    ];
-    for (const key of namedKeys) {
-      for (const f of formData.getAll(key)) {
-        if (f && typeof f === "object" && typeof f.arrayBuffer === "function" && !candidateFiles.includes(f)) {
-          candidateFiles.push(f);
+    for (const [key, val] of formEntries) {
+      if (isFileLike(val)) {
+        const file = val;
+        const fileName = (file.name || "").toLowerCase();
+        const type = (file.type || "").toLowerCase();
+        const isLikelyImage = type.startsWith("image/") || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) || (file.size > 0 && !type && !key.toLowerCase().includes("text"));
+        if (isLikelyImage && !candidateFiles.some((candidate) => candidate.name === file.name && candidate.type === file.type && candidate.size === file.size)) {
+          candidateFiles.push(file);
         }
       }
     }
@@ -271,7 +265,6 @@ async function handleShareTarget(event) {
       return all.findIndex((candidate) => `${candidate.name || ""}:${candidate.type || ""}:${String(candidate.size ?? "")}` === key) === index;
     });
 
-    // Inspect files and buffer into memory — works with streaming content URIs (GPay, PhonePe, Paytm)
     const inspectedFiles = [];
     for (const f of dedupedFiles) {
       try {
@@ -296,16 +289,12 @@ async function handleShareTarget(event) {
           else if (name.endsWith(".webp")) contentType = "image/webp";
           else contentType = "image/jpeg";
         } else if (bytes.byteLength > 100) {
-          // Any binary payload from an Android share intent (Paytm/GPay/PhonePe share button)
           isImage = true;
           contentType = "image/jpeg";
         }
 
         if (isImage) {
-          inspectedFiles.push({
-            buffer,
-            contentType: contentType || "image/jpeg",
-          });
+          inspectedFiles.push({ buffer, contentType: contentType || "image/jpeg" });
         }
       } catch (err) {
         console.warn("Could not buffer shared file in SW:", err);
@@ -315,18 +304,16 @@ async function handleShareTarget(event) {
     const files = inspectedFiles.slice(0, 25);
     const dropped = inspectedFiles.length - files.length;
     const textPieces = [];
-    const textKeys = ["text", "title", "message", "description", "content", "body", "caption", "url", "link"];
-    for (const [key, val] of formData.entries()) {
-      if (typeof val === "string") {
-        const trimmed = val.trim();
-        if (!trimmed) continue;
-        if (textKeys.includes(key.toLowerCase())) {
-          if (!textPieces.includes(trimmed)) textPieces.push(trimmed);
-          continue;
-        }
-        if (key.toLowerCase().includes("text") || key.toLowerCase().includes("message") || key.toLowerCase().includes("caption")) {
-          if (!textPieces.includes(trimmed)) textPieces.push(trimmed);
-        }
+    for (const [key, val] of formEntries) {
+      if (typeof val !== "string") continue;
+      const trimmed = val.trim();
+      if (!trimmed) continue;
+      const keyName = String(key || "").toLowerCase();
+      const isText =
+        isLikelyTextField(keyName) ||
+        (trimmed.length > 12 && !keyName.includes("file") && !keyName.includes("image") && !keyName.includes("media") && !keyName.includes("attachment") && !keyName.includes("screenshot"));
+      if (isText && !textPieces.includes(trimmed)) {
+        textPieces.push(trimmed);
       }
     }
     const text = textPieces.join(" ").slice(0, 2000);
