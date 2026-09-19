@@ -18,9 +18,23 @@ export const UpdatePrompt = () => {
     const prompted = useRef(false);
 
     useEffect(() => {
-        const promptRefresh = (reg?: ServiceWorkerRegistration) => {
+        const isStandalonePwa = () =>
+            window.matchMedia("(display-mode: standalone)").matches ||
+            (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+        const promptRefresh = (reg?: ServiceWorkerRegistration, autoApply = false) => {
             if (prompted.current) return;
             prompted.current = true;
+
+            if (autoApply || isStandalonePwa()) {
+                if (reg?.waiting) {
+                    reg.waiting.postMessage({ type: "SKIP_WAITING" });
+                } else {
+                    window.location.reload();
+                }
+                return;
+            }
+
             toast("A new version of Spendly is ready", {
                 duration: Infinity,
                 action: {
@@ -57,7 +71,7 @@ export const UpdatePrompt = () => {
         };
 
         const onSwUpdate = (e: Event) => {
-            promptRefresh((e as CustomEvent<ServiceWorkerRegistration>).detail);
+            promptRefresh((e as CustomEvent<ServiceWorkerRegistration>).detail, true);
         };
         window.addEventListener("sw-update-available", onSwUpdate);
 

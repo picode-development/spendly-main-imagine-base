@@ -57,6 +57,9 @@ export const SwRegister = () => {
 
                 if (reg.waiting) {
                     window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
+                    if (window.matchMedia("(display-mode: standalone)").matches || (window.navigator as Navigator & { standalone?: boolean }).standalone) {
+                        reg.waiting.postMessage({ type: "SKIP_WAITING" });
+                    }
                 }
 
                 reg.addEventListener("updatefound", () => {
@@ -65,8 +68,12 @@ export const SwRegister = () => {
                     installing.addEventListener("statechange", () => {
                         if (installing.state !== "installed") return;
                         if (navigator.serviceWorker.controller) {
-                            // Update available — dispatch event so user is prompted with Refresh button
+                            // Update available — for an installed PWA, apply it immediately
+                            // instead of forcing the user to reinstall or click Refresh.
                             window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
+                            if (window.matchMedia("(display-mode: standalone)").matches || (window.navigator as Navigator & { standalone?: boolean }).standalone) {
+                                installing.postMessage({ type: "SKIP_WAITING" });
+                            }
                         } else {
                             // First-ever install for this client — activate silently
                             expectingSilentActivation = true;
