@@ -1,22 +1,23 @@
 import type { MetadataRoute } from "next";
 
 // Installable PWA manifest. share_target lets Android's share sheet offer
-// "Spendly" for a selected SMS/notification text — it opens /share which
-// parses the message into a pending transaction.
+// "Spendly" for an image-backed UPI payment confirmation or receipt.
 export default function manifest(): MetadataRoute.Manifest {
     return {
         name: "Spendly",
         short_name: "Spendly",
         description: "Track spending, receipts, and transfers.",
-        id: "/",
-        start_url: "/",
+        // Keep a stable-but-fresh app identity so Android can re-register the
+        // WebAPK when the manifest changes. Using "/" here causes stale install
+        // state issues when the app is upgraded or the share target is changed.
+        id: "spendly-pwa",
+        start_url: "/?source=pwa",
         scope: "/",
         display: "standalone",
         display_override: ["standalone", "minimal-ui"],
         orientation: "any",
         lang: "en",
         dir: "ltr",
-        // No native app to prefer over the PWA/no Play Store listing to link
         prefer_related_applications: false,
         background_color: "#0d1122",
         theme_color: "#0d1122",
@@ -35,16 +36,20 @@ export default function manifest(): MetadataRoute.Manifest {
                 text: "text",
                 url: "url",
                 files: [{
-                    name: "media",
+                    name: "file",
                     accept: [
                         "image/*",
                         "image/jpeg",
                         "image/png",
                         "image/webp",
+                        "image/heic",
+                        "image/heif",
                         ".jpg",
                         ".jpeg",
                         ".png",
                         ".webp",
+                        ".heic",
+                        ".heif",
                     ],
                 }],
             },
