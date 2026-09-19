@@ -228,15 +228,36 @@ function detectMimeFromUint8Array(buf) {
 async function handleShareTarget(event) {
   try {
     const formData = await event.request.formData();
+    const formKeys = Array.from(formData.keys());
+    console.log("[share-target] keys:", formKeys);
 
-    // Extract all file/blob parts from form regardless of parameter name
+    // UPI apps are inconsistent: some send files under `media`, some under
+    // `file`, some under `image`, some under `attachment`, and some only send a
+    // screenshot without any text field. We must treat the request as a bag of
+    // blobs + strings and not assume a single canonical key.
     const candidateFiles = [];
     for (const [, val] of formData.entries()) {
       if (val && typeof val === "object" && typeof val.arrayBuffer === "function") {
         candidateFiles.push(val);
       }
     }
-    const namedKeys = ["media", "file", "files", "image", "media[]", "photo", "attachment", "screenshot"];
+    const namedKeys = [
+      "media",
+      "file",
+      "files",
+      "image",
+      "media[]",
+      "file[]",
+      "image[]",
+      "photo",
+      "attachment",
+      "screenshot",
+      "receipt",
+      "document",
+      "upload",
+      "payload",
+      "content",
+    ];
     for (const key of namedKeys) {
       for (const f of formData.getAll(key)) {
         if (f && typeof f === "object" && typeof f.arrayBuffer === "function" && !candidateFiles.includes(f)) {
@@ -294,15 +315,23 @@ async function handleShareTarget(event) {
     const files = inspectedFiles.slice(0, 25);
     const dropped = inspectedFiles.length - files.length;
     const textPieces = [];
-    for (const [, val] of formData.entries()) {
+    const textKeys = ["text", "title", "message", "description", "content", "body", "caption", "url", "link"];
+    for (const [key, val] of formData.entries()) {
       if (typeof val === "string") {
         const trimmed = val.trim();
-        if (trimmed && !textPieces.includes(trimmed)) {
-          textPieces.push(trimmed);
+        if (!trimmed) continue;
+        if (textKeys.includes(key.toLowerCase())) {
+          if (!textPieces.includes(trimmed)) textPieces.push(trimmed);
+          continue;
+        }
+        if (key.toLowerCase().includes("text") || key.toLowerCase().includes("message") || key.toLowerCase().includes("caption")) {
+          if (!textPieces.includes(trimmed)) textPieces.push(trimmed);
         }
       }
     }
     const text = textPieces.join(" ").slice(0, 2000);
+    console.log("[share-target] text:", text);
+    console.log("[share-target] files:", files.length, "dropped:", dropped);
 
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     const cache = await caches.open("spendly-share-stash");

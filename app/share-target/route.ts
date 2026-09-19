@@ -95,17 +95,20 @@ export async function POST(req: NextRequest) {
 
     const form = await req.formData();
     const textPieces: string[] = [];
-    for (const [, val] of form.entries()) {
-        if (typeof val === "string") {
-            const trimmed = val.trim();
-            if (trimmed && !textPieces.includes(trimmed)) {
-                textPieces.push(trimmed);
-            }
+    const textKeys = ["text", "title", "message", "description", "content", "body", "caption", "url", "link"];
+    for (const [key, val] of form.entries()) {
+        if (typeof val !== "string") continue;
+        const trimmed = val.trim();
+        if (!trimmed) continue;
+        const keyName = key.toLowerCase();
+        if (textKeys.includes(keyName) || keyName.includes("text") || keyName.includes("message") || keyName.includes("caption")) {
+            if (!textPieces.includes(trimmed)) textPieces.push(trimmed);
         }
     }
     const text = textPieces.join(" ").slice(0, 2000);
+    console.log("[share-target:route] text:", text);
 
-    // Extract all file parts from form (media, file, files, image)
+    // Extract all file parts from form — UPI apps do not agree on the field name.
     const isFileLike = (v: unknown): v is { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string } =>
         v !== null && typeof v === "object" && typeof (v as { arrayBuffer?: unknown }).arrayBuffer === "function";
 
@@ -115,7 +118,7 @@ export async function POST(req: NextRequest) {
             candidateFiles.push(val);
         }
     }
-    const namedKeys = ["media", "file", "files", "image", "media[]"];
+    const namedKeys = ["media", "file", "files", "image", "media[]", "file[]", "image[]", "photo", "attachment", "screenshot", "receipt", "document", "upload", "payload", "content"];
     for (const key of namedKeys) {
         for (const f of form.getAll(key)) {
             if (isFileLike(f) && !candidateFiles.includes(f)) {
@@ -132,6 +135,7 @@ export async function POST(req: NextRequest) {
         }) === index;
     });
     const images = dedupedFiles.slice(0, 10);
+    console.log("[share-target:route] imageCount:", images.length, "textLen:", text.length);
 
     if (images.length === 0 && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);

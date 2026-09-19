@@ -146,6 +146,7 @@ const ShareClaimHandler = () => {
                 || await cache.match(`/__share/${id}/meta`);
             if (!metaRes) throw new Error("share-expired");
             const meta = (await metaRes.json()) as { text: string; count: number; dropped?: number };
+            console.log("[share-claim] local meta:", meta);
             if (meta.dropped && meta.dropped > 0) {
                 toast.info(`${meta.dropped} more skipped — share up to ${MAX_SHARE_IMAGES} at a time.`);
             }
