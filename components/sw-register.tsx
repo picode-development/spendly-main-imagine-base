@@ -41,7 +41,20 @@ export const SwRegister = () => {
 
         const registerAndWatch = async () => {
             try {
-                const reg = await navigator.serviceWorker.register("/sw.js", {
+                let swUrl = "/sw.js";
+                try {
+                    const versionRes = await fetch("/version", { cache: "no-store" });
+                    if (versionRes.ok) {
+                        const { version } = await versionRes.json();
+                        if (typeof version === "string" && version.trim()) {
+                            swUrl = `/sw.js?v=${encodeURIComponent(version)}`;
+                        }
+                    }
+                } catch {
+                    // Keep the default script path if the version route is unavailable.
+                }
+
+                const reg = await navigator.serviceWorker.register(swUrl, {
                     updateViaCache: "none",
                 });
 
