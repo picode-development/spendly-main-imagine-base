@@ -16,7 +16,7 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v5";
+const SW_VERSION = "v6";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
@@ -201,90 +201,88 @@ async function networkFirstNavigation(request) {
   }
 }
 
-async function detectMimeFromBytes(file) {
-  try {
-    if (!file || typeof file.slice !== "function") return null;
-    const slice = file.slice(0, 16);
-    const buf = new Uint8Array(await slice.arrayBuffer());
-    if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-      return "image/jpeg";
-    }
-    if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-      return "image/png";
-    }
-    if (
-      buf.length >= 12 &&
-      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-    ) {
-      return "image/webp";
-    }
-    if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
-      return "image/gif";
-    }
-    if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
-      return "image/bmp";
-    }
-  } catch (e) {
-    // ignore
+function detectMimeFromUint8Array(buf) {
+  if (!buf || buf.length < 2) return null;
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return "image/png";
+  }
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+    return "image/gif";
+  }
+  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
+    return "image/bmp";
   }
   return null;
 }
 
 async function handleShareTarget(event) {
-  let fallbackRequest = null;
-  try {
-    fallbackRequest = event.request.clone();
-  } catch (e) {
-    // clone may fail on some streaming bodies
-  }
   try {
     const formData = await event.request.formData();
 
     // Extract all file/blob parts from form regardless of parameter name
-    const rawFiles = [];
+    const candidateFiles = [];
     for (const [, val] of formData.entries()) {
-      if (val && typeof val === "object" && (typeof val.slice === "function" || typeof val.arrayBuffer === "function")) {
-        rawFiles.push(val);
+      if (val && typeof val === "object" && typeof val.arrayBuffer === "function") {
+        candidateFiles.push(val);
       }
     }
-    for (const f of formData.getAll("media")) {
-      if (f && typeof f === "object" && !rawFiles.includes(f)) {
-        rawFiles.push(f);
+    const namedKeys = ["media", "file", "files", "image", "media[]"];
+    for (const key of namedKeys) {
+      for (const f of formData.getAll(key)) {
+        if (f && typeof f === "object" && typeof f.arrayBuffer === "function" && !candidateFiles.includes(f)) {
+          candidateFiles.push(f);
+        }
       }
     }
 
-    // Inspect files and detect image content across all UPI apps (Paytm, GPay, PhonePe, Cred, etc.)
+    // Inspect files and buffer into memory — works with streaming content URIs (GPay, PhonePe, Paytm)
     const inspectedFiles = [];
-    for (const f of rawFiles) {
-      if (!f || typeof f !== "object") continue;
-      const size = f.size ?? 0;
-      if (size <= 0 || size > 25 * 1024 * 1024) continue;
+    for (const f of candidateFiles) {
+      try {
+        const buffer = await f.arrayBuffer();
+        if (!buffer || buffer.byteLength <= 0 || buffer.byteLength > 25 * 1024 * 1024) continue;
 
-      const detectedMime = await detectMimeFromBytes(f);
-      const type = (f.type || "").toLowerCase();
-      const name = (f.name || "").toLowerCase();
+        const bytes = new Uint8Array(buffer);
+        const detectedMime = detectMimeFromUint8Array(bytes);
+        const type = (f.type || "").toLowerCase();
+        const name = (f.name || "").toLowerCase();
 
-      let isImage = false;
-      let contentType = detectedMime || type;
+        let isImage = false;
+        let contentType = detectedMime || type;
 
-      if (detectedMime) {
-        isImage = true;
-      } else if (type.startsWith("image/")) {
-        isImage = true;
-      } else if (/\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(name)) {
-        isImage = true;
-        if (name.endsWith(".png")) contentType = "image/png";
-        else if (name.endsWith(".webp")) contentType = "image/webp";
-        else contentType = "image/jpeg";
-      } else if (size > 100) {
-        // Any binary attachment from an Android share intent (Paytm/GPay/PhonePe share button)
-        isImage = true;
-        contentType = "image/jpeg";
-      }
+        if (detectedMime) {
+          isImage = true;
+        } else if (type.startsWith("image/")) {
+          isImage = true;
+        } else if (/\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(name)) {
+          isImage = true;
+          if (name.endsWith(".png")) contentType = "image/png";
+          else if (name.endsWith(".webp")) contentType = "image/webp";
+          else contentType = "image/jpeg";
+        } else if (bytes.byteLength > 100) {
+          // Any binary payload from an Android share intent (Paytm/GPay/PhonePe share button)
+          isImage = true;
+          contentType = "image/jpeg";
+        }
 
-      if (isImage) {
-        inspectedFiles.push({ file: f, contentType: contentType || "image/jpeg" });
+        if (isImage) {
+          inspectedFiles.push({
+            buffer,
+            contentType: contentType || "image/jpeg",
+          });
+        }
+      } catch (err) {
+        console.warn("Could not buffer shared file in SW:", err);
       }
     }
 
@@ -304,28 +302,38 @@ async function handleShareTarget(event) {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     const cache = await caches.open("spendly-share-stash");
 
-    await cache.put(
-      `/__share/${id}/meta`,
-      new Response(JSON.stringify({ text, count: files.length, dropped }), {
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    // Dual-key caching: save with both pathname and absolute URL so cache.match
+    // succeeds across all Chromium Android contexts
+    const metaPath = `/__share/${id}/meta`;
+    const metaUrl = new URL(metaPath, self.location.origin).href;
+    const metaData = JSON.stringify({ text, count: files.length, dropped });
+
+    await Promise.all([
+      cache.put(metaPath, new Response(metaData, { headers: { "Content-Type": "application/json" } })),
+      cache.put(metaUrl, new Response(metaData, { headers: { "Content-Type": "application/json" } })),
+    ]);
+
     for (let i = 0; i < files.length; i++) {
-      const { file, contentType } = files[i];
-      await cache.put(
-        `/__share/${id}/file/${i}`,
-        new Response(file, { headers: { "Content-Type": contentType } }),
-      );
+      const { buffer, contentType } = files[i];
+      const filePath = `/__share/${id}/file/${i}`;
+      const fileUrl = new URL(filePath, self.location.origin).href;
+      const headers = {
+        "Content-Type": contentType,
+        "Content-Length": String(buffer.byteLength),
+      };
+
+      await Promise.all([
+        cache.put(filePath, new Response(buffer, { headers })),
+        cache.put(fileUrl, new Response(buffer, { headers })),
+      ]);
     }
 
     // Response.redirect requires an absolute URL in Chromium / Service Workers
-    const redirectUrl = new URL(`/share-claim?local=${id}`, event.request.url).href;
+    const redirectUrl = new URL(`/share-claim?local=${id}`, self.location.origin).href;
     return Response.redirect(redirectUrl, 303);
   } catch (e) {
-    if (fallbackRequest) {
-      return fetch(fallbackRequest);
-    }
-    return Response.redirect(new URL("/transactions", event.request.url).href, 303);
+    console.error("SW handleShareTarget failed:", e);
+    return Response.redirect(new URL("/transactions", self.location.origin).href, 303);
   }
 }
 

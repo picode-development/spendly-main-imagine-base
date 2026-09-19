@@ -142,7 +142,8 @@ const ShareClaimHandler = () => {
         // Service-worker path: files were parked on-device at FULL quality.
         const claimLocal = async (id: string) => {
             const cache = await caches.open("spendly-share-stash");
-            const metaRes = await cache.match(`/__share/${id}/meta`);
+            const metaRes = await cache.match(new URL(`/__share/${id}/meta`, window.location.origin).href)
+                || await cache.match(`/__share/${id}/meta`);
             if (!metaRes) throw new Error("share-expired");
             const meta = (await metaRes.json()) as { text: string; count: number; dropped?: number };
             if (meta.dropped && meta.dropped > 0) {
@@ -151,7 +152,8 @@ const ShareClaimHandler = () => {
 
             const files: File[] = [];
             for (let i = 0; i < meta.count; i++) {
-                const fileRes = await cache.match(`/__share/${id}/file/${i}`);
+                const fileRes = await cache.match(new URL(`/__share/${id}/file/${i}`, window.location.origin).href)
+                    || await cache.match(`/__share/${id}/file/${i}`);
                 if (!fileRes) continue;
                 const blob = await fileRes.blob();
                 let type = blob.type;
@@ -297,8 +299,10 @@ const ShareClaimHandler = () => {
             try {
                 for (let i = 0; i < meta.count; i++) {
                     await cache.delete(`/__share/${id}/file/${i}`);
+                    await cache.delete(new URL(`/__share/${id}/file/${i}`, window.location.origin).href);
                 }
                 await cache.delete(`/__share/${id}/meta`);
+                await cache.delete(new URL(`/__share/${id}/meta`, window.location.origin).href);
             } catch {}
 
             queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });

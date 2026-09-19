@@ -106,19 +106,25 @@ export async function POST(req: NextRequest) {
     const text = textPieces.join(" ").slice(0, 2000);
 
     // Extract all file parts from form (media, file, files, image)
-    const rawFiles: File[] = [];
+    const isFileLike = (v: unknown): v is { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string } =>
+        v !== null && typeof v === "object" && typeof (v as { arrayBuffer?: unknown }).arrayBuffer === "function";
+
+    const candidateFiles: { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string }[] = [];
     for (const [, val] of form.entries()) {
-        if (val instanceof File && val.size > 0 && val.size <= MAX_IMAGE_BYTES) {
-            rawFiles.push(val);
+        if (isFileLike(val)) {
+            candidateFiles.push(val);
         }
     }
-    for (const f of form.getAll("media")) {
-        if (f instanceof File && f.size > 0 && f.size <= MAX_IMAGE_BYTES && !rawFiles.includes(f)) {
-            rawFiles.push(f);
+    const namedKeys = ["media", "file", "files", "image", "media[]"];
+    for (const key of namedKeys) {
+        for (const f of form.getAll(key)) {
+            if (isFileLike(f) && !candidateFiles.includes(f)) {
+                candidateFiles.push(f);
+            }
         }
     }
 
-    const images = rawFiles.slice(0, 10);
+    const images = candidateFiles.slice(0, 10);
 
     if (images.length === 0 && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);
@@ -128,7 +134,7 @@ export async function POST(req: NextRequest) {
         images.map(async (image): Promise<TransactionImage | null> => {
             try {
                 const buffer = Buffer.from(await image.arrayBuffer());
-                if (buffer.length === 0) return null;
+                if (buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES) return null;
 
                 const detectedMime = detectBufferMime(buffer);
                 let mimeType = detectedMime || image.type;

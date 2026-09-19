@@ -152,10 +152,14 @@ const app = new Hono()
         zValidator("json", z.object({
             text: z.string().max(2000).nullish(),
             images: z.array(z.string()).max(10).optional(),
+            imageUrls: z.array(z.object({
+                url: z.string(),
+                preview: z.string().optional(),
+            })).max(10).optional(),
         })),
         async (c) => {
             const auth = getAuth(c);
-            const { text } = c.req.valid("json");
+            const { text, images, imageUrls } = c.req.valid("json");
 
             if (!auth?.userId) {
                 return c.json({ error: "Unauthorized" }, 401);
@@ -164,10 +168,15 @@ const app = new Hono()
             const rawMessage = (text ?? "").trim() || "Shared content";
             const parsed = await parseMessage(auth.userId, rawMessage);
 
+            const resolvedImageUrls = imageUrls?.length
+                ? imageUrls
+                : images?.map((url) => ({ url })) ?? null;
+
             const [data] = await db.insert(pendingTransactions).values({
                 id: createId(),
                 userId: auth.userId,
                 rawMessage,
+                imageUrls: resolvedImageUrls,
                 ...(parsed ?? { date: new Date() }),
             }).returning();
 

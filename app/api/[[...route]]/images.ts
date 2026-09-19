@@ -58,11 +58,12 @@ const app = new Hono()
             const body = await c.req.parseBody();
             const file = body["file"] || body["image"] || body["media"];
 
-            if (file instanceof File) {
-                const buffer = Buffer.from(await file.arrayBuffer());
+            if (file && typeof file === "object" && typeof (file as any).arrayBuffer === "function") {
+                const buffer = Buffer.from(await (file as any).arrayBuffer());
                 base64Data = buffer.toString("base64");
-                mimeType = file.type && file.type.startsWith("image/")
-                    ? file.type
+                const fileType = (file as any).type;
+                mimeType = fileType && fileType.startsWith("image/")
+                    ? fileType
                     : "image/jpeg";
 
                 // Generate blur preview if possible

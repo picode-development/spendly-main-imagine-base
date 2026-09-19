@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { z } from "zod";
 import { Trash } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -76,8 +76,10 @@ export const TransactionForm = ({
         defaultValues: defaultValues,
     });
 
+    const lastResetValuesRef = useRef(defaultValues);
     useEffect(() => {
-        if (defaultValues) {
+        if (defaultValues && JSON.stringify(defaultValues) !== JSON.stringify(lastResetValuesRef.current)) {
+            lastResetValuesRef.current = defaultValues;
             form.reset(defaultValues);
         }
     }, [defaultValues, form]);
