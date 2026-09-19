@@ -124,7 +124,14 @@ export async function POST(req: NextRequest) {
         }
     }
 
-    const images = candidateFiles.slice(0, 10);
+    const dedupedFiles = candidateFiles.filter((file, index, all) => {
+        const key = `${(file as { name?: string }).name ?? ""}:${(file as { type?: string }).type ?? ""}:${String((file as { size?: number }).size ?? "")}`;
+        return all.findIndex((candidate) => {
+            const candidateKey = `${(candidate as { name?: string }).name ?? ""}:${(candidate as { type?: string }).type ?? ""}:${String((candidate as { size?: number }).size ?? "")}`;
+            return candidateKey === key;
+        }) === index;
+    });
+    const images = dedupedFiles.slice(0, 10);
 
     if (images.length === 0 && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);

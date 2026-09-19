@@ -236,7 +236,7 @@ async function handleShareTarget(event) {
         candidateFiles.push(val);
       }
     }
-    const namedKeys = ["media", "file", "files", "image", "media[]"];
+    const namedKeys = ["media", "file", "files", "image", "media[]", "photo", "attachment", "screenshot"];
     for (const key of namedKeys) {
       for (const f of formData.getAll(key)) {
         if (f && typeof f === "object" && typeof f.arrayBuffer === "function" && !candidateFiles.includes(f)) {
@@ -245,9 +245,14 @@ async function handleShareTarget(event) {
       }
     }
 
+    const dedupedFiles = candidateFiles.filter((file, index, all) => {
+      const key = `${file.name || ""}:${file.type || ""}:${String(file.size ?? "")}`;
+      return all.findIndex((candidate) => `${candidate.name || ""}:${candidate.type || ""}:${String(candidate.size ?? "")}` === key) === index;
+    });
+
     // Inspect files and buffer into memory — works with streaming content URIs (GPay, PhonePe, Paytm)
     const inspectedFiles = [];
-    for (const f of candidateFiles) {
+    for (const f of dedupedFiles) {
       try {
         const buffer = await f.arrayBuffer();
         if (!buffer || buffer.byteLength <= 0 || buffer.byteLength > 25 * 1024 * 1024) continue;

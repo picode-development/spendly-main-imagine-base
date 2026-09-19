@@ -29,6 +29,28 @@ const safeEqual = (a: string, b: string): boolean => {
     return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 };
 
+const normalizeImageUrls = (value: unknown): { url: string; preview?: string }[] | null => {
+    if (!Array.isArray(value)) return null;
+
+    const normalized = value.flatMap((img) => {
+        if (typeof img === "string") {
+            return img.trim() ? [{ url: img.trim() }] : [];
+        }
+
+        if (img && typeof img === "object") {
+            const maybeUrl = (img as { url?: unknown }).url;
+            if (typeof maybeUrl === "string" && maybeUrl.trim()) {
+                const preview = (img as { preview?: unknown }).preview;
+                return [{ url: maybeUrl.trim(), preview: typeof preview === "string" ? preview : undefined }];
+            }
+        }
+
+        return [];
+    });
+
+    return normalized.length ? normalized.slice(0, 5) : null;
+};
+
 const app = new Hono()
     .get(
         "/",
@@ -168,9 +190,9 @@ const app = new Hono()
             const rawMessage = (text ?? "").trim() || "Shared content";
             const parsed = await parseMessage(auth.userId, rawMessage);
 
-            const resolvedImageUrls = imageUrls?.length
-                ? imageUrls
-                : images?.map((url) => ({ url })) ?? null;
+            const resolvedImageUrls = normalizeImageUrls(imageUrls ?? images?.map((url) => ({ url })))
+                ?? normalizeImageUrls(images ?? null)
+                ?? null;
 
             const [data] = await db.insert(pendingTransactions).values({
                 id: createId(),
@@ -319,6 +341,7 @@ const app = new Hono()
                 return c.json({ error: "Unauthorized" }, 401);
             }
 
+            const normalizedImageUrls = normalizeImageUrls(values.imageUrls ?? null) ?? null;
             const id = values.clientKey
                 ? `img${values.clientKey.slice(0, 32)}`
                 : createId();
@@ -332,7 +355,7 @@ const app = new Hono()
                 accountHint: values.accountHint ?? null,
                 categoryHint: values.categoryHint ?? null,
                 note: values.note ?? null,
-                imageUrls: values.imageUrls ?? null,
+                imageUrls: normalizedImageUrls,
                 date: values.date ?? new Date(),
             }).onConflictDoUpdate({
                 target: pendingTransactions.id,
@@ -343,7 +366,7 @@ const app = new Hono()
                     accountHint: values.accountHint ?? null,
                     categoryHint: values.categoryHint ?? null,
                     note: values.note ?? null,
-                    imageUrls: values.imageUrls ?? null,
+                    imageUrls: normalizedImageUrls,
                 },
             }).returning();
 
@@ -389,68 +412,6 @@ const app = new Hono()
                 ))
                 .returning();
             return c.json({ data: data ?? null });
-        },
-    )
-
-    // Client-uploaded share (service-worker path): images are already hosted
-    // by the page; extract each and fan out one pending per image.
-    .post(
-        "/from-share",
-        clerkMiddleware(),
-        zValidator("json", z.object({
-            text: z.string().max(2000).nullish(),
-            images: z.array(z.object({
-                url: z.string().refine(isTrustedImageUrl, "Must be a hosted imgbb URL"),
-                preview: z.string().optional(),
-            })).max(25),
-        })),
-        async (c) => {
-            const auth = getAuth(c);
-            const { text, images } = c.req.valid("json");
-
-            if (!auth?.userId) {
-                return c.json({ error: "Unauthorized" }, 401);
-            }
-            if (images.length === 0 && !text?.trim()) {
-                return c.json({ error: "Nothing to read" }, 400);
-            }
-
-            let rows;
-            if (images.length > 0) {
-                const ctx = await getLlmContext(auth.userId);
-                rows = await Promise.all(images.map(async (image) => {
-                    const extracted = await llmExtractFromImage(image.url, ctx, text);
-                    const parsed = extracted ? {
-                        amount: extracted.isTransaction ? extracted.amount : null,
-                        payee: extracted.payee,
-                        accountHint: extracted.accountName ?? extracted.accountHint,
-                        categoryHint: extracted.categoryName,
-                        note: extracted.note,
-                        date: extracted.date ?? new Date(),
-                    } : (text ? await parseMessage(auth.userId!, text) : null);
-
-                    return {
-                        id: createId(),
-                        userId: auth.userId!,
-                        rawMessage: text || "Shared screenshot",
-                        imageUrls: [image],
-                        ...(parsed ?? { date: new Date() }),
-                    };
-                }));
-            } else {
-                const parsed = await parseMessage(auth.userId, text!.trim());
-                rows = [{
-                    id: createId(),
-                    userId: auth.userId,
-                    rawMessage: text!.trim(),
-                    imageUrls: null,
-                    ...(parsed ?? { date: new Date() }),
-                }];
-            }
-
-            const data = await db.insert(pendingTransactions).values(rows).returning();
-            await notifyNewPending(auth.userId);
-            return c.json({ data });
         },
     )
 
