@@ -3,6 +3,7 @@ import sharp from "sharp";
 
 import { db } from "@/db/drizzle";
 import { receiptImages, sharedStash, TransactionImage } from "@/db/schema";
+import { normalizeShareFormData } from "@/features/share-intake";
 import { createId } from "@paralleldrive/cuid2";
 
 // Android PWA share target (see app/manifest.ts). Share launches are
@@ -94,74 +95,19 @@ export async function POST(req: NextRequest) {
     // the exact one-time token; nothing is written without user review).
 
     const form = await req.formData();
-    const formEntries = Array.from(form.entries());
+    const { text, images: normalizedImages } = await normalizeShareFormData(form, 10);
 
-    const isFileLike = (v: unknown): v is { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string; size?: number } =>
-        v !== null && typeof v === "object" && typeof (v as { arrayBuffer?: unknown }).arrayBuffer === "function";
-
-    const isLikelyTextField = (name: string): boolean => {
-        const n = name.toLowerCase();
-        return (
-            !n.includes("file") &&
-            !n.includes("image") &&
-            !n.includes("media") &&
-            !n.includes("attachment") &&
-            !n.includes("screenshot") &&
-            !n.includes("photo") &&
-            !n.includes("document") &&
-            (n.includes("text") || n.includes("message") || n.includes("caption") || n.includes("title") || n.includes("body") || n.includes("description") || n.includes("content") || n === "url")
-        );
-    };
-
-    const textPieces: string[] = [];
-    for (const [key, val] of formEntries) {
-        if (typeof val !== "string") continue;
-        const trimmed = val.trim();
-        if (!trimmed) continue;
-        const keyName = key.toLowerCase();
-        const isText =
-            isLikelyTextField(keyName) ||
-            (trimmed.length > 12 && !keyName.includes("file") && !keyName.includes("image") && !keyName.includes("media") && !keyName.includes("attachment") && !keyName.includes("screenshot"));
-        if (isText && !textPieces.includes(trimmed)) {
-            textPieces.push(trimmed);
-        }
-    }
-    const text = textPieces.join(" ").slice(0, 2000);
     console.log("[share-target:route] text:", text);
+    console.log("[share-target:route] imageCount:", normalizedImages.length, "textLen:", text.length);
 
-    const candidateFiles: { arrayBuffer: () => Promise<ArrayBuffer>; type?: string; name?: string; size?: number }[] = [];
-    for (const [key, val] of formEntries) {
-        if (!isFileLike(val)) continue;
-        const file = val;
-        const fileName = (file.name || "").toLowerCase();
-        const fileType = (file.type || "").toLowerCase();
-        const isLikelyImage =
-            fileType.startsWith("image/") ||
-            /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) ||
-            ((file.size ?? 0) > 0 && !fileType && !key.toLowerCase().includes("text"));
-        if (isLikelyImage && !candidateFiles.some((existing) => existing.name === file.name && existing.type === file.type && (existing.size ?? 0) === (file.size ?? 0))) {
-            candidateFiles.push(file);
-        }
-    }
-
-    const dedupedFiles = candidateFiles.filter((file, index, all) => {
-        const key = `${(file as { name?: string }).name ?? ""}:${(file as { type?: string }).type ?? ""}:${String((file as { size?: number }).size ?? "")}`;
-        return all.findIndex((candidate) => {
-            const candidateKey = `${(candidate as { name?: string }).name ?? ""}:${(candidate as { type?: string }).type ?? ""}:${String((candidate as { size?: number }).size ?? "")}`;
-            return candidateKey === key;
-        }) === index;
-    });
-    const images = dedupedFiles.slice(0, 10);
-    console.log("[share-target:route] imageCount:", images.length, "textLen:", text.length);
-
-    if (images.length === 0 && !text) {
+    if (normalizedImages.length === 0 && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);
     }
 
     const uploaded = await Promise.all(
-        images.map(async (image): Promise<TransactionImage | null> => {
+        normalizedImages.map(async (image): Promise<TransactionImage | null> => {
             try {
-                const buffer = Buffer.from(await image.arrayBuffer());
+                const buffer = Buffer.from(image.data);
                 if (buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES) return null;
 
                 const detectedMime = detectBufferMime(buffer);
