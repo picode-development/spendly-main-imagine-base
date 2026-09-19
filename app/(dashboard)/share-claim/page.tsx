@@ -231,12 +231,13 @@ const ShareClaimHandler = () => {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ data: dataUrl, preview }),
+                            credentials: "same-origin",
                         }).then((r) => r.json()).catch(() => null);
                         if (uploadRes?.data?.url) {
                             finalHosted = { url: uploadRes.data.url, preview };
                         }
-                    } catch {
-                        // ignore fallback errors
+                    } catch (e) {
+                        console.warn("Fallback upload error:", e);
                     }
                 }
 

@@ -42,7 +42,7 @@ export const UpdatePrompt = () => {
                 const res = await fetch("/version", { cache: "no-store" });
                 if (!res.ok) return;
                 const { version } = await res.json();
-                if (!version || version === "dev") return;
+                if (!version) return;
 
                 if (initialVersion.current === null) {
                     initialVersion.current = version;

@@ -16,7 +16,7 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v3";
+const SW_VERSION = "v4";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;

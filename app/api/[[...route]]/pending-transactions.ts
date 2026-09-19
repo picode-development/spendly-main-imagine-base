@@ -147,6 +147,37 @@ const app = new Hono()
     // signed-in user's pending transactions, running extraction with their
     // account/category context.
     .post(
+        "/from-share",
+        clerkMiddleware(),
+        zValidator("json", z.object({
+            text: z.string().max(2000).nullish(),
+            images: z.array(z.string()).max(10).optional(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { text } = c.req.valid("json");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+
+            const rawMessage = (text ?? "").trim() || "Shared content";
+            const parsed = await parseMessage(auth.userId, rawMessage);
+
+            const [data] = await db.insert(pendingTransactions).values({
+                id: createId(),
+                userId: auth.userId,
+                rawMessage,
+                ...(parsed ?? { date: new Date() }),
+            }).returning();
+
+            await notifyNewPending(auth.userId);
+
+            return c.json({ data });
+        },
+    )
+
+    .post(
         "/claim-share",
         clerkMiddleware(),
         zValidator("json", z.object({

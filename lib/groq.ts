@@ -353,6 +353,7 @@ export const llmExtractFromText = (text: string, ctx: LlmContext) =>
 export const isTrustedImageUrl = (url: string): boolean =>
     url.startsWith("data:image/")
     || url.startsWith("/api/images/")
+    || url.includes("/api/images/")
     || /^https?:\/\/([a-zA-Z0-9_-]+\.)?ibb\.co(\.com)?\//.test(url);
 
 /**

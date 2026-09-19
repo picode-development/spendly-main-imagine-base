@@ -41,10 +41,21 @@ export const SwRegister = () => {
 
         const registerAndWatch = async () => {
             try {
-                const reg = await navigator.serviceWorker.register("/sw.js");
-                reg.update().catch(() => {});
+                const reg = await navigator.serviceWorker.register("/sw.js", {
+                    updateViaCache: "none",
+                });
 
-                if (reg.waiting && navigator.serviceWorker.controller) {
+                // Check for updates on register, focus, and visibility change
+                reg.update().catch(() => {});
+                const checkUpdate = () => {
+                    if (document.visibilityState === "visible") {
+                        reg.update().catch(() => {});
+                    }
+                };
+                window.addEventListener("focus", checkUpdate);
+                document.addEventListener("visibilitychange", checkUpdate);
+
+                if (reg.waiting) {
                     reg.waiting.postMessage({ type: "SKIP_WAITING" });
                     window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
                 }
@@ -55,12 +66,11 @@ export const SwRegister = () => {
                     installing.addEventListener("statechange", () => {
                         if (installing.state !== "installed") return;
                         if (navigator.serviceWorker.controller) {
-                            // An update to an already-controlled page — let the
-                            // user decide when to reload (update-prompt.tsx)
+                            // Update available — activate it immediately
+                            installing.postMessage({ type: "SKIP_WAITING" });
                             window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
                         } else {
-                            // First-ever install for this client — activate right
-                            // away, silently (see expectingSilentActivation above)
+                            // First-ever install for this client — activate silently
                             expectingSilentActivation = true;
                             installing.postMessage({ type: "SKIP_WAITING" });
                         }

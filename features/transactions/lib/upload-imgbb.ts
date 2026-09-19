@@ -63,6 +63,7 @@ function uploadToInternalEndpoint(
 
         const formData = new FormData();
         formData.append("file", file);
+        xhr.withCredentials = true;
         xhr.open("POST", "/api/images/upload");
         xhr.send(formData);
     });
