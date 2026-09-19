@@ -101,7 +101,9 @@ type FormValues = z.input<typeof formSchema>;
                             categoryId: matchOptionId(categoryOptions, prefill?.categoryName) || null,
                             payee: prefill?.payee ?? "",
                             amount: prefill?.amount ?? "",
-                            imageUrls: prefill?.imageUrls ?? null,
+                            imageUrls: Array.isArray(prefill?.imageUrls)
+                                ? prefill.imageUrls.map((img: any) => typeof img === "string" ? { url: img } : img).filter(Boolean)
+                                : null,
                             notes: prefill?.notes ?? null,
                             }}
                             onSubmit={onSubmit}

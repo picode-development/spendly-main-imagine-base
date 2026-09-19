@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { z } from "zod";
 import { Trash } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -74,6 +75,12 @@ export const TransactionForm = ({
         resolver: zodResolver(formSchema),
         defaultValues: defaultValues,
     });
+
+    useEffect(() => {
+        if (defaultValues) {
+            form.reset(defaultValues);
+        }
+    }, [defaultValues, form]);
 
     const newTransaction = useNewTransaction();
     const openTransaction = useOpenTransaction();

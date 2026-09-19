@@ -56,7 +56,6 @@ export const SwRegister = () => {
                 document.addEventListener("visibilitychange", checkUpdate);
 
                 if (reg.waiting) {
-                    reg.waiting.postMessage({ type: "SKIP_WAITING" });
                     window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
                 }
 
@@ -66,8 +65,7 @@ export const SwRegister = () => {
                     installing.addEventListener("statechange", () => {
                         if (installing.state !== "installed") return;
                         if (navigator.serviceWorker.controller) {
-                            // Update available — activate it immediately
-                            installing.postMessage({ type: "SKIP_WAITING" });
+                            // Update available — dispatch event so user is prompted with Refresh button
                             window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
                         } else {
                             // First-ever install for this client — activate silently

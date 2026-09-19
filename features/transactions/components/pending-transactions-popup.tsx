@@ -7,7 +7,7 @@ import { BellRing, ChevronDown, Image as ImageIcon, Plus, X } from "lucide-react
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn, formatCurrency, convertAmountFromMiliunits } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
 import { useClearPendingTransactions } from "@/features/transactions/api/use-clear-pending-transactions";
@@ -70,7 +70,7 @@ export const PendingTransactionsPopup = () => {
     }
 
     const onAdd = (item: (typeof pending)[number]) => {
-        const displayAmount = item.amount === null ? "" : String(convertAmountFromMiliunits(item.amount));
+        const displayAmount = item.amount === null ? "" : String(item.amount);
         newTransaction.onOpen({
             pendingId: item.id,
             prefill: {
@@ -83,7 +83,9 @@ export const PendingTransactionsPopup = () => {
                 accountName: item.accountHint ?? undefined,
                 categoryName: item.categoryHint ?? undefined,
                 // A shared payment screenshot arrives already attached
-                imageUrls: item.imageUrls ?? undefined,
+                imageUrls: Array.isArray(item.imageUrls)
+                    ? item.imageUrls.map((img: any) => typeof img === "string" ? { url: img } : img).filter(Boolean)
+                    : undefined,
             },
         });
     };
@@ -136,7 +138,7 @@ export const PendingTransactionsPopup = () => {
                         >
                             {item.amount === null
                                 ? "?"
-                                : formatCurrency(convertAmountFromMiliunits(item.amount))}
+                                : formatCurrency(item.amount)}
                         </Badge>
                         <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 truncate">

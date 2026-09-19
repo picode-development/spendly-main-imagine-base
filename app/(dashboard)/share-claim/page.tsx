@@ -157,16 +157,19 @@ const ShareClaimHandler = () => {
                 let type = blob.type;
                 if (!type || !type.startsWith("image/")) type = "image/jpeg";
                 files.push(new File([blob], `screenshot_${i + 1}.jpg`, { type }));
-                await cache.delete(`/__share/${id}/file/${i}`);
             }
-            await cache.delete(`/__share/${id}/meta`);
 
             // Text-only share → single spinner path
             if (files.length === 0) {
-                if (!meta.text) throw new Error("nothing-to-read");
+                const shareText = meta.text || params.get("text") || params.get("title") || params.get("url") || "";
+                if (!shareText.trim()) {
+                    toast.info("No share content detected.");
+                    router.replace("/transactions");
+                    return;
+                }
                 setSimple(true);
                 const res = await client.api["pending-transactions"]["from-share"].$post({
-                    json: { text: meta.text, images: [] },
+                    json: { text: shareText.trim(), images: [] },
                 });
                 if (!res.ok) {
                     const body: unknown = await res.json().catch(() => null);
@@ -175,6 +178,9 @@ const ShareClaimHandler = () => {
                         : null;
                     throw new Error(`extraction-failed${serverError ? `: ${serverError}` : ""}`);
                 }
+                try {
+                    await cache.delete(`/__share/${id}/meta`);
+                } catch {}
                 queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
                 router.replace("/transactions");
                 return;
@@ -287,6 +293,13 @@ const ShareClaimHandler = () => {
                     }
                 }),
             );
+
+            try {
+                for (let i = 0; i < meta.count; i++) {
+                    await cache.delete(`/__share/${id}/file/${i}`);
+                }
+                await cache.delete(`/__share/${id}/meta`);
+            } catch {}
 
             queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
             setPhase("done");

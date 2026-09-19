@@ -79,6 +79,7 @@ const FadeImg = ({ src, preview, alt, className }: { src: string; preview?: stri
                 key={effectiveSrc}
                 src={effectiveSrc}
                 alt={alt}
+                referrerPolicy="no-referrer"
                 onLoad={() => {
                     setLoaded(true);
                     setHasError(false);
@@ -620,6 +621,7 @@ export const ImageUpload = ({ value, onChange, disabled, max = 5 }: Props) => {
                                     key={effectiveUrl}
                                     src={effectiveUrl}
                                     alt={`Receipt ${lightboxIndex + 1}`}
+                                    referrerPolicy="no-referrer"
                                     draggable={false}
                                     onLoad={() => {
                                         setLightboxLoaded(true);

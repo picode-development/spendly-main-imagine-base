@@ -16,7 +16,7 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v4";
+const SW_VERSION = "v5";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
@@ -46,7 +46,6 @@ const CACHEABLE_API_PATHS = [
 ];
 
 self.addEventListener("install", (event) => {
-  self.skipWaiting();
   event.waitUntil(
     caches
       .open(CACHE_SHELL)
@@ -291,12 +290,16 @@ async function handleShareTarget(event) {
 
     const files = inspectedFiles.slice(0, 25);
     const dropped = inspectedFiles.length - files.length;
-    const text = ["title", "text", "url"]
-      .map((k) => formData.get(k))
-      .filter((v) => typeof v === "string" && v.trim().length > 0)
-      .join(" ")
-      .trim()
-      .slice(0, 2000);
+    const textPieces = [];
+    for (const [, val] of formData.entries()) {
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed && !textPieces.includes(trimmed)) {
+          textPieces.push(trimmed);
+        }
+      }
+    }
+    const text = textPieces.join(" ").slice(0, 2000);
 
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     const cache = await caches.open("spendly-share-stash");

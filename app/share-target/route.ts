@@ -15,7 +15,7 @@ import { createId } from "@paralleldrive/cuid2";
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 const uploadToImgBB = async (buffer: Buffer): Promise<string | null> => {
-    const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY;
+    const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY || process.env.IMGBB_API_KEY;
     if (!apiKey) return null;
     try {
         const form = new FormData();
@@ -94,11 +94,16 @@ export async function POST(req: NextRequest) {
     // the exact one-time token; nothing is written without user review).
 
     const form = await req.formData();
-    const text = [form.get("title"), form.get("text"), form.get("url")]
-        .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-        .join(" ")
-        .trim()
-        .slice(0, 2000);
+    const textPieces: string[] = [];
+    for (const [, val] of form.entries()) {
+        if (typeof val === "string") {
+            const trimmed = val.trim();
+            if (trimmed && !textPieces.includes(trimmed)) {
+                textPieces.push(trimmed);
+            }
+        }
+    }
+    const text = textPieces.join(" ").slice(0, 2000);
 
     // Extract all file parts from form (media, file, files, image)
     const rawFiles: File[] = [];
