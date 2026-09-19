@@ -9,10 +9,12 @@ import { SwRegister } from "@/components/sw-register";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
+const manifestVersion = "2026-09-19-v2";
+
 export const metadata: Metadata = {
   title: "Spendly",
   description: "A Finance Tracker To Remove Your Stress.",
-  manifest: "/manifest.webmanifest",
+  manifest: `/manifest.webmanifest?v=${manifestVersion}`,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

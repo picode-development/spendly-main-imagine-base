@@ -2,16 +2,18 @@ import type { MetadataRoute } from "next";
 
 // Installable PWA manifest. share_target lets Android's share sheet offer
 // "Spendly" for an image-backed UPI payment confirmation or receipt.
+const manifestVersion = "2026-09-19-v2";
+
 export default function manifest(): MetadataRoute.Manifest {
     return {
         name: "Spendly",
         short_name: "Spendly",
         description: "Track spending, receipts, and transfers.",
-        // Keep a stable-but-fresh app identity so Android can re-register the
-        // WebAPK when the manifest changes. Using "/" here causes stale install
-        // state issues when the app is upgraded or the share target is changed.
-        id: "spendly-pwa",
-        start_url: "/?source=pwa",
+        // Force Android to treat this as a fresh install identity when the
+        // share target or payload handling changes. Reusing the same ID causes the
+        // old installed WebAPK to keep the stale share registration.
+        id: `spendly-pwa-${manifestVersion}`,
+        start_url: `/?source=pwa&v=${manifestVersion}`,
         scope: "/",
         display: "standalone",
         display_override: ["standalone", "minimal-ui"],
