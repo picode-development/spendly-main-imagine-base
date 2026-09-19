@@ -16,7 +16,7 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v2";
+const SW_VERSION = "v3";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
@@ -46,6 +46,7 @@ const CACHEABLE_API_PATHS = [
 ];
 
 self.addEventListener("install", (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches
       .open(CACHE_SHELL)
@@ -201,18 +202,95 @@ async function networkFirstNavigation(request) {
   }
 }
 
+async function detectMimeFromBytes(file) {
+  try {
+    if (!file || typeof file.slice !== "function") return null;
+    const slice = file.slice(0, 16);
+    const buf = new Uint8Array(await slice.arrayBuffer());
+    if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+      return "image/jpeg";
+    }
+    if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+      return "image/png";
+    }
+    if (
+      buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+    ) {
+      return "image/webp";
+    }
+    if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+      return "image/gif";
+    }
+    if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
+      return "image/bmp";
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
 async function handleShareTarget(event) {
-  // Keep the untouched original for the server-side fallback path
-  const fallbackRequest = event.request.clone();
+  let fallbackRequest = null;
+  try {
+    fallbackRequest = event.request.clone();
+  } catch (e) {
+    // clone may fail on some streaming bodies
+  }
   try {
     const formData = await event.request.formData();
-    // The rotating Groq key pool + client queue handle large batches; extra
-    // images past the cap are skipped with a toast
-    const allImages = formData
-      .getAll("media")
-      .filter((f) => f && typeof f === "object" && f.type && f.type.startsWith("image/"));
-    const files = allImages.slice(0, 25);
-    const dropped = allImages.length - files.length;
+
+    // Extract all file/blob parts from form regardless of parameter name
+    const rawFiles = [];
+    for (const [, val] of formData.entries()) {
+      if (val && typeof val === "object" && (typeof val.slice === "function" || typeof val.arrayBuffer === "function")) {
+        rawFiles.push(val);
+      }
+    }
+    for (const f of formData.getAll("media")) {
+      if (f && typeof f === "object" && !rawFiles.includes(f)) {
+        rawFiles.push(f);
+      }
+    }
+
+    // Inspect files and detect image content across all UPI apps (Paytm, GPay, PhonePe, Cred, etc.)
+    const inspectedFiles = [];
+    for (const f of rawFiles) {
+      if (!f || typeof f !== "object") continue;
+      const size = f.size ?? 0;
+      if (size <= 0 || size > 25 * 1024 * 1024) continue;
+
+      const detectedMime = await detectMimeFromBytes(f);
+      const type = (f.type || "").toLowerCase();
+      const name = (f.name || "").toLowerCase();
+
+      let isImage = false;
+      let contentType = detectedMime || type;
+
+      if (detectedMime) {
+        isImage = true;
+      } else if (type.startsWith("image/")) {
+        isImage = true;
+      } else if (/\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(name)) {
+        isImage = true;
+        if (name.endsWith(".png")) contentType = "image/png";
+        else if (name.endsWith(".webp")) contentType = "image/webp";
+        else contentType = "image/jpeg";
+      } else if (size > 100) {
+        // Any binary attachment from an Android share intent (Paytm/GPay/PhonePe share button)
+        isImage = true;
+        contentType = "image/jpeg";
+      }
+
+      if (isImage) {
+        inspectedFiles.push({ file: f, contentType: contentType || "image/jpeg" });
+      }
+    }
+
+    const files = inspectedFiles.slice(0, 25);
+    const dropped = inspectedFiles.length - files.length;
     const text = ["title", "text", "url"]
       .map((k) => formData.get(k))
       .filter((v) => typeof v === "string" && v.trim().length > 0)
@@ -230,16 +308,21 @@ async function handleShareTarget(event) {
       }),
     );
     for (let i = 0; i < files.length; i++) {
+      const { file, contentType } = files[i];
       await cache.put(
         `/__share/${id}/file/${i}`,
-        new Response(files[i], { headers: { "Content-Type": files[i].type } }),
+        new Response(file, { headers: { "Content-Type": contentType } }),
       );
     }
 
-    return Response.redirect(`/share-claim?local=${id}`, 303);
+    // Response.redirect requires an absolute URL in Chromium / Service Workers
+    const redirectUrl = new URL(`/share-claim?local=${id}`, event.request.url).href;
+    return Response.redirect(redirectUrl, 303);
   } catch (e) {
-    // Anything unexpected: let the server-side stash path handle it
-    return fetch(fallbackRequest);
+    if (fallbackRequest) {
+      return fetch(fallbackRequest);
+    }
+    return Response.redirect(new URL("/transactions", event.request.url).href, 303);
   }
 }
 

@@ -1,4 +1,7 @@
 import "server-only";
+import { db } from "@/db/drizzle";
+import { receiptImages } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 /**
  * Transaction understanding (server-side only — uses GROQ_KEYS/GROQ_KEY).
@@ -97,13 +100,11 @@ const parseRetrySeconds = (errorText: string): number => {
 // "none" turns that off.
 const textProviders = (): Provider[] => [
     { base: GROQ_BASE, keys: groqKeys(), model: "openai/gpt-oss-120b", extraBody: { reasoning_effort: "low" } },
-    { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.6-27b", extraBody: { reasoning_effort: "none" } },
     { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.8-27b", extraBody: { reasoning_effort: "none" } },
 ];
 
-// Vision: Groq's two Qwen3 vision models, both across the full key pool.
+// Vision: Groq's Qwen3.8 vision model across the key pool.
 const visionProviders = (): Provider[] => [
-    { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.6-27b", extraBody: { reasoning_effort: "none" } },
     { base: GROQ_BASE, keys: groqKeys(), model: "qwen/qwen3.8-27b", extraBody: { reasoning_effort: "none" } },
 ];
 
@@ -351,15 +352,34 @@ export const llmExtractFromText = (text: string, ctx: LlmContext) =>
 // are also fine — no fetch happens, the bytes are already in the request.
 export const isTrustedImageUrl = (url: string): boolean =>
     url.startsWith("data:image/")
-    || /^https:\/\/(i\.)?ibb\.co\//.test(url);
+    || url.startsWith("/api/images/")
+    || /^https?:\/\/([a-zA-Z0-9_-]+\.)?ibb\.co(\.com)?\//.test(url);
 
 /**
  * Extract a transaction from a payment screenshot (https or data: URL).
  * UPI apps often attach a summary caption when sharing — pass it as
  * `accompanyingText` so both sources are read together.
  */
-export const llmExtractFromImage = (imageUrl: string, ctx: LlmContext, accompanyingText?: string | null) => {
-    if (!isTrustedImageUrl(imageUrl)) return Promise.resolve(null);
+export const llmExtractFromImage = async (imageUrl: string, ctx: LlmContext, accompanyingText?: string | null) => {
+    if (!isTrustedImageUrl(imageUrl)) return null;
+
+    let effectiveUrl = imageUrl;
+    // Resolve internal database-hosted image to base64 data URL so Groq vision can read it directly
+    if (imageUrl.startsWith("/api/images/")) {
+        try {
+            const id = imageUrl.replace("/api/images/", "").split("?")[0];
+            const [record] = await db
+                .select({ data: receiptImages.data, mimeType: receiptImages.mimeType })
+                .from(receiptImages)
+                .where(eq(receiptImages.id, id));
+            if (record?.data) {
+                effectiveUrl = `data:${record.mimeType || "image/jpeg"};base64,${record.data}`;
+            }
+        } catch (e) {
+            console.warn("Could not load internal image for Groq vision:", e);
+        }
+    }
+
     return chatCompletion(visionProviders(), [
         {
             type: "text",
@@ -367,7 +387,7 @@ export const llmExtractFromImage = (imageUrl: string, ctx: LlmContext, accompany
                 ? `Extract the transaction from this payment screenshot. It was shared with this accompanying text (use both sources; the screenshot wins on conflicts): "${accompanyingText.trim()}"`
                 : "Extract the transaction from this payment screenshot.",
         },
-        { type: "image_url", image_url: { url: imageUrl } },
+        { type: "image_url", image_url: { url: effectiveUrl } },
     ], ctx);
 };
 

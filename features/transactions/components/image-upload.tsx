@@ -30,10 +30,24 @@ const focusRing =
     "outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]";
 
 // WhatsApp-style blur-up: the stored tiny preview shows blurred immediately,
-// and the full-resolution image fades in over it once downloaded. Falls back
-// to a skeleton pulse for legacy images saved without a preview.
+// and the full-resolution image fades in over it once downloaded. If full image
+// fails to load (ISP block, network timeout), de-blurs preview and offers retry.
 const FadeImg = ({ src, preview, alt, className }: { src: string; preview?: string; alt: string; className?: string }) => {
     const [loaded, setLoaded] = useState(false);
+    const [hasError, setHasError] = useState(false);
+    const [retryKey, setRetryKey] = useState(0);
+
+    const handleRetry = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setHasError(false);
+        setLoaded(false);
+        setRetryKey((k) => k + 1);
+    };
+
+    const effectiveSrc = retryKey > 0
+        ? (src.includes("?") ? `${src}&retry=${retryKey}` : `${src}?retry=${retryKey}`)
+        : src;
+
     return (
         <>
             {!loaded && (preview ? (
@@ -41,15 +55,37 @@ const FadeImg = ({ src, preview, alt, className }: { src: string; preview?: stri
                     src={preview}
                     alt=""
                     aria-hidden
-                    className="absolute inset-0 size-full scale-110 object-cover blur-md"
+                    className={cn(
+                        "absolute inset-0 size-full scale-110 object-cover transition-all duration-300",
+                        hasError ? "blur-none opacity-85" : "blur-md"
+                    )}
                 />
             ) : (
                 <span className="absolute inset-0 animate-pulse bg-muted" aria-hidden />
             ))}
+
+            {hasError && (
+                <div
+                    onClick={handleRetry}
+                    className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/45 text-white p-1 cursor-pointer transition-opacity hover:bg-black/60"
+                    title="Tap to retry loading image"
+                >
+                    <RotateCcw className="size-4 mb-0.5 animate-in zoom-in-75" />
+                    <span className="text-[10px] font-medium leading-none">Retry</span>
+                </div>
+            )}
+
             <img
-                src={src}
+                key={effectiveSrc}
+                src={effectiveSrc}
                 alt={alt}
-                onLoad={() => setLoaded(true)}
+                onLoad={() => {
+                    setLoaded(true);
+                    setHasError(false);
+                }}
+                onError={() => {
+                    setHasError(true);
+                }}
                 className={cn(className, "relative transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")}
             />
         </>
@@ -61,6 +97,8 @@ export const ImageUpload = ({ value, onChange, disabled, max = 5 }: Props) => {
     const [isDragging, setIsDragging] = useState(false);
     const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
     const [lightboxLoaded, setLightboxLoaded] = useState(false);
+    const [lightboxError, setLightboxError] = useState(false);
+    const [lightboxRetryKey, setLightboxRetryKey] = useState(0);
     const [scale, setScale] = useState(1);
     const [translate, setTranslate] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
@@ -91,12 +129,24 @@ export const ImageUpload = ({ value, onChange, disabled, max = 5 }: Props) => {
         lastTranslate.current = { x: 0, y: 0 };
     }, []);
 
-    const openLightbox = (index: number) => { resetView(); setLightboxLoaded(false); setLightboxIndex(index); };
-    const closeLightbox = useCallback(() => { setLightboxIndex(null); resetView(); }, [resetView]);
+    const openLightbox = (index: number) => {
+        resetView();
+        setLightboxLoaded(false);
+        setLightboxError(false);
+        setLightboxRetryKey(0);
+        setLightboxIndex(index);
+    };
+    const closeLightbox = useCallback(() => {
+        setLightboxIndex(null);
+        setLightboxError(false);
+        resetView();
+    }, [resetView]);
     const goTo = useCallback((index: number) => {
         const clamped = Math.min(Math.max(index, 0), valueRef.current.length - 1);
         resetView();
         setLightboxLoaded(false);
+        setLightboxError(false);
+        setLightboxRetryKey(0);
         setLightboxIndex(clamped);
     }, [resetView]);
 
@@ -505,38 +555,92 @@ export const ImageUpload = ({ value, onChange, disabled, max = 5 }: Props) => {
                                         src={value[lightboxIndex].preview}
                                         alt=""
                                         aria-hidden
-                                        className="absolute inset-0 size-full object-contain blur-lg"
+                                        className={cn(
+                                            "absolute inset-0 size-full object-contain transition-all duration-300",
+                                            lightboxError ? "blur-none opacity-80" : "blur-lg"
+                                        )}
                                     />
                                     {/* WhatsApp-style loading chip over the blurred preview */}
-                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                        <div className="flex size-11 items-center justify-center rounded-full bg-black/45">
-                                            <Loader2 className="size-5 animate-spin text-white/90" />
+                                    {!lightboxError && (
+                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                            <div className="flex size-11 items-center justify-center rounded-full bg-black/45">
+                                                <Loader2 className="size-5 animate-spin text-white/90" />
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </>
                             ) : (
-                                <div
-                                    aria-hidden
-                                    className="absolute inset-x-6 inset-y-10 animate-pulse rounded-lg bg-black/5 dark:bg-white/[0.06] pointer-events-none"
-                                />
+                                !lightboxError && (
+                                    <div
+                                        aria-hidden
+                                        className="absolute inset-x-6 inset-y-10 animate-pulse rounded-lg bg-black/5 dark:bg-white/[0.06] pointer-events-none"
+                                    />
+                                )
                             )
                         )}
-                        <img
-                            src={value[lightboxIndex].url}
-                            alt={`Receipt ${lightboxIndex + 1}`}
-                            draggable={false}
-                            onLoad={() => setLightboxLoaded(true)}
-                            style={{
-                                transform: `scale(${scale}) translate(${translate.x / scale}px, ${translate.y / scale}px)`,
-                                transition: isPanning ? "none" : "transform 0.15s ease, opacity 0.3s ease",
-                                opacity: lightboxLoaded ? 1 : 0,
-                                maxWidth: "100%",
-                                maxHeight: "100%",
-                                objectFit: "contain",
-                                userSelect: "none",
-                                borderRadius: "6px",
-                            }}
-                        />
+
+                        {lightboxError && (
+                            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xs p-4 text-center text-white">
+                                <p className="text-sm font-semibold mb-1">Couldn&apos;t load full image</p>
+                                <p className="text-xs text-white/80 mb-3 max-w-xs">
+                                    Network blip or blocked domain. You can retry or open the direct link.
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setLightboxError(false);
+                                            setLightboxLoaded(false);
+                                            setLightboxRetryKey((k) => k + 1);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-xs"
+                                    >
+                                        <RotateCcw className="size-3.5" />
+                                        Retry
+                                    </button>
+                                    <a
+                                        href={value[lightboxIndex].url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-white/20 bg-white/10 hover:bg-white/20 transition-colors"
+                                    >
+                                        Direct link
+                                    </a>
+                                </div>
+                            </div>
+                        )}
+
+                        {(() => {
+                            const rawUrl = value[lightboxIndex].url;
+                            const effectiveUrl = lightboxRetryKey > 0
+                                ? (rawUrl.includes("?") ? `${rawUrl}&retry=${lightboxRetryKey}` : `${rawUrl}?retry=${lightboxRetryKey}`)
+                                : rawUrl;
+                            return (
+                                <img
+                                    key={effectiveUrl}
+                                    src={effectiveUrl}
+                                    alt={`Receipt ${lightboxIndex + 1}`}
+                                    draggable={false}
+                                    onLoad={() => {
+                                        setLightboxLoaded(true);
+                                        setLightboxError(false);
+                                    }}
+                                    onError={() => {
+                                        setLightboxError(true);
+                                    }}
+                                    style={{
+                                        transform: `scale(${scale}) translate(${translate.x / scale}px, ${translate.y / scale}px)`,
+                                        transition: isPanning ? "none" : "transform 0.15s ease, opacity 0.3s ease",
+                                        opacity: lightboxLoaded ? 1 : 0,
+                                        maxWidth: "100%",
+                                        maxHeight: "100%",
+                                        objectFit: "contain",
+                                        userSelect: "none",
+                                        borderRadius: "6px",
+                                    }}
+                                />
+                            );
+                        })()}
 
                         {value.length > 1 && (
                             <>

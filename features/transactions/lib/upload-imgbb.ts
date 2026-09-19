@@ -6,19 +6,12 @@ export type UploadProgress = {
     etaSeconds: number | null;
 };
 
-export function uploadImageWithProgress(
+function uploadToInternalEndpoint(
     file: File,
+    xhr: XMLHttpRequest,
     onProgress: (p: UploadProgress) => void,
-): { promise: Promise<string>; abort: () => void } {
-    const xhr = new XMLHttpRequest();
-
-    const promise = new Promise<string>((resolve, reject) => {
-        const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY;
-        if (!apiKey) {
-            reject(new Error("Image upload isn't configured. Contact support."));
-            return;
-        }
-
+): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
         let lastLoaded = 0;
         let lastTime = performance.now();
         let smoothedBps: number | null = null;
@@ -27,7 +20,6 @@ export function uploadImageWithProgress(
             if (!e.lengthComputable) return;
             const now = performance.now();
             const elapsedMs = now - lastTime;
-            // Skip too-frequent samples: noisy speed division + UI churn
             if (elapsedMs >= 80 || e.loaded === e.total) {
                 const instantBps = ((e.loaded - lastLoaded) / elapsedMs) * 1000;
                 if (elapsedMs > 0 && instantBps >= 0) {
@@ -51,14 +43,14 @@ export function uploadImageWithProgress(
 
         xhr.onload = () => {
             try {
-                const data = JSON.parse(xhr.responseText);
-                if (data.success) {
-                    resolve(data.data.url as string);
+                const res = JSON.parse(xhr.responseText);
+                if (res?.data?.url) {
+                    resolve(res.data.url as string);
                 } else {
-                    reject(new Error(data.error?.message || "ImgBB upload failed"));
+                    reject(new Error("Image upload failed"));
                 }
             } catch {
-                reject(new Error("ImgBB upload failed"));
+                reject(new Error("Image upload failed"));
             }
         };
         xhr.onerror = () => reject(new Error("Image upload failed. Please try again."));
@@ -70,19 +62,131 @@ export function uploadImageWithProgress(
         };
 
         const formData = new FormData();
-        formData.append("image", file);
+        formData.append("file", file);
+        xhr.open("POST", "/api/images/upload");
+        xhr.send(formData);
+    });
+}
+
+export function uploadImageWithProgress(
+    file: File,
+    onProgress: (p: UploadProgress) => void,
+): { promise: Promise<string>; abort: () => void } {
+    const xhr = new XMLHttpRequest();
+    let isAborted = false;
+
+    const normalizedFile = file.type && file.type.startsWith("image/")
+        ? file
+        : new File([file], file.name || "receipt.jpg", { type: "image/jpeg" });
+
+    const promise = new Promise<string>((resolve, reject) => {
+        const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY;
+
+        // If no ImgBB API key, upload directly to internal storage
+        if (!apiKey) {
+            uploadToInternalEndpoint(normalizedFile, xhr, onProgress)
+                .then(resolve)
+                .catch(reject);
+            return;
+        }
+
+        let lastLoaded = 0;
+        let lastTime = performance.now();
+        let smoothedBps: number | null = null;
+
+        xhr.upload.onprogress = (e) => {
+            if (!e.lengthComputable) return;
+            const now = performance.now();
+            const elapsedMs = now - lastTime;
+            if (elapsedMs >= 80 || e.loaded === e.total) {
+                const instantBps = ((e.loaded - lastLoaded) / elapsedMs) * 1000;
+                if (elapsedMs > 0 && instantBps >= 0) {
+                    smoothedBps = smoothedBps === null
+                        ? instantBps
+                        : 0.3 * instantBps + 0.7 * smoothedBps;
+                }
+                lastLoaded = e.loaded;
+                lastTime = now;
+                onProgress({
+                    loaded: e.loaded,
+                    total: e.total,
+                    percent: Math.min(99, Math.round((e.loaded / e.total) * 100)),
+                    speedBps: smoothedBps,
+                    etaSeconds: smoothedBps && smoothedBps > 0
+                        ? (e.total - e.loaded) / smoothedBps
+                        : null,
+                });
+            }
+        };
+
+        xhr.onload = () => {
+            if (isAborted) return;
+            try {
+                const data = JSON.parse(xhr.responseText);
+                if (data.success && (data.data?.url || data.data?.display_url)) {
+                    resolve((data.data.display_url || data.data.url) as string);
+                } else {
+                    // ImgBB failed (e.g. Code 103 forbidden / banned key or rate limited) ->
+                    // Seamlessly fall back to internal storage so no image is ever lost!
+                    const fallbackXhr = new XMLHttpRequest();
+                    uploadToInternalEndpoint(normalizedFile, fallbackXhr, onProgress)
+                        .then(resolve)
+                        .catch(reject);
+                }
+            } catch {
+                const fallbackXhr = new XMLHttpRequest();
+                uploadToInternalEndpoint(normalizedFile, fallbackXhr, onProgress)
+                    .then(resolve)
+                    .catch(reject);
+            }
+        };
+
+        xhr.onerror = () => {
+            if (isAborted) return;
+            const fallbackXhr = new XMLHttpRequest();
+            uploadToInternalEndpoint(normalizedFile, fallbackXhr, onProgress)
+                .then(resolve)
+                .catch(reject);
+        };
+
+        xhr.ontimeout = () => {
+            if (isAborted) return;
+            const fallbackXhr = new XMLHttpRequest();
+            uploadToInternalEndpoint(normalizedFile, fallbackXhr, onProgress)
+                .then(resolve)
+                .catch(reject);
+        };
+
+        xhr.onabort = () => {
+            isAborted = true;
+            const error = new Error("Upload cancelled");
+            error.name = "AbortError";
+            reject(error);
+        };
+
+        const formData = new FormData();
+        formData.append("image", normalizedFile);
         xhr.open("POST", `https://api.imgbb.com/1/upload?key=${apiKey}`);
         xhr.send(formData);
     });
 
-    return { promise, abort: () => xhr.abort() };
+    return {
+        promise,
+        abort: () => {
+            isAborted = true;
+            xhr.abort();
+        },
+    };
 }
 
 // Tiny blurred placeholder (WhatsApp-style blur-up): downscale to ~32px and
 // inline as a ~1KB JPEG data URL, stored alongside the full-resolution URL.
 export const makeImagePreview = (file: File, maxDim = 32): Promise<string> =>
     new Promise((resolve, reject) => {
-        const objectUrl = URL.createObjectURL(file);
+        const normalizedBlob = file.type && file.type.startsWith("image/")
+            ? file
+            : new Blob([file], { type: "image/jpeg" });
+        const objectUrl = URL.createObjectURL(normalizedBlob);
         const img = new Image();
         img.onload = () => {
             try {

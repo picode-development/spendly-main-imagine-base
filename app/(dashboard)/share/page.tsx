@@ -19,6 +19,13 @@ const ShareHandler = () => {
         if (fired.current) return;
         fired.current = true;
 
+        const token = params.get("token");
+        const local = params.get("local");
+        if (token || local) {
+            router.replace(`/share-claim?${params.toString()}`);
+            return;
+        }
+
         const message = [params.get("title"), params.get("text"), params.get("url")]
             .filter(Boolean)
             .join(" ")

@@ -154,7 +154,9 @@ const ShareClaimHandler = () => {
                 const fileRes = await cache.match(`/__share/${id}/file/${i}`);
                 if (!fileRes) continue;
                 const blob = await fileRes.blob();
-                files.push(new File([blob], "screenshot.jpg", { type: blob.type || "image/jpeg" }));
+                let type = blob.type;
+                if (!type || !type.startsWith("image/")) type = "image/jpeg";
+                files.push(new File([blob], `screenshot_${i + 1}.jpg`, { type }));
                 await cache.delete(`/__share/${id}/file/${i}`);
             }
             await cache.delete(`/__share/${id}/meta`);
@@ -219,7 +221,26 @@ const ShareClaimHandler = () => {
                 // Local read failed but upload landed — one immediate retry
                 if (!extracted && hosted) extracted = await extractFrom(hosted.url);
 
-                if (!extracted && !hosted) {
+                // Fallback image hosting via internal endpoint if external upload failed
+                let finalHosted = hosted;
+                if (!finalHosted) {
+                    try {
+                        const dataUrl = await toAiDataUrl(file);
+                        const preview = await makeImagePreview(file).catch(() => undefined);
+                        const uploadRes = await fetch("/api/images/upload", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ data: dataUrl, preview }),
+                        }).then((r) => r.json()).catch(() => null);
+                        if (uploadRes?.data?.url) {
+                            finalHosted = { url: uploadRes.data.url, preview };
+                        }
+                    } catch {
+                        // ignore fallback errors
+                    }
+                }
+
+                if (!extracted && !finalHosted) {
                     updateItem(index, { status: "error" });
                     return;
                 }
@@ -233,7 +254,7 @@ const ShareClaimHandler = () => {
                         categoryHint: extracted?.categoryName ?? null,
                         note: extracted?.note ?? null,
                         date: extracted?.date ? new Date(extracted.date) : undefined,
-                        imageUrls: hosted ? [hosted] : null,
+                        imageUrls: finalHosted ? [finalHosted] : null,
                         clientKey,
                     },
                 });

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 
 import { db } from "@/db/drizzle";
-import { sharedStash, TransactionImage } from "@/db/schema";
+import { receiptImages, sharedStash, TransactionImage } from "@/db/schema";
 import { createId } from "@paralleldrive/cuid2";
 
 // Android PWA share target (see app/manifest.ts). Share launches are
@@ -12,7 +12,7 @@ import { createId } from "@paralleldrive/cuid2";
 // /share-claim page (a GET, where cookies flow), which claims the stash
 // into the user's pending transactions.
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 const uploadToImgBB = async (buffer: Buffer): Promise<string | null> => {
     const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY;
@@ -26,14 +26,29 @@ const uploadToImgBB = async (buffer: Buffer): Promise<string | null> => {
         });
         const data = await res.json();
         if (!data?.success) {
-            console.error("Share-target ImgBB upload failed:", data?.error);
+            console.warn("Share-target ImgBB upload failed:", data?.error?.message || data?.error);
             return null;
         }
-        return data.data.url as string;
+        return (data.data?.display_url || data.data?.url) as string;
     } catch (e) {
-        console.error("Share-target ImgBB upload failed:", e);
+        console.warn("Share-target ImgBB upload error:", e);
         return null;
     }
+};
+
+const saveImageReliably = async (buffer: Buffer, mimeType: string): Promise<string> => {
+    // Try ImgBB if configured
+    const imgbbUrl = await uploadToImgBB(buffer);
+    if (imgbbUrl) return imgbbUrl;
+
+    // Fall back to database storage so no image is ever dropped
+    const id = createId();
+    await db.insert(receiptImages).values({
+        id,
+        mimeType: mimeType || "image/jpeg",
+        data: buffer.toString("base64"),
+    });
+    return `/api/images/${id}`;
 };
 
 const makeBlurPreview = async (buffer: Buffer): Promise<string | undefined> => {
@@ -46,6 +61,29 @@ const makeBlurPreview = async (buffer: Buffer): Promise<string | undefined> => {
     } catch {
         return undefined;
     }
+};
+
+const detectBufferMime = (buffer: Buffer): string | null => {
+    if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+        return "image/jpeg";
+    }
+    if (buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+        return "image/png";
+    }
+    if (
+        buffer.length >= 12 &&
+        buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+        buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+    ) {
+        return "image/webp";
+    }
+    if (buffer.length >= 3 && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+        return "image/gif";
+    }
+    if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
+        return "image/bmp";
+    }
+    return null;
 };
 
 export async function POST(req: NextRequest) {
@@ -61,13 +99,21 @@ export async function POST(req: NextRequest) {
         .join(" ")
         .trim()
         .slice(0, 2000);
-    // Bulk shares supported: each screenshot becomes its own detected
-    // transaction at claim time
-    const images = form
-        .getAll("media")
-        .filter((f): f is File =>
-            f instanceof File && f.type.startsWith("image/") && f.size <= MAX_IMAGE_BYTES)
-        .slice(0, 10);
+
+    // Extract all file parts from form (media, file, files, image)
+    const rawFiles: File[] = [];
+    for (const [, val] of form.entries()) {
+        if (val instanceof File && val.size > 0 && val.size <= MAX_IMAGE_BYTES) {
+            rawFiles.push(val);
+        }
+    }
+    for (const f of form.getAll("media")) {
+        if (f instanceof File && f.size > 0 && f.size <= MAX_IMAGE_BYTES && !rawFiles.includes(f)) {
+            rawFiles.push(f);
+        }
+    }
+
+    const images = rawFiles.slice(0, 10);
 
     if (images.length === 0 && !text) {
         return NextResponse.redirect(new URL("/transactions", req.url), 303);
@@ -75,12 +121,28 @@ export async function POST(req: NextRequest) {
 
     const uploaded = await Promise.all(
         images.map(async (image): Promise<TransactionImage | null> => {
-            const buffer = Buffer.from(await image.arrayBuffer());
-            const [hostedUrl, preview] = await Promise.all([
-                uploadToImgBB(buffer),
-                makeBlurPreview(buffer),
-            ]);
-            return hostedUrl ? { url: hostedUrl, preview } : null;
+            try {
+                const buffer = Buffer.from(await image.arrayBuffer());
+                if (buffer.length === 0) return null;
+
+                const detectedMime = detectBufferMime(buffer);
+                let mimeType = detectedMime || image.type;
+                if (!mimeType || !mimeType.startsWith("image/")) {
+                    const name = (image.name || "").toLowerCase();
+                    if (name.endsWith(".png")) mimeType = "image/png";
+                    else if (name.endsWith(".webp")) mimeType = "image/webp";
+                    else mimeType = "image/jpeg";
+                }
+
+                const [hostedUrl, preview] = await Promise.all([
+                    saveImageReliably(buffer, mimeType),
+                    makeBlurPreview(buffer),
+                ]);
+                return hostedUrl ? { url: hostedUrl, preview } : null;
+            } catch (err) {
+                console.error("Failed to process shared image:", err);
+                return null;
+            }
         }),
     );
     const imageUrls = uploaded.filter((u): u is TransactionImage => u !== null);

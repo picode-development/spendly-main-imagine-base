@@ -1,8 +1,9 @@
 import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
-import { WidgetInstanceConfig, WidgetSummary } from "../config";
+import { configLabel, WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR } from "../format";
-import { areaChartSvg, barChartSvg, CHART_EXPENSE, CHART_INCOME, lineChartSvg } from "./charts";
+import { areaChartSvg, barChartSvg, CHART_EXPENSE, CHART_INCOME, lineChartSvg, weekSparkSvg } from "./charts";
+import { lucideSvg } from "./icons";
 import { chartCardStyle, getTheme, WidgetMode } from "./theme";
 import { WidgetShell } from "./WidgetShell";
 
@@ -30,6 +31,73 @@ const LegendDot = ({ color, label, labelColor }: { color: string; label: string;
 export const ChartWidget = ({ summary, baseUrl, config, width = 320, height = 150, mode = "dark", density = 1, updateUri }: Props) => {
     const C = getTheme(mode);
     const style = config?.style ?? "bar";
+
+    // Compact "This week card" style: label + %change + amount on the left,
+    // a single-series sparkline on the right — one unified card instead of
+    // the other styles' header-row-then-full-width-chart stack. Colored by
+    // whether spending is UP or DOWN vs. last period (same good=green/
+    // bad=red semantics as the dashboard's DataCard "Spent" tile, TINT.danger
+    // in SummaryWidget — an increase in spend is bad regardless of its sign).
+    if (style === "spark") {
+        const padding = 14;
+        const s = summary?.scoped;
+        const amount = s?.expenses ?? summary?.monthExpenses ?? 0;
+        const change = s?.expensesChange ?? 0;
+        const roundedChange = Math.round(Math.abs(change));
+        // Same neutral zero-state as the dashboard's DataCard "±0% vs last" —
+        // an unchanged week is neither an improvement nor a regression, so it
+        // gets neither the green "good" nor the red "bad" color or arrow.
+        const isFlat = roundedChange === 0;
+        const isSpendUp = change > 0;
+        const trendColor = isFlat ? C.label : isSpendUp ? C.expense : C.income;
+        const label = configLabel(config ?? null).replace(/^Last 7 days/, "This week");
+
+        if (!summary) {
+            return (
+                <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
+                    <FlexWidget style={{ flex: 1, width: "match_parent", justifyContent: "center" }}>
+                        <TextWidget text="Open the app to refresh" style={{ fontSize: 12, color: C.label }} />
+                    </FlexWidget>
+                </WidgetShell>
+            );
+        }
+
+        const innerW = width - padding * 2;
+        const innerH = height - padding * 2;
+        const leftW = Math.round(innerW * 0.44);
+        const gap = 10;
+        const sparkW = innerW - leftW - gap;
+        const sparkH = innerH;
+        const chartFits = sparkW >= 50 && sparkH >= 30;
+
+        return (
+            <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={baseUrl} padding={padding} updateUri={updateUri}>
+                <FlexWidget style={{ flex: 1, width: "match_parent", flexDirection: "row", alignItems: "center" }}>
+                    <FlexWidget style={{ width: leftW, flexDirection: "column", justifyContent: "center" }}>
+                        <FlexWidget style={{ flexDirection: "row", alignItems: "center" }}>
+                            <TextWidget text={label} truncate="END" maxLines={1} style={{ fontSize: 12, color: C.label }} />
+                            <FlexWidget style={{ flexDirection: "row", alignItems: "center", marginLeft: 6 }}>
+                                <TextWidget text={isFlat ? "±0%" : `${roundedChange}%`} style={{ fontSize: 14, fontWeight: "bold", color: trendColor, marginRight: isFlat ? 0 : 2 }} />
+                                {!isFlat && (
+                                    <SvgWidget svg={lucideSvg(isSpendUp ? "arrowUp" : "arrowDown", trendColor)} style={{ height: 14, width: 14 }} />
+                                )}
+                            </FlexWidget>
+                        </FlexWidget>
+                        <TextWidget text={formatINR(amount)} truncate="END" maxLines={1} style={{ fontSize: 30, fontWeight: "bold", color: C.value, marginTop: 8 }} />
+                    </FlexWidget>
+                    {chartFits && (
+                        <FlexWidget style={{ width: sparkW, height: sparkH, marginLeft: gap }}>
+                            <SvgWidget
+                                svg={weekSparkSvg(summary.days, { w: sparkW, h: sparkH, density }, trendColor)}
+                                style={{ width: sparkW, height: sparkH }}
+                            />
+                        </FlexWidget>
+                    )}
+                </FlexWidget>
+            </WidgetShell>
+        );
+    }
+
     const buildSvg = style === "line" ? lineChartSvg : style === "area" ? areaChartSvg : barChartSvg;
     const padding = 14;
     const headerHeight = 22;

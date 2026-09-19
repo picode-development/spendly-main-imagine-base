@@ -37,6 +37,11 @@ yarn-error.log*
 #.env
 
 # vercel
+
+# local env files
+#.env
+
+# vercel
 .vercel
 
 # typescript
@@ -46,3 +51,8 @@ next-env.d.ts
 # clerk configuration (can include secrets)
 /.clerk/
 .gstack/
+
+# scratch scripts and reports
+temp_*.js
+generate_mom_dad_report.js
+*.pdf

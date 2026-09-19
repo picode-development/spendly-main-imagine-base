@@ -264,7 +264,7 @@ const app = new Hono()
             note: z.string().max(500).nullish(),
             date: z.coerce.date().nullish(),
             imageUrls: z.array(z.object({
-                url: z.string().url(),
+                url: z.string().refine(isTrustedImageUrl, "Must be a trusted image URL"),
                 preview: z.string().optional(),
             })).max(5).nullish(),
             // Content hash of the screenshot — makes inserts idempotent when
@@ -294,10 +294,19 @@ const app = new Hono()
                 note: values.note ?? null,
                 imageUrls: values.imageUrls ?? null,
                 date: values.date ?? new Date(),
-            }).onConflictDoNothing().returning();
+            }).onConflictDoUpdate({
+                target: pendingTransactions.id,
+                set: {
+                    rawMessage: values.rawMessage,
+                    amount: values.amount ?? null,
+                    payee: values.payee ?? null,
+                    accountHint: values.accountHint ?? null,
+                    categoryHint: values.categoryHint ?? null,
+                    note: values.note ?? null,
+                    imageUrls: values.imageUrls ?? null,
+                },
+            }).returning();
 
-            // Conflict = this exact screenshot is already pending — a
-            // re-delivered share, not a new transaction
             if (data) await notifyNewPending(auth.userId);
 
             return c.json({ data: data ?? null });

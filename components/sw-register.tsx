@@ -42,8 +42,10 @@ export const SwRegister = () => {
         const registerAndWatch = async () => {
             try {
                 const reg = await navigator.serviceWorker.register("/sw.js");
+                reg.update().catch(() => {});
 
                 if (reg.waiting && navigator.serviceWorker.controller) {
+                    reg.waiting.postMessage({ type: "SKIP_WAITING" });
                     window.dispatchEvent(new CustomEvent("sw-update-available", { detail: reg }));
                 }
 

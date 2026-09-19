@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { format } from "date-fns";
-import { BellRing, ChevronDown, Plus, X } from "lucide-react";
+import { BellRing, ChevronDown, Image as ImageIcon, Plus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, convertAmountFromMiliunits } from "@/lib/utils";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
 import { useClearPendingTransactions } from "@/features/transactions/api/use-clear-pending-transactions";
@@ -70,12 +70,13 @@ export const PendingTransactionsPopup = () => {
     }
 
     const onAdd = (item: (typeof pending)[number]) => {
+        const displayAmount = item.amount === null ? "" : String(convertAmountFromMiliunits(item.amount));
         newTransaction.onOpen({
             pendingId: item.id,
             prefill: {
                 date: new Date(item.date),
                 payee: item.payee ?? "",
-                amount: item.amount === null ? "" : String(item.amount),
+                amount: displayAmount,
                 // Prefer the LLM's clean one-liner; fall back to the account hint
                 notes: item.note ?? item.accountHint ?? undefined,
                 // LLM-matched names resolve to the right account/category ids
@@ -133,12 +134,25 @@ export const PendingTransactionsPopup = () => {
                                 item.amount === null && "bg-muted text-muted-foreground",
                             )}
                         >
-                            {item.amount === null ? "?" : formatCurrency(item.amount)}
+                            {item.amount === null
+                                ? "?"
+                                : formatCurrency(convertAmountFromMiliunits(item.amount))}
                         </Badge>
                         <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm">
-                                {item.payee ?? item.rawMessage.slice(0, 40)}
-                            </p>
+                            <div className="flex items-center gap-1.5 truncate">
+                                <p className="truncate text-sm font-medium">
+                                    {item.payee ?? item.rawMessage.slice(0, 40)}
+                                </p>
+                                {item.imageUrls && item.imageUrls.length > 0 && (
+                                    <span
+                                        className="shrink-0 flex items-center gap-0.5 rounded bg-primary/10 px-1 py-0.2 text-[10px] font-medium text-primary"
+                                        title={`${item.imageUrls.length} receipt attached`}
+                                    >
+                                        <ImageIcon className="size-2.5" />
+                                        <span>Receipt</span>
+                                    </span>
+                                )}
+                            </div>
                             <p className="truncate text-xs text-muted-foreground">
                                 {format(new Date(item.date), "dd MMM")}
                                 {item.accountHint && <> · {item.accountHint}</>}

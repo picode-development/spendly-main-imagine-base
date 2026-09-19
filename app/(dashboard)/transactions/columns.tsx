@@ -3,7 +3,7 @@
 import { InferResponseType } from "hono"
 import { Button } from "@/components/ui/button"
 import { ColumnDef } from "@tanstack/react-table"
-import { ArrowUpDown } from "lucide-react"
+import { ArrowUpDown, Image as ImageIcon } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { client } from "@/lib/hono"
 import { Actions } from "./actions"
@@ -105,7 +105,24 @@ export type ResponseType = InferResponseType<typeof client.api.transactions.$get
         </Button>
       )
     },
-    
+    cell: ({ row }) => {
+      const payee = row.getValue("payee") as string;
+      const images = (row.original as { imageUrls?: { url: string; preview?: string }[] }).imageUrls;
+      return (
+        <div className="flex items-center gap-1.5">
+          <span>{payee}</span>
+          {images && images.length > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary"
+              title={`${images.length} receipt${images.length > 1 ? "s" : ""} attached`}
+            >
+              <ImageIcon className="size-2.5" />
+              <span>{images.length > 1 ? images.length : ""}</span>
+            </span>
+          )}
+        </div>
+      );
+    }
   },
 
   {

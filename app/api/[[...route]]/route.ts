@@ -9,6 +9,7 @@ import pendingTransactions from "./pending-transactions";
 import smsRules from "./sms-rules";
 import widget from "./widget";
 import push from "./push";
+import images from "./images";
 
 
 
@@ -33,6 +34,7 @@ const routes = app
   .route("/sms-rules", smsRules)
   .route("/widget", widget)
   .route("/push", push)
+  .route("/images", images)
 
 export const GET = handle(app);
 export const POST = handle(app);

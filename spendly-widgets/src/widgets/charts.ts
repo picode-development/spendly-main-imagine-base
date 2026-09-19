@@ -195,6 +195,51 @@ export const areaChartSvg = (days: WidgetSummary["days"], dims: Dims) => {
     );
 };
 
+// Single-series compact sparkline for ChartWidget's "spark" style — no axis
+// labels (there's no room next to the amount text), padded a bit more than
+// the labeled charts since there's no baseline text to anchor against.
+const sparkLayout = ({ w, h, density = 1 }: Dims) => {
+    const W = Math.round(w * density);
+    const H = Math.round(h * density);
+    const pad = Math.round(H * 0.15);
+    return { W, H, TOP: pad, BOTTOM: H - pad, d: density };
+};
+
+// Scaled against this series' own min/max (not a shared axis with a second
+// series like seriesPoints above) — a single line has nothing to share a
+// scale with, and a self-scaled range makes the week's actual shape visible
+// even when every day's spend is small.
+const sparkPoints = (days: WidgetSummary["days"], dims: Dims): Point[] => {
+    const { W, TOP, BOTTOM } = sparkLayout(dims);
+    const vals = days.map((day) => day.expenses);
+    const max = Math.max(...vals, 1);
+    const min = Math.min(...vals, 0);
+    const range = Math.max(max - min, 1);
+    const slot = W / days.length;
+    return days.map((day, i) => ({
+        x: slot * i + slot / 2,
+        y: BOTTOM - ((day.expenses - min) / range) * (BOTTOM - TOP),
+    }));
+};
+
+export const weekSparkSvg = (days: WidgetSummary["days"], dims: Dims, color: string) => {
+    if (days.length === 0) return wrap("", dims);
+    const { BOTTOM, d } = sparkLayout(dims);
+    const pts = sparkPoints(days, dims);
+    const line = smoothPath(pts);
+    const area = `${line} L${pts[pts.length - 1].x.toFixed(1)} ${BOTTOM} L${pts[0].x.toFixed(1)} ${BOTTOM} Z`;
+    const gradientId = `sparkFill_${color.replace("#", "")}`;
+    return wrap(
+        `<defs><linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">` +
+        `<stop offset="2%" stop-color="${color}" stop-opacity="0.55"/>` +
+        `<stop offset="98%" stop-color="${color}" stop-opacity="0"/>` +
+        `</linearGradient></defs>` +
+        `<path d="${area}" fill="url(#${gradientId})"/>` +
+        `<path d="${line}" fill="none" stroke="${color}" stroke-width="${(2.5 * d).toFixed(1)}" stroke-linecap="round"/>`,
+        dims,
+    );
+};
+
 // pie-variant.tsx: a true donut — ONE ring split into arc segments sized
 // by each category's SHARE OF THE TOTAL (not per-category rings like
 // radialSvg below). innerRadius/outerRadius ratio matches pie-variant.tsx

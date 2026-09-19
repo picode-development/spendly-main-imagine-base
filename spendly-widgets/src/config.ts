@@ -24,6 +24,7 @@ export const WIDGET_STYLES: Record<string, { key: string; label: string }[]> = {
         { key: "bar", label: "Bar chart" },
         { key: "area", label: "Area chart" },
         { key: "line", label: "Line chart" },
+        { key: "spark", label: "This week card" },
     ],
     SpendlyCategories: [
         { key: "radial", label: "Radial rings" },
@@ -88,8 +89,8 @@ export type WidgetInstanceConfig = {
     sort?: "date" | "amount";
     /** UI style key from WIDGET_STYLES for this widget type */
     style?: string;
-    /** Card background: site gradient, soft-blur gradient, translucent gradient, or glass */
-    background?: "gradient" | "blurGradient" | "translucentGradient" | "glass";
+    /** Card background: site gradient, soft-blur gradient, translucent gradient, glass, or a plain solid card */
+    background?: "gradient" | "blurGradient" | "translucentGradient" | "glass" | "solid";
 };
 
 export const BACKGROUND_OPTIONS = [
@@ -97,6 +98,7 @@ export const BACKGROUND_OPTIONS = [
     { value: "blurGradient", label: "Blurred gradient" },
     { value: "translucentGradient", label: "Translucent gradient" },
     { value: "glass", label: "Translucent glass" },
+    { value: "solid", label: "Solid card" },
 ] as const;
 
 export const DEFAULT_INSTANCE_CONFIG: WidgetInstanceConfig = { scope: "week" };

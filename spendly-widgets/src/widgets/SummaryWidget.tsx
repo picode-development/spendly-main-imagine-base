@@ -2,7 +2,7 @@ import React from "react";
 import { FlexWidget, SvgWidget, TextWidget } from "react-native-android-widget";
 import { configLabel, DEFAULT_BASE_URL, MetricKey, WidgetInstanceConfig, WidgetSummary } from "../config";
 import { formatINR, formatTime } from "../format";
-import { areaChartSvg } from "./charts";
+import { weekSparkSvg } from "./charts";
 import { lucideSvg, LucideIconName } from "./icons";
 import { chartCardStyle, getTheme, HexColor, neutralCardText, WidgetMode, WidgetTheme } from "./theme";
 import { WidgetShell } from "./WidgetShell";
@@ -237,6 +237,15 @@ export const SummaryWidget = ({
             mode,
             density,
         };
+        // Single-series spend trend, colored the same good=green/bad=red as
+        // the Spent tile's own change badge above it (including its neutral
+        // ±0% case) — not a dual income/expense chart, so a single quiet day
+        // next to a big one-off expense doesn't read as a jarring unlabeled
+        // spike.
+        const spentChange = s?.expensesChange ?? 0;
+        const chartColor = Math.round(Math.abs(spentChange)) === 0
+            ? neutralCardText(mode).label
+            : spentChange > 0 ? TINT.danger : TINT.success;
         return (
             <WidgetShell width={width} height={height} mode={mode} density={density} background={config?.background} clickUri={DEFAULT_BASE_URL} padding={10} updateUri={updateUri}>
                 {header}
@@ -297,7 +306,7 @@ export const SummaryWidget = ({
                 {showMiniChart && (
                     <FlexWidget style={{ height: miniChartH, width: "match_parent", marginTop: 8, padding: 8, ...chartCardStyle(mode, 14) }}>
                         <SvgWidget
-                            svg={areaChartSvg(summary.days, { ...chartDims, w: chartDims.w - 16, h: miniChartH - 16 })}
+                            svg={weekSparkSvg(summary.days, { w: chartDims.w - 16, h: miniChartH - 16, density }, chartColor)}
                             style={{ width: chartDims.w - 16, height: miniChartH - 16 }}
                         />
                     </FlexWidget>

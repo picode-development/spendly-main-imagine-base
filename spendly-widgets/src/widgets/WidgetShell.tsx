@@ -68,9 +68,9 @@ export const WidgetShell = ({
 
     // On any translucent/glass/blurred background, text needs its own
     // opaque-enough surface behind it — the shell alone can't guarantee
-    // legibility over an arbitrary wallpaper. Solid "gradient" doesn't
-    // need this since it's fully opaque already.
-    const needsScrim = background !== "gradient";
+    // legibility over an arbitrary wallpaper. "gradient" and "solid" don't
+    // need this since they're fully opaque already.
+    const needsScrim = background !== "gradient" && background !== "solid";
     const content = needsScrim ? (
         <FlexWidget
             style={{

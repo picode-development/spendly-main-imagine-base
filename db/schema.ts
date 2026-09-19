@@ -111,6 +111,14 @@ export const sharedStash = pgTable("shared_stash", {
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
+export const receiptImages = pgTable("receipt_images", {
+    id: text("id").primaryKey(),
+    userId: text("user_id"),
+    mimeType: text("mime_type").notNull().default("image/jpeg"),
+    data: text("data").notNull(),       // base64 image data
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+});
+
 // Pairing tokens for the Spendly Widgets companion app (Settings → Widgets).
 // The token is shown once as a pairing code; the app sends it on every
 // /api/widget/summary call. One row per user — regenerating replaces it.

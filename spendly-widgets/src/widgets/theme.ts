@@ -84,7 +84,7 @@ export const themedPair = <T,>(render: (mode: WidgetMode) => T): { light: T; dar
 // Kept for code that doesn't vary by mode (defaults to dark)
 export const WIDGET_COLORS = DARK;
 
-export type BackgroundStyle = "gradient" | "blurGradient" | "translucentGradient" | "glass";
+export type BackgroundStyle = "gradient" | "blurGradient" | "translucentGradient" | "glass" | "solid";
 
 // Alpha-blend a hex color toward transparent — 0 = fully transparent,
 // 1 = fully opaque. Produces an 8-digit #RRGGBBAA the library's
@@ -110,6 +110,17 @@ export const nativeBackgroundStyle = (
     const t = getTheme(mode);
     const borderRadius = radius;
 
+    if (style === "solid") {
+        // A plain opaque neutral card — no gradient, no translucency. Matches
+        // shadcn's flat `bg-card` (dark ≈ #0c1220, light = pure white), the
+        // look a single-metric hero card (e.g. the Chart widget's "This week
+        // card" style) wants when it's meant to read as a calm dashboard
+        // card rather than a colorful site-gradient tile.
+        return {
+            backgroundColor: mode === "dark" ? ("#0f172a" as HexColor) : ("#ffffff" as HexColor),
+            borderRadius,
+        } as const;
+    }
     if (style === "glass") {
         const tint = mode === "dark" ? ("#0f172a" as HexColor) : ("#f8fafc" as HexColor);
         const line = mode === "dark" ? ("#ffffff" as HexColor) : ("#1e3a8a" as HexColor);
