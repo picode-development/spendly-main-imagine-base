@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { BellRing, ChevronDown, Image as ImageIcon, Plus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, convertAmountFromMiliunits } from "@/lib/utils";
 import { useGetPendingTransactions } from "@/features/transactions/api/use-get-pending-transactions";
 import { useDeletePendingTransaction } from "@/features/transactions/api/use-delete-pending-transaction";
 import { useClearPendingTransactions } from "@/features/transactions/api/use-clear-pending-transactions";
@@ -28,6 +28,16 @@ export const PendingTransactionsPopup = () => {
     const clearAll = useClearPendingTransactions();
     const newTransaction = useNewTransaction();
     const setPopupExpanded = usePendingPopup((s) => s.setExpanded);
+
+    const prevCountRef = useRef(pending?.length ?? 0);
+    useEffect(() => {
+        const currentCount = pending?.length ?? 0;
+        if (currentCount > prevCountRef.current) {
+            // New transaction detected! Auto-expand so user sees it first
+            setCollapsed(false);
+        }
+        prevCountRef.current = currentCount;
+    }, [pending?.length]);
 
     // Step aside while any sheet is open — the popup must never cover a form
     const anySheetOpen = [
@@ -70,7 +80,7 @@ export const PendingTransactionsPopup = () => {
     }
 
     const onAdd = (item: (typeof pending)[number]) => {
-        const displayAmount = item.amount === null ? "" : String(item.amount);
+        const displayAmount = item.amount === null ? "" : String(convertAmountFromMiliunits(item.amount));
         newTransaction.onOpen({
             pendingId: item.id,
             prefill: {
@@ -127,7 +137,8 @@ export const PendingTransactionsPopup = () => {
                 {pending.map((item) => (
                     <li
                         key={item.id}
-                        className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-accent/50"
+                        onClick={() => onAdd(item)}
+                        className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-accent/50 cursor-pointer"
                     >
                         <Badge
                             variant={item.amount !== null && item.amount < 0 ? "destructive" : "primary"}
@@ -138,7 +149,7 @@ export const PendingTransactionsPopup = () => {
                         >
                             {item.amount === null
                                 ? "?"
-                                : formatCurrency(item.amount)}
+                                : formatCurrency(convertAmountFromMiliunits(item.amount))}
                         </Badge>
                         <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 truncate">
@@ -163,14 +174,20 @@ export const PendingTransactionsPopup = () => {
                         <Button
                             size="sm"
                             className="h-7 px-2.5"
-                            onClick={() => onAdd(item)}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onAdd(item);
+                            }}
                         >
                             <Plus className="size-3.5 mr-1" />
                             Add
                         </Button>
                         <button
                             type="button"
-                            onClick={() => deletePending.mutate({ id: item.id })}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                deletePending.mutate({ id: item.id });
+                            }}
                             aria-label="Dismiss"
                             className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
                         >

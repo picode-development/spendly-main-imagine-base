@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 // Installable PWA manifest. share_target lets Android's share sheet offer
 // "Spendly" for an image-backed UPI payment confirmation or receipt.
-const manifestVersion = "2026-09-19-v2";
+const manifestVersion = "2026-09-21-v3";
 
 export default function manifest(): MetadataRoute.Manifest {
     return {

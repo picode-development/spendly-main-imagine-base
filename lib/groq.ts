@@ -1,4 +1,5 @@
 import "server-only";
+import sharp from "sharp";
 import { db } from "@/db/drizzle";
 import { receiptImages } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -356,6 +357,29 @@ export const isTrustedImageUrl = (url: string): boolean =>
     || url.includes("/api/images/")
     || /^https?:\/\/([a-zA-Z0-9_-]+\.)?(ibb\.co|imgbb\.com)\//.test(url);
 
+const optimizeImageForVision = async (buffer: Buffer): Promise<string | null> => {
+    try {
+        const metadata = await sharp(buffer).metadata();
+        const width = metadata.width || 1000;
+        const height = metadata.height || 1000;
+
+        const maxDim = 1280;
+        const scale = Math.min(1, maxDim / Math.max(width, height));
+        const targetWidth = Math.max(32, Math.round(width * scale));
+        const targetHeight = Math.max(32, Math.round(height * scale));
+
+        const optimized = await sharp(buffer)
+            .resize(targetWidth, targetHeight, { fit: "inside" })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+
+        return `data:image/jpeg;base64,${optimized.toString("base64")}`;
+    } catch (e) {
+        console.warn("[groq:vision] Could not optimize image buffer:", e);
+        return null;
+    }
+};
+
 /**
  * Extract a transaction from a payment screenshot (https or data: URL).
  * UPI apps often attach a summary caption when sharing — pass it as
@@ -365,7 +389,7 @@ export const llmExtractFromImage = async (imageUrl: string, ctx: LlmContext, acc
     if (!isTrustedImageUrl(imageUrl)) return null;
 
     let effectiveUrl = imageUrl;
-    // Resolve internal database-hosted image to base64 data URL so Groq vision can read it directly
+    // Resolve internal database-hosted image to optimized base64 data URL so Groq vision can read it directly
     if (imageUrl.startsWith("/api/images/")) {
         try {
             const id = imageUrl.replace("/api/images/", "").split("?")[0];
@@ -374,10 +398,27 @@ export const llmExtractFromImage = async (imageUrl: string, ctx: LlmContext, acc
                 .from(receiptImages)
                 .where(eq(receiptImages.id, id));
             if (record?.data) {
-                effectiveUrl = `data:${record.mimeType || "image/jpeg"};base64,${record.data}`;
+                const buffer = Buffer.from(record.data, "base64");
+                const optimized = await optimizeImageForVision(buffer);
+                if (optimized) {
+                    effectiveUrl = optimized;
+                } else {
+                    effectiveUrl = `data:${record.mimeType || "image/jpeg"};base64,${record.data}`;
+                }
             }
         } catch (e) {
-            console.warn("Could not load internal image for Groq vision:", e);
+            console.warn("[groq:vision] Could not load internal image:", e);
+        }
+    } else if (imageUrl.startsWith("data:image/")) {
+        try {
+            const base64Content = imageUrl.replace(/^data:image\/[a-z]+;base64,/i, "");
+            const buffer = Buffer.from(base64Content, "base64");
+            const optimized = await optimizeImageForVision(buffer);
+            if (optimized) {
+                effectiveUrl = optimized;
+            }
+        } catch (e) {
+            console.warn("[groq:vision] Could not optimize data URL:", e);
         }
     }
 

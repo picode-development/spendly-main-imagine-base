@@ -231,55 +231,61 @@ const app = new Hono()
                 return c.json({ error: "Nothing to claim" }, 404);
             }
 
-            let rows;
-            if (stash.imageUrls?.length) {
-                // Each shared screenshot becomes its own detected transaction.
-                // UPI apps attach a summary caption — the vision model reads it
-                // alongside each image.
-                const ctx = await getLlmContext(auth.userId);
-                rows = await Promise.all(stash.imageUrls.map(async (image) => {
-                    const extracted = await llmExtractFromImage(image.url, ctx, stash.rawText);
-                    const parsed = extracted ? {
-                        amount: extracted.isTransaction ? extracted.amount : null,
-                        payee: extracted.payee,
-                        accountHint: extracted.accountName ?? extracted.accountHint,
-                        categoryHint: extracted.categoryName,
-                        note: extracted.note,
-                        date: extracted.date ?? new Date(),
-                    } : (stash.rawText ? await parseMessage(auth.userId, stash.rawText) : null);
-
-                    return {
-                        id: createId(),
-                        userId: auth.userId!,
-                        rawMessage: stash.rawText || "Shared screenshot",
-                        imageUrls: [image],
-                        ...(parsed ?? { date: new Date() }),
-                    };
-                }));
-            } else {
-                const parsed = stash.rawText
-                    ? await parseMessage(auth.userId, stash.rawText)
-                    : null;
-                rows = [{
-                    id: createId(),
-                    userId: auth.userId,
-                    rawMessage: stash.rawText || "Shared content",
-                    imageUrls: null,
-                    ...(parsed ?? { date: new Date() }),
-                }];
-            }
-
-            const data = await db.insert(pendingTransactions).values(rows).returning();
-
-            // Burn the token and sweep stale unclaimed stashes
+            // Immediately burn the token and clear stale stashes
             await db.delete(sharedStash).where(eq(sharedStash.id, token));
             await db.delete(sharedStash).where(
                 lt(sharedStash.createdAt, new Date(Date.now() - 60 * 60 * 1000)),
             );
 
+            const ctx = await getLlmContext(auth.userId);
+
+            let extractedResult: Awaited<ReturnType<typeof llmExtractFromImage>> = null;
+
+            if (stash.imageUrls && stash.imageUrls.length > 0) {
+                const primaryImage = stash.imageUrls[0];
+                extractedResult = await llmExtractFromImage(primaryImage.url, ctx, stash.rawText);
+            }
+
+            if (!extractedResult && stash.rawText) {
+                extractedResult = await llmExtractFromText(stash.rawText, ctx);
+            }
+
+            const pendingId = createId();
+            const date = extractedResult?.date ?? new Date();
+            const amount = extractedResult?.amount ?? null;
+            const payee = extractedResult?.payee ?? null;
+            const accountHint = extractedResult?.accountName ?? extractedResult?.accountHint ?? null;
+            const categoryHint = extractedResult?.categoryName ?? null;
+            const note = extractedResult?.note ?? null;
+
+            // Safety persistence into pending transactions
+            await db.insert(pendingTransactions).values({
+                id: pendingId,
+                userId: auth.userId,
+                rawMessage: stash.rawText || "Shared screenshot",
+                amount,
+                payee,
+                accountHint,
+                categoryHint,
+                note,
+                imageUrls: stash.imageUrls,
+                date,
+            }).catch((err) => console.warn("[claim-share] Failed to insert pending backup:", err));
+
             await notifyNewPending(auth.userId);
 
-            return c.json({ data });
+            return c.json({
+                data: {
+                    pendingId,
+                    amount: amount != null ? String(Math.abs(amount) / 1000) : null,
+                    payee,
+                    accountName: extractedResult?.accountName ?? accountHint,
+                    categoryName: categoryHint,
+                    note,
+                    date: date.toISOString(),
+                    imageUrls: stash.imageUrls ?? [],
+                },
+            });
         },
     )
 

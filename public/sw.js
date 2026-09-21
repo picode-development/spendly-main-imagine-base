@@ -16,15 +16,12 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v6";
+const SW_VERSION = "v7";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
 const KNOWN_CACHES = [CACHE_STATIC, CACHE_API, CACHE_SHELL];
-
-// "spendly-share-stash" is intentionally unversioned and excluded from the
-// cleanup below — it holds in-flight share uploads and must survive deploys.
-const PRESERVED_CACHES = ["spendly-share-stash"];
+const PRESERVED_CACHES = [];
 
 const OFFLINE_URL = "/offline";
 const PRECACHE_URLS = [
@@ -113,11 +110,7 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // 1. Share Target — always wins, unchanged behavior.
-  if (request.method === "POST" && url.pathname === "/share-target") {
-    event.respondWith(handleShareTarget(event));
-    return;
-  }
+  // POST /share-target passes directly to the server — no SW interception.
 
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
@@ -201,162 +194,7 @@ async function networkFirstNavigation(request) {
   }
 }
 
-function detectMimeFromUint8Array(buf) {
-  if (!buf || buf.length < 2) return null;
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-    return "image/jpeg";
-  }
-  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-    return "image/png";
-  }
-  if (
-    buf.length >= 12 &&
-    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-  ) {
-    return "image/webp";
-  }
-  if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
-    return "image/gif";
-  }
-  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
-    return "image/bmp";
-  }
-  return null;
-}
 
-async function handleShareTarget(event) {
-  try {
-    const formData = await event.request.formData();
-    const formEntries = Array.from(formData.entries());
-
-    const isFileLike = (value) =>
-      value && typeof value === "object" && typeof value.arrayBuffer === "function";
-
-    const isLikelyTextField = (name) => {
-      const n = String(name || "").toLowerCase();
-      return (
-        !n.includes("file") &&
-        !n.includes("image") &&
-        !n.includes("media") &&
-        !n.includes("attachment") &&
-        !n.includes("screenshot") &&
-        !n.includes("photo") &&
-        !n.includes("document") &&
-        (n.includes("text") || n.includes("message") || n.includes("caption") || n.includes("title") || n.includes("body") || n.includes("description") || n.includes("content") || n === "url")
-      );
-    };
-
-    const candidateFiles = [];
-    for (const [key, val] of formEntries) {
-      if (isFileLike(val)) {
-        const file = val;
-        const fileName = (file.name || "").toLowerCase();
-        const type = (file.type || "").toLowerCase();
-        const isLikelyImage = type.startsWith("image/") || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(fileName) || (file.size > 0 && !type && !key.toLowerCase().includes("text"));
-        if (isLikelyImage && !candidateFiles.some((candidate) => candidate.name === file.name && candidate.type === file.type && candidate.size === file.size)) {
-          candidateFiles.push(file);
-        }
-      }
-    }
-
-    const dedupedFiles = candidateFiles.filter((file, index, all) => {
-      const key = `${file.name || ""}:${file.type || ""}:${String(file.size ?? "")}`;
-      return all.findIndex((candidate) => `${candidate.name || ""}:${candidate.type || ""}:${String(candidate.size ?? "")}` === key) === index;
-    });
-
-    const inspectedFiles = [];
-    for (const f of dedupedFiles) {
-      try {
-        const buffer = await f.arrayBuffer();
-        if (!buffer || buffer.byteLength <= 0 || buffer.byteLength > 25 * 1024 * 1024) continue;
-
-        const bytes = new Uint8Array(buffer);
-        const detectedMime = detectMimeFromUint8Array(bytes);
-        const type = (f.type || "").toLowerCase();
-        const name = (f.name || "").toLowerCase();
-
-        let isImage = false;
-        let contentType = detectedMime || type;
-
-        if (detectedMime) {
-          isImage = true;
-        } else if (type.startsWith("image/")) {
-          isImage = true;
-        } else if (/\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(name)) {
-          isImage = true;
-          if (name.endsWith(".png")) contentType = "image/png";
-          else if (name.endsWith(".webp")) contentType = "image/webp";
-          else contentType = "image/jpeg";
-        } else if (bytes.byteLength > 100) {
-          isImage = true;
-          contentType = "image/jpeg";
-        }
-
-        if (isImage) {
-          inspectedFiles.push({ buffer, contentType: contentType || "image/jpeg" });
-        }
-      } catch (err) {
-        console.warn("Could not buffer shared file in SW:", err);
-      }
-    }
-
-    const files = inspectedFiles.slice(0, 25);
-    const dropped = inspectedFiles.length - files.length;
-    const textPieces = [];
-    for (const [key, val] of formEntries) {
-      if (typeof val !== "string") continue;
-      const trimmed = val.trim();
-      if (!trimmed) continue;
-      const keyName = String(key || "").toLowerCase();
-      const isText =
-        isLikelyTextField(keyName) ||
-        (trimmed.length > 12 && !keyName.includes("file") && !keyName.includes("image") && !keyName.includes("media") && !keyName.includes("attachment") && !keyName.includes("screenshot"));
-      if (isText && !textPieces.includes(trimmed)) {
-        textPieces.push(trimmed);
-      }
-    }
-    const text = textPieces.join(" ").slice(0, 2000);
-    console.log("[share-target] text:", text);
-    console.log("[share-target] files:", files.length, "dropped:", dropped);
-
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-    const cache = await caches.open("spendly-share-stash");
-
-    // Dual-key caching: save with both pathname and absolute URL so cache.match
-    // succeeds across all Chromium Android contexts
-    const metaPath = `/__share/${id}/meta`;
-    const metaUrl = new URL(metaPath, self.location.origin).href;
-    const metaData = JSON.stringify({ text, count: files.length, dropped });
-
-    await Promise.all([
-      cache.put(metaPath, new Response(metaData, { headers: { "Content-Type": "application/json" } })),
-      cache.put(metaUrl, new Response(metaData, { headers: { "Content-Type": "application/json" } })),
-    ]);
-
-    for (let i = 0; i < files.length; i++) {
-      const { buffer, contentType } = files[i];
-      const filePath = `/__share/${id}/file/${i}`;
-      const fileUrl = new URL(filePath, self.location.origin).href;
-      const headers = {
-        "Content-Type": contentType,
-        "Content-Length": String(buffer.byteLength),
-      };
-
-      await Promise.all([
-        cache.put(filePath, new Response(buffer, { headers })),
-        cache.put(fileUrl, new Response(buffer, { headers })),
-      ]);
-    }
-
-    // Response.redirect requires an absolute URL in Chromium / Service Workers
-    const redirectUrl = new URL(`/share-claim?local=${id}`, self.location.origin).href;
-    return Response.redirect(redirectUrl, 303);
-  } catch (e) {
-    console.error("SW handleShareTarget failed:", e);
-    return Response.redirect(new URL("/transactions", self.location.origin).href, 303);
-  }
-}
 
 // --- Offline write outbox ------------------------------------------------
 // Queued client-side (see lib/offline-outbox.ts) when a transaction
