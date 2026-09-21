@@ -348,11 +348,11 @@ const ShareHandler = () => {
                                 </span>
                             </div>
 
-                            <div className="flex flex-row gap-2.5 w-full pt-3 pb-1">
+                            <div className="flex flex-col sm:flex-row gap-3 w-full pt-4 pb-1">
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="flex-1"
+                                    className="w-full sm:flex-1"
                                     onClick={handlePasteFromClipboard}
                                 >
                                     <ClipboardPaste className="size-4 mr-1.5" />
@@ -361,7 +361,7 @@ const ShareHandler = () => {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    className="flex-1 text-muted-foreground hover:text-foreground"
+                                    className="w-full sm:flex-1 text-muted-foreground hover:text-foreground"
                                     onClick={() => router.replace("/transactions")}
                                 >
                                     Go to Transactions
