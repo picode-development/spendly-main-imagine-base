@@ -67,8 +67,10 @@ const ShareHandler = () => {
                     toast.success("Transaction detected! Tap Add in Detected Transactions to review.");
 
                     // Per user design: Show first in Detected Transactions component.
-                    // The form will load prefilled when the user taps on it.
-                    router.replace("/transactions");
+                    // Allow the user to see the success state for 1 second before navigating.
+                    setTimeout(() => {
+                        router.replace("/transactions");
+                    }, 1000);
                 } else if (fallbackText) {
                     // Plain text share without token
                     const res = await client.api["pending-transactions"].$post({
@@ -82,7 +84,9 @@ const ShareHandler = () => {
                     setStatus("success");
                     toast.success("Message processed! Tap Add in Detected Transactions to review.");
 
-                    router.replace("/transactions");
+                    setTimeout(() => {
+                        router.replace("/transactions");
+                    }, 1000);
                 }
             } catch (err: any) {
                 console.error("[share] Claim processing error:", err);

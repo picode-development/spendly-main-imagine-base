@@ -420,6 +420,28 @@ export const llmExtractFromImage = async (imageUrl: string, ctx: LlmContext, acc
         } catch (e) {
             console.warn("[groq:vision] Could not optimize data URL:", e);
         }
+    } else if (imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
+        // Groq cannot reliably fetch external CDN URLs like ImgBB directly (they block bot scrapers -> timeout).
+        // Fetch server-side and convert to optimized base64 data URL so Groq vision processes it instantly!
+        try {
+            const res = await fetch(imageUrl, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                },
+            });
+            if (res.ok) {
+                const arrayBuf = await res.arrayBuffer();
+                const buffer = Buffer.from(arrayBuf);
+                const optimized = await optimizeImageForVision(buffer);
+                if (optimized) {
+                    effectiveUrl = optimized;
+                }
+            } else {
+                console.warn("[groq:vision] Failed to fetch hosted image:", res.status);
+            }
+        } catch (e) {
+            console.warn("[groq:vision] Could not fetch and optimize hosted image:", e);
+        }
     }
 
     return chatCompletion(visionProviders(), [

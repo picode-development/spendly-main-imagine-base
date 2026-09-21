@@ -1,9 +1,10 @@
 import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { db } from "@/db/drizzle";
-import { pendingTransactions, sharedStash } from "@/db/schema";
+import { pendingTransactions, sharedStash, TransactionImage } from "@/db/schema";
 import { parseMessage, getLlmContext } from "@/lib/parse-message";
 import { hasGroqKey, isTrustedImageUrl, llmCleanFieldValue, llmExtractFromImage, llmExtractFromText, llmTranscribe } from "@/lib/groq";
+import { uploadToImgBB } from "@/lib/imgbb";
 import { sendPushToUser } from "@/lib/push-send";
 import { clerkMiddleware, getAuth } from "@hono/clerk-auth";
 import { and, desc, eq, lt } from "drizzle-orm";
@@ -241,14 +242,41 @@ const app = new Hono()
 
             let extractedResult: Awaited<ReturnType<typeof llmExtractFromImage>> = null;
 
-            if (stash.imageUrls && stash.imageUrls.length > 0) {
-                const primaryImage = stash.imageUrls[0];
-                extractedResult = await llmExtractFromImage(primaryImage.url, ctx, stash.rawText);
-            }
+            // In parallel:
+            // 1. Run Groq vision extraction using primary image (fast data URL, ~0.3s)
+            // 2. Upload each image independently to ImgBB (each image as an independent query)
+            const [extracted, hostedImages] = await Promise.all([
+                (async () => {
+                    if (stash.imageUrls && stash.imageUrls.length > 0) {
+                        const primaryImage = stash.imageUrls[0];
+                        return await llmExtractFromImage(primaryImage.url, ctx, stash.rawText);
+                    }
+                    if (stash.rawText) {
+                        return await llmExtractFromText(stash.rawText, ctx);
+                    }
+                    return null;
+                })(),
+                (async () => {
+                    if (!stash.imageUrls || stash.imageUrls.length === 0) return [];
+                    const uploaded = await Promise.all(
+                        stash.imageUrls.map(async (img, index) => {
+                            if (img.url.startsWith("http://") || img.url.startsWith("https://")) {
+                                return img;
+                            }
+                            const uniqueName = `receipt_${createId()}_${index}`;
+                            const hostedUrl = await uploadToImgBB(img.url, uniqueName);
+                            if (hostedUrl) {
+                                return { url: hostedUrl, preview: img.preview };
+                            }
+                            return img;
+                        }),
+                    );
+                    return uploaded.filter(Boolean) as TransactionImage[];
+                })(),
+            ]);
 
-            if (!extractedResult && stash.rawText) {
-                extractedResult = await llmExtractFromText(stash.rawText, ctx);
-            }
+            extractedResult = extracted;
+            const finalImageUrls = hostedImages.length > 0 ? hostedImages : (stash.imageUrls ?? []);
 
             const pendingId = createId();
             const date = extractedResult?.date ?? new Date();
@@ -258,17 +286,17 @@ const app = new Hono()
             const categoryHint = extractedResult?.categoryName ?? null;
             const note = extractedResult?.note ?? null;
 
-            // Safety persistence into pending transactions
+            // Safety persistence into pending transactions with ImgBB hosted receipts
             await db.insert(pendingTransactions).values({
                 id: pendingId,
                 userId: auth.userId,
-                rawMessage: stash.rawText || "Shared screenshot",
+                rawMessage: stash.rawText || (payee ? `Payment to ${payee}` : "Shared receipt"),
                 amount,
                 payee,
                 accountHint,
                 categoryHint,
                 note,
-                imageUrls: stash.imageUrls,
+                imageUrls: finalImageUrls.length > 0 ? finalImageUrls : null,
                 date,
             }).catch((err) => console.warn("[claim-share] Failed to insert pending backup:", err));
 
@@ -283,7 +311,7 @@ const app = new Hono()
                     categoryName: categoryHint,
                     note,
                     date: date.toISOString(),
-                    imageUrls: stash.imageUrls ?? [],
+                    imageUrls: finalImageUrls,
                 },
             });
         },
