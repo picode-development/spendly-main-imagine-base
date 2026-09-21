@@ -16,7 +16,7 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v8";
+const SW_VERSION = "v9";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
@@ -118,33 +118,65 @@ self.addEventListener("fetch", (event) => {
     event.respondWith((async () => {
       try {
         const formData = await request.formData();
-        const file = formData.get("file") || formData.get("media") || formData.get("image");
-        const title = formData.get("title") || "";
-        const text = formData.get("text") || "";
-        const sharedUrl = formData.get("url") || "";
+        let file = null;
+        let title = "";
+        let text = "";
+        let sharedUrl = "";
+
+        const debugEntries = [];
+        for (const [key, val] of formData.entries()) {
+          const isObj = val && typeof val === "object";
+          debugEntries.push({
+            key,
+            isObj,
+            name: isObj ? val.name : undefined,
+            type: isObj ? val.type : typeof val,
+            size: isObj ? val.size : (typeof val === "string" ? val.length : undefined),
+          });
+
+          if (isObj && !file) {
+            file = val;
+          } else if (typeof val === "string") {
+            const lower = key.toLowerCase();
+            if (lower.includes("title")) title = val;
+            else if (lower.includes("url")) sharedUrl = val;
+            else text += " " + val;
+          }
+        }
+
+        // Send telemetry ping in background (does not block navigation)
+        fetch("/api/debug-share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source: "sw", entries: debugEntries }),
+        }).catch(() => {});
 
         const cache = await caches.open("spendly-share-cache");
         let hasImage = false;
 
-        if (file && typeof file === "object" && file.size > 0) {
-          hasImage = true;
-          await cache.put("/shared-image", new Response(file, {
-            headers: {
-              "Content-Type": file.type || "image/jpeg",
-              "X-File-Name": file.name || "receipt.jpg",
-            },
-          }));
+        if (file) {
+          try {
+            await cache.put("/shared-image", new Response(file, {
+              headers: {
+                "Content-Type": file.type || "image/jpeg",
+                "X-File-Name": file.name || "receipt.jpg",
+              },
+            }));
+            hasImage = true;
+          } catch (cacheErr) {
+            console.warn("[sw] Failed to cache shared image:", cacheErr);
+          }
         }
 
-        const hasText = Boolean(title || text || sharedUrl);
+        const hasText = Boolean(title.trim() || text.trim() || sharedUrl.trim());
         if (!hasImage && !hasText) {
           return Response.redirect("/share?prompt_picker=true&source=sw", 303);
         }
 
         const meta = {
-          title: String(title),
-          text: String(text),
-          url: String(sharedUrl),
+          title: String(title).trim(),
+          text: String(text).trim(),
+          url: String(sharedUrl).trim(),
           hasImage,
           timestamp: Date.now(),
         };

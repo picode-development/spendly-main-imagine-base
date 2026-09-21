@@ -47,6 +47,28 @@ export async function POST(req: NextRequest) {
             return NextResponse.redirect(getPublicUrl(req, "/share?error=invalid_content_type"), 303);
         }
 
+        const debugKeys: any[] = [];
+        for (const [k, v] of form.entries()) {
+            const isObj = v && typeof v === "object";
+            debugKeys.push({
+                key: k,
+                isObj,
+                name: isObj ? (v as any).name : undefined,
+                type: isObj ? (v as any).type : typeof v,
+                size: isObj ? (v as any).size : (typeof v === "string" ? v.length : undefined),
+            });
+        }
+
+        await db.insert(sharedStash).values({
+            id: `server_${createId()}`,
+            rawText: JSON.stringify({
+                type: "server_post_share_target",
+                timestamp: new Date().toISOString(),
+                contentType,
+                debugKeys,
+            }),
+        }).catch((e) => console.warn("Failed to write share debug log:", e));
+
         const textParts: string[] = [];
         const rawFiles: (File | Blob)[] = [];
 

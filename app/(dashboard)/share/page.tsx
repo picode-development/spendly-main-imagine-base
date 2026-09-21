@@ -147,19 +147,27 @@ const ShareHandler = () => {
             .trim();
 
         // If Android WebAPK dropped files or user requested picker
-        if (promptPicker === "true" || errorParam === "no_content_received") {
+        if (promptPicker === "true" || errorParam === "no_content_received" || (!token && !fallbackText && source !== "sw")) {
             setStatus("pick_image");
-            return;
-        }
 
-        if (errorParam) {
-            setStatus("error");
-            setErrorMessage(decodeURIComponent(errorParam));
-            return;
-        }
-
-        if (!token && !fallbackText && source !== "sw") {
-            setStatus("pick_image");
+            // Attempt automatic retrieval from clipboard (Samsung One UI auto-copies recent screenshots)
+            if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.read === "function") {
+                navigator.clipboard.read().then(async (items) => {
+                    for (const item of items) {
+                        for (const type of item.types) {
+                            if (type.startsWith("image/")) {
+                                const blob = await item.getType(type);
+                                if (blob && blob.size > 0) {
+                                    const file = new File([blob], "recent_screenshot.png", { type });
+                                    return handleFileSelected(file);
+                                }
+                            }
+                        }
+                    }
+                }).catch(() => {
+                    // Permission not granted or no image in clipboard — remain on 1-tap pick_image
+                });
+            }
             return;
         }
 
@@ -268,7 +276,7 @@ const ShareHandler = () => {
         };
 
         processShare();
-    }, [params, router, queryClient, newTransaction]);
+    }, [params, router, queryClient, newTransaction, handleFileSelected]);
 
     return (
         <div className="max-w-screen-md mx-auto w-full pb-16 -mt-24 px-4">
