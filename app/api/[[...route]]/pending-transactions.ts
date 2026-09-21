@@ -305,7 +305,7 @@ const app = new Hono()
             return c.json({
                 data: {
                     pendingId,
-                    amount: amount != null ? String(Math.abs(amount) / 1000) : null,
+                    amount: amount != null ? String(amount / 1000) : null,
                     payee,
                     accountName: extractedResult?.accountName ?? accountHint,
                     categoryName: categoryHint,
@@ -386,7 +386,7 @@ const app = new Hono()
             return c.json({
                 data: {
                     pendingId,
-                    amount: amount != null ? String(Math.abs(amount) / 1000) : null,
+                    amount: amount != null ? String(amount / 1000) : null,
                     payee,
                     accountName: extracted?.accountName ?? accountHint,
                     categoryName: categoryHint,
