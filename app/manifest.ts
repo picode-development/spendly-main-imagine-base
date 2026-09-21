@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 // Installable PWA manifest. share_target lets Android's share sheet offer
 // "Spendly" for an image-backed UPI payment confirmation or receipt.
-const manifestVersion = "2026-09-21-v3";
+const manifestVersion = "2026-09-21-v4";
 
 export default function manifest(): MetadataRoute.Manifest {
     return {
@@ -37,23 +37,44 @@ export default function manifest(): MetadataRoute.Manifest {
                 title: "title",
                 text: "text",
                 url: "url",
-                files: [{
-                    name: "file",
-                    accept: [
-                        "image/*",
-                        "image/jpeg",
-                        "image/png",
-                        "image/webp",
-                        "image/heic",
-                        "image/heif",
-                        ".jpg",
-                        ".jpeg",
-                        ".png",
-                        ".webp",
-                        ".heic",
-                        ".heif",
-                    ],
-                }],
+                files: [
+                    {
+                        name: "file",
+                        accept: [
+                            "image/*",
+                            "image/jpeg",
+                            "image/png",
+                            "image/webp",
+                            "image/heic",
+                            "image/heif",
+                            ".jpg",
+                            ".jpeg",
+                            ".png",
+                            ".webp",
+                            ".heic",
+                            ".heif",
+                            "*/*",
+                        ],
+                    },
+                    {
+                        name: "media",
+                        accept: [
+                            "image/*",
+                            "image/jpeg",
+                            "image/png",
+                            "image/webp",
+                            "image/heic",
+                            "image/heif",
+                            ".jpg",
+                            ".jpeg",
+                            ".png",
+                            ".webp",
+                            ".heic",
+                            ".heif",
+                            "*/*",
+                        ],
+                    },
+                ],
             },
         },
         categories: ["finance", "productivity"],

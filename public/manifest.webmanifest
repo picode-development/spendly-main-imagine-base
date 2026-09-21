@@ -2,8 +2,8 @@
   "name": "Spendly",
   "short_name": "Spendly",
   "description": "Track spending, receipts, and transfers.",
-  "id": "spendly-pwa-2026-09-21-v3",
-  "start_url": "/?source=pwa&v=2026-09-21-v3",
+  "id": "spendly-pwa-2026-09-21-v4",
+  "start_url": "/?source=pwa&v=2026-09-21-v4",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
@@ -27,23 +27,44 @@
       "title": "title",
       "text": "text",
       "url": "url",
-      "files": [{
-        "name": "file",
-        "accept": [
-          "image/*",
-          "image/jpeg",
-          "image/png",
-          "image/webp",
-          "image/heic",
-          "image/heif",
-          ".jpg",
-          ".jpeg",
-          ".png",
-          ".webp",
-          ".heic",
-          ".heif"
-        ]
-      }]
+      "files": [
+        {
+          "name": "file",
+          "accept": [
+            "image/*",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".heic",
+            ".heif",
+            "*/*"
+          ]
+        },
+        {
+          "name": "media",
+          "accept": [
+            "image/*",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".heic",
+            ".heif",
+            "*/*"
+          ]
+        }
+      ]
     }
   },
   "categories": ["finance", "productivity"],

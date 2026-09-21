@@ -317,6 +317,87 @@ const app = new Hono()
         },
     )
 
+    // Direct share processing: accepts image (data URL or base64) and optional accompanying text.
+    // Uploads to ImgBB (each image as an independent query) and extracts with Groq concurrently.
+    .post(
+        "/process-share",
+        clerkMiddleware(),
+        zValidator("json", z.object({
+            image: z.string().max(10_000_000).nullish(),
+            text: z.string().max(2000).nullish(),
+        })),
+        async (c) => {
+            const auth = getAuth(c);
+            const { image, text } = c.req.valid("json");
+
+            if (!auth?.userId) {
+                return c.json({ error: "Unauthorized" }, 401);
+            }
+
+            const ctx = await getLlmContext(auth.userId);
+
+            const [extracted, hostedUrl] = await Promise.all([
+                (async () => {
+                    if (image) {
+                        return await llmExtractFromImage(image, ctx, text);
+                    }
+                    if (text) {
+                        return await llmExtractFromText(text, ctx);
+                    }
+                    return null;
+                })(),
+                (async () => {
+                    if (!image) return null;
+                    const uniqueName = `receipt_${createId()}_0`;
+                    return await uploadToImgBB(image, uniqueName);
+                })(),
+            ]);
+
+            const finalImageUrls: TransactionImage[] = [];
+            if (hostedUrl) {
+                finalImageUrls.push({ url: hostedUrl });
+            } else if (image && image.startsWith("data:")) {
+                finalImageUrls.push({ url: image });
+            }
+
+            const pendingId = createId();
+            const date = extracted?.date ?? new Date();
+            const amount = extracted?.amount ?? null;
+            const payee = extracted?.payee ?? null;
+            const accountHint = extracted?.accountName ?? extracted?.accountHint ?? null;
+            const categoryHint = extracted?.categoryName ?? null;
+            const note = extracted?.note ?? null;
+
+            await db.insert(pendingTransactions).values({
+                id: pendingId,
+                userId: auth.userId,
+                rawMessage: text || (payee ? `Payment to ${payee}` : "Shared receipt"),
+                amount,
+                payee,
+                accountHint,
+                categoryHint,
+                note,
+                imageUrls: finalImageUrls.length > 0 ? finalImageUrls : null,
+                date,
+            }).catch((err) => console.warn("[process-share] Failed to insert pending backup:", err));
+
+            await notifyNewPending(auth.userId);
+
+            return c.json({
+                data: {
+                    pendingId,
+                    amount: amount != null ? String(Math.abs(amount) / 1000) : null,
+                    payee,
+                    accountName: extracted?.accountName ?? accountHint,
+                    categoryName: categoryHint,
+                    note,
+                    date: date.toISOString(),
+                    imageUrls: finalImageUrls,
+                },
+            });
+        },
+    )
+
     // Extraction-only. Accepts a local data-URL copy (the initial detection,
     // before hosting completes) or a hosted https URL (every AI task after
     // the upload). llmExtractFromImage already retries across Groq's key

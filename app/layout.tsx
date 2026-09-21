@@ -9,7 +9,7 @@ import { SwRegister } from "@/components/sw-register";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
-const manifestVersion = "2026-09-21-v3";
+const manifestVersion = "2026-09-21-v4";
 
 export const metadata: Metadata = {
   title: "Spendly",

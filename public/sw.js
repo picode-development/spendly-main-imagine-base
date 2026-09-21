@@ -16,12 +16,12 @@
  * logic mid-session.
  */
 
-const SW_VERSION = "v7";
+const SW_VERSION = "v8";
 const CACHE_STATIC = `spendly-static-${SW_VERSION}`;
 const CACHE_API = `spendly-api-${SW_VERSION}`;
 const CACHE_SHELL = `spendly-shell-${SW_VERSION}`;
 const KNOWN_CACHES = [CACHE_STATIC, CACHE_API, CACHE_SHELL];
-const PRESERVED_CACHES = [];
+const PRESERVED_CACHES = ["spendly-share-cache"];
 
 const OFFLINE_URL = "/offline";
 const PRECACHE_URLS = [
@@ -110,7 +110,51 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // POST /share-target passes directly to the server — no SW interception.
+  // Web Share Target: Android delivers shared files directly to the Service Worker.
+  // We capture the multipart form data locally in the browser, store the image in Cache Storage,
+  // and issue an HTTP 303 redirect to /share?source=sw.
+  if (request.method === "POST" && (url.pathname === "/share-target" || url.pathname.endsWith("/share-target"))) {
+    event.respondWith((async () => {
+      try {
+        const formData = await request.formData();
+        const file = formData.get("file") || formData.get("media") || formData.get("image");
+        const title = formData.get("title") || "";
+        const text = formData.get("text") || "";
+        const sharedUrl = formData.get("url") || "";
+
+        const cache = await caches.open("spendly-share-cache");
+        let hasImage = false;
+
+        if (file && typeof file === "object" && file.size > 0) {
+          hasImage = true;
+          await cache.put("/shared-image", new Response(file, {
+            headers: {
+              "Content-Type": file.type || "image/jpeg",
+              "X-File-Name": file.name || "receipt.jpg",
+            },
+          }));
+        }
+
+        const meta = {
+          title: String(title),
+          text: String(text),
+          url: String(sharedUrl),
+          hasImage,
+          timestamp: Date.now(),
+        };
+
+        await cache.put("/shared-meta", new Response(JSON.stringify(meta), {
+          headers: { "Content-Type": "application/json" },
+        }));
+
+        return Response.redirect("/share?source=sw", 303);
+      } catch (err) {
+        console.warn("[sw] Share target handling failed, passing to network:", err);
+        return fetch(request);
+      }
+    })());
+    return;
+  }
 
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 

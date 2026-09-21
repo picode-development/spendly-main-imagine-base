@@ -30,6 +30,7 @@ const ShareHandler = () => {
         if (fired.current) return;
         fired.current = true;
 
+        const source = params.get("source");
         const token = params.get("token");
         const fallbackText = [params.get("title"), params.get("text"), params.get("url")]
             .filter(Boolean)
@@ -40,7 +41,7 @@ const ShareHandler = () => {
         if (errorParam) {
             setStatus("error");
             setErrorMessage(
-                errorParam === "no_content_received"
+                errorParam.startsWith("no_content_received")
                     ? "No image or text was received from the share sheet."
                     : errorParam === "invalid_content_type"
                     ? "Invalid content type received."
@@ -49,14 +50,70 @@ const ShareHandler = () => {
             return;
         }
 
-        if (!token && !fallbackText) {
+        if (!token && !fallbackText && source !== "sw") {
             router.replace("/transactions");
             return;
         }
 
         const processShare = async () => {
             try {
-                if (token) {
+                if (source === "sw") {
+                    // Read cached share from Service Worker Cache Storage
+                    if (typeof window === "undefined" || !("caches" in window)) {
+                        throw new Error("Browser Cache Storage is unavailable");
+                    }
+                    const cache = await caches.open("spendly-share-cache");
+                    const imageRes = await cache.match("/shared-image");
+                    const metaRes = await cache.match("/shared-meta");
+
+                    let dataUrl: string | null = null;
+                    if (imageRes) {
+                        const blob = await imageRes.blob();
+                        await cache.delete("/shared-image");
+                        dataUrl = await new Promise<string>((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result as string);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+
+                    let sharedText: string | null = null;
+                    if (metaRes) {
+                        const meta = await metaRes.json().catch(() => ({}));
+                        await cache.delete("/shared-meta");
+                        sharedText = [meta.title, meta.text, meta.url].filter(Boolean).join(" ").trim() || null;
+                    }
+
+                    if (!dataUrl && !sharedText) {
+                        throw new Error("No image or text was received from the share sheet.");
+                    }
+
+                    const res = await client.api["pending-transactions"]["process-share"].$post({
+                        json: {
+                            image: dataUrl,
+                            text: sharedText,
+                        },
+                    });
+
+                    if (!res.ok) {
+                        const errorBody = await res.json().catch(() => null);
+                        const msg = (errorBody && typeof errorBody === "object" && "error" in errorBody)
+                            ? String((errorBody as { error: unknown }).error)
+                            : "Could not process shared content";
+                        throw new Error(msg);
+                    }
+
+                    queryClient.invalidateQueries({ queryKey: ["pending-transactions"] });
+                    queryClient.invalidateQueries({ queryKey: ["transactions"] });
+
+                    setStatus("success");
+                    toast.success("Transaction detected! Tap Add in Detected Transactions to review.");
+
+                    setTimeout(() => {
+                        router.replace("/transactions");
+                    }, 1000);
+                } else if (token) {
                     // Claim the staged share payload and run Groq AI extraction
                     const res = await client.api["pending-transactions"]["claim-share"].$post({
                         json: { token },
