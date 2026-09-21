@@ -24,7 +24,7 @@ import { useNewTransaction } from "@/features/transactions/hooks/use-new-transac
 //
 // Receives shared content from Android share sheet OR provides an instant
 // 1-tap screenshot picker when Android WebAPK drops file URIs (Chromium Issue 560272217).
-// Runs Groq AI vision extraction and ImgBB receipt upload concurrently, then stages
+// Runs Spendly AI vision extraction and secure receipt storage concurrently, then stages
 // into Detected Transactions with prefilled fields and attached receipt.
 const ShareHandler = () => {
     const params = useSearchParams();
@@ -46,7 +46,7 @@ const ShareHandler = () => {
         }
 
         setStatus("processing");
-        setSubMessage("Reading image & analyzing receipt with Groq Vision…");
+        setSubMessage("Reading receipt & analyzing transaction details…");
 
         try {
             const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -56,7 +56,7 @@ const ShareHandler = () => {
                 reader.readAsDataURL(file);
             });
 
-            setSubMessage("Uploading to ImgBB and extracting transaction fields…");
+            setSubMessage("Securing receipt & extracting transaction fields…");
 
             const res = await client.api["pending-transactions"]["process-share"].$post({
                 json: {
@@ -112,29 +112,6 @@ const ShareHandler = () => {
         }
     }, [handleFileSelected]);
 
-    const handleSmartCapture = useCallback(async () => {
-        if (typeof navigator !== "undefined" && navigator.clipboard?.read) {
-            try {
-                const items = await navigator.clipboard.read();
-                for (const item of items) {
-                    for (const type of item.types) {
-                        if (type.startsWith("image/")) {
-                            const blob = await item.getType(type);
-                            if (blob && blob.size > 0) {
-                                const file = new File([blob], "clipboard_receipt.png", { type });
-                                toast.success("Loaded screenshot from clipboard!");
-                                return handleFileSelected(file);
-                            }
-                        }
-                    }
-                }
-            } catch {
-                // Clipboard read denied or unavailable — smoothly fall through
-            }
-        }
-        fileInputRef.current?.click();
-    }, [handleFileSelected]);
-
     // Handle global paste event
     useEffect(() => {
         const handlePasteEvent = (e: ClipboardEvent) => {
@@ -169,28 +146,9 @@ const ShareHandler = () => {
             .join(" ")
             .trim();
 
-        // If Android WebAPK dropped files or user requested picker
+        // If Android WebAPK dropped files or user requested picker, show the screenshot selection UI
         if (promptPicker === "true" || errorParam === "no_content_received" || (!token && !fallbackText && source !== "sw")) {
             setStatus("pick_image");
-
-            // Attempt automatic retrieval from clipboard (Samsung One UI auto-copies recent screenshots)
-            if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.read === "function") {
-                navigator.clipboard.read().then(async (items) => {
-                    for (const item of items) {
-                        for (const type of item.types) {
-                            if (type.startsWith("image/")) {
-                                const blob = await item.getType(type);
-                                if (blob && blob.size > 0) {
-                                    const file = new File([blob], "recent_screenshot.png", { type });
-                                    return handleFileSelected(file);
-                                }
-                            }
-                        }
-                    }
-                }).catch(() => {
-                    // Permission not granted or no image in clipboard — remain on 1-tap pick_image
-                });
-            }
             return;
         }
 
@@ -336,7 +294,7 @@ const ShareHandler = () => {
                             </div>
                             <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-full border border-border/50">
                                 <Loader2 className="size-3.5 animate-spin text-primary" />
-                                <span>Uploading to ImgBB & analyzing with Groq</span>
+                                <span>Analyzing transaction with Spendly AI</span>
                             </div>
                         </div>
                     )}
@@ -361,7 +319,7 @@ const ShareHandler = () => {
 
                             {/* Clickable Drop Zone */}
                             <div
-                                onClick={handleSmartCapture}
+                                onClick={() => fileInputRef.current?.click()}
                                 onDragOver={(e) => {
                                     e.preventDefault();
                                     setIsDragging(true);
@@ -390,20 +348,18 @@ const ShareHandler = () => {
                                 </span>
                             </div>
 
-                            <div className="flex flex-col sm:flex-row gap-2.5 w-full pt-1">
+                            <div className="flex flex-col gap-3 w-full pt-2">
                                 <Button
                                     variant="outline"
-                                    size="sm"
-                                    className="flex-1"
+                                    className="w-full h-10 border-border/80 hover:bg-accent/50 text-foreground font-medium"
                                     onClick={handlePasteFromClipboard}
                                 >
-                                    <ClipboardPaste className="size-4 mr-1.5" />
+                                    <ClipboardPaste className="size-4 mr-2" />
                                     Paste Screenshot
                                 </Button>
                                 <Button
                                     variant="ghost"
-                                    size="sm"
-                                    className="flex-1 text-muted-foreground"
+                                    className="w-full h-9 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={() => router.replace("/transactions")}
                                 >
                                     Go to Transactions

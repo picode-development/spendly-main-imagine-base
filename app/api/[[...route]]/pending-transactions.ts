@@ -409,7 +409,7 @@ const app = new Hono()
         zValidator("json", z.object({
             image: z.string().max(3_500_000).refine(
                 isTrustedImageUrl,
-                "Must be an image data URL or a hosted imgbb URL",
+                "Must be an image data URL or hosted receipt image URL",
             ),
             text: z.string().max(2000).nullish(),
         })),

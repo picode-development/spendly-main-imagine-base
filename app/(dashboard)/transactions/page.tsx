@@ -150,8 +150,7 @@ const TransactionsPage = () => {
                         <Button
                             onClick={() => router.push("/share")}
                             size="sm"
-                            variant="outline"
-                            className="w-full lg:w-auto border-primary/30 text-primary hover:bg-primary/10"
+                            className="w-full lg:w-auto"
                         >
                             <Sparkles className="size-4 mr-2" />
                             Scan Receipt
