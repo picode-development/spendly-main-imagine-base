@@ -7,19 +7,6 @@ import { sharedStash, TransactionImage } from "@/db/schema";
 
 export const runtime = "nodejs";
 
-// Android PWA Web Share Target endpoint.
-//
-// Cross-app share launches are top-level POST navigations. Browsers deliberately
-// withhold SameSite-Lax session cookies on cross-app POSTs, so this endpoint
-// is intentionally UNAUTHENTICATED.
-//
-// To ensure the PWA opens instantly and displays the AI animation without
-// freezing or timing out in the Android share sheet, this route processes the
-// image locally into an optimized buffer + blur preview in <25ms, stages it
-// in `sharedStash`, and immediately issues an HTTP 303 redirect to `/share?token=${token}`.
-// The actual ImgBB upload and Groq AI vision extraction run while the user watches
-// the animation on the `/share` screen.
-
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGES = 10;
 
@@ -43,6 +30,11 @@ const makeBlurPreview = async (buffer: Buffer): Promise<string | undefined> => {
     }
 };
 
+export async function GET(req: NextRequest) {
+    // If opened via GET directly, forward to /share or /transactions
+    return NextResponse.redirect(getPublicUrl(req, "/share"), 303);
+}
+
 export async function POST(req: NextRequest) {
     try {
         const contentType = req.headers.get("content-type") || "";
@@ -52,12 +44,13 @@ export async function POST(req: NextRequest) {
             form = await req.formData();
         } else {
             console.warn("[share-target] Unexpected content-type:", contentType);
-            return NextResponse.redirect(getPublicUrl(req, "/transactions"), 303);
+            return NextResponse.redirect(getPublicUrl(req, "/share?error=invalid_content_type"), 303);
         }
 
         const textParts: string[] = [];
-        const rawFiles: File[] = [];
+        const rawFiles: (File | Blob)[] = [];
 
+        // 1. Collect from all form entries
         for (const [key, value] of form.entries()) {
             if (typeof value === "string") {
                 const trimmed = value.trim();
@@ -74,56 +67,82 @@ export async function POST(req: NextRequest) {
                     lowerKey.includes("description") ||
                     lowerKey.includes("subject");
 
-                if (isLikelyTextKey || (!lowerKey.includes("file") && !lowerKey.includes("image") && trimmed.length > 5)) {
+                if (isLikelyTextKey || (!lowerKey.includes("file") && !lowerKey.includes("image") && !lowerKey.includes("media") && trimmed.length > 5)) {
                     if (!textParts.includes(trimmed)) {
                         textParts.push(trimmed);
                     }
                 }
-            } else if (value && typeof value === "object" && typeof (value as File).arrayBuffer === "function") {
-                rawFiles.push(value as File);
+            } else if (value && typeof value === "object") {
+                rawFiles.push(value as any);
+            }
+        }
+
+        // 2. Explicitly query all known manifest field names (across all Android PWA revisions)
+        for (const fieldName of ["file", "media", "image", "images", "files", "attachment", "receipt"]) {
+            const items = form.getAll(fieldName);
+            for (const item of items) {
+                if (item && typeof item === "object" && !rawFiles.includes(item as any)) {
+                    rawFiles.push(item as any);
+                }
             }
         }
 
         const fullText = textParts.join(" ").slice(0, 2000).trim();
 
-        // Process image files
-        const candidateFiles = rawFiles.filter((f) => {
+        // Filter candidate image files
+        const candidateFiles = rawFiles.filter((f: any) => {
+            if (!f) return false;
             const name = (f.name || "").toLowerCase();
             const type = (f.type || "").toLowerCase();
             const isImageMime = type.startsWith("image/");
             const isImageExt = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(name);
-            const isGenericBinary = type === "application/octet-stream" || !type;
-            return (isImageMime || isImageExt || isGenericBinary) && f.size > 0 && f.size <= MAX_IMAGE_BYTES;
+            const isGeneric = type === "application/octet-stream" || !type;
+            const hasValidSize = f.size === undefined || (f.size > 0 && f.size <= MAX_IMAGE_BYTES);
+            return (isImageMime || isImageExt || isGeneric || typeof f.arrayBuffer === "function") && hasValidSize;
         }).slice(0, MAX_IMAGES);
 
-        console.log(`[share-target] Received share: textLen=${fullText.length}, files=${candidateFiles.length}`);
+        console.log(`[share-target] Received share payload: textLen=${fullText.length}, files=${candidateFiles.length}`);
 
         if (!fullText && candidateFiles.length === 0) {
-            console.warn("[share-target] Empty share payload, redirecting to /transactions");
-            return NextResponse.redirect(getPublicUrl(req, "/transactions"), 303);
+            console.warn("[share-target] Empty share payload received");
+            return NextResponse.redirect(getPublicUrl(req, "/share?error=no_content_received"), 303);
         }
 
-        // Locally optimize each image into a fast data URL and blur preview
-        // This is done 100% in-memory (<20ms) so Android redirects instantly without freezing
+        // Process images into data URLs.
+        // We ALWAYS generate a raw base64 data URL so that if Sharp encounters any runtime
+        // issues in Vercel Serverless environment, image processing NEVER fails.
         const stagedImages = await Promise.all(
-            candidateFiles.map(async (file): Promise<TransactionImage | null> => {
+            candidateFiles.map(async (file: any): Promise<TransactionImage | null> => {
                 try {
-                    const arrayBuf = await file.arrayBuffer();
+                    const arrayBuf = typeof file.arrayBuffer === "function"
+                        ? await file.arrayBuffer()
+                        : (typeof file.stream === "function"
+                            ? await new Response(file.stream()).arrayBuffer()
+                            : null);
+
+                    if (!arrayBuf) return null;
                     const buffer = Buffer.from(arrayBuf);
                     if (!buffer || buffer.length === 0) return null;
 
-                    const optimized = await sharp(buffer)
-                        .rotate()
-                        .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
-                        .jpeg({ quality: 80 })
-                        .toBuffer();
+                    const mime = file.type && file.type.startsWith("image/") ? file.type : "image/jpeg";
+                    let dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+                    let preview: string | undefined;
 
-                    const preview = await makeBlurPreview(optimized);
-                    const dataUrl = `data:image/jpeg;base64,${optimized.toString("base64")}`;
+                    try {
+                        const optimized = await sharp(buffer)
+                            .rotate()
+                            .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
+                            .jpeg({ quality: 80 })
+                            .toBuffer();
+                        dataUrl = `data:image/jpeg;base64,${optimized.toString("base64")}`;
+                        preview = await makeBlurPreview(optimized);
+                    } catch (sharpErr) {
+                        console.warn("[share-target] Sharp optimization bypassed, using raw buffer:", sharpErr);
+                    }
 
                     return { url: dataUrl, preview };
                 } catch (err) {
-                    console.error("[share-target] Failed to locally process image file:", err);
+                    console.error("[share-target] Failed to process image file:", err);
                     return null;
                 }
             }),
@@ -138,10 +157,11 @@ export async function POST(req: NextRequest) {
             imageUrls: imageUrls.length > 0 ? imageUrls : null,
         });
 
-        console.log(`[share-target] Stashed share with token: ${token}, images: ${imageUrls.length}. Redirecting to /share`);
+        console.log(`[share-target] Successfully stashed share with token: ${token}, images: ${imageUrls.length}. Redirecting to /share?token=${token}`);
         return NextResponse.redirect(getPublicUrl(req, `/share?token=${token}`), 303);
-    } catch (e) {
+    } catch (e: any) {
         console.error("[share-target] Top-level handler error:", e);
-        return NextResponse.redirect(getPublicUrl(req, "/transactions"), 303);
+        const errorMsg = encodeURIComponent(e?.message || "server_share_error");
+        return NextResponse.redirect(getPublicUrl(req, `/share?error=${errorMsg}`), 303);
     }
 }

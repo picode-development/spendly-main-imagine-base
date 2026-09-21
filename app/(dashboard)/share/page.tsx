@@ -36,6 +36,19 @@ const ShareHandler = () => {
             .join(" ")
             .trim();
 
+        const errorParam = params.get("error");
+        if (errorParam) {
+            setStatus("error");
+            setErrorMessage(
+                errorParam === "no_content_received"
+                    ? "No image or text was received from the share sheet."
+                    : errorParam === "invalid_content_type"
+                    ? "Invalid content type received."
+                    : `Could not process share: ${decodeURIComponent(errorParam)}`
+            );
+            return;
+        }
+
         if (!token && !fallbackText) {
             router.replace("/transactions");
             return;

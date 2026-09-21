@@ -6,6 +6,7 @@ const buildId =
   `${Date.now()}`;
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["sharp"],
   env: {
     NEXT_PUBLIC_BUILD_ID: buildId,
   },
