@@ -10,7 +10,8 @@ import { transactions as transactionsSchema } from "@/db/schema";
 import { useNewTransaction } from "@/features/transactions/hooks/use-new-transaction";
 import { useNewTransfer } from "@/features/transactions/hooks/use-new-transfer";
 import { useOpenTransaction } from "@/features/transactions/hooks/use-open-transaction";
-import { ArrowLeftRight, Loader2, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeftRight, Loader2, Plus, Sparkles } from "lucide-react";
 import { columns } from "./columns";
 import { DataTable } from "@/components/data-table";
 import { useGetTransactions } from "@/features/transactions/api/use-get-transactions";
@@ -35,7 +36,7 @@ const INITIAL_IMPORT_RESULTS = {
 };
 
 const TransactionsPage = () => {
-
+    const router = useRouter();
     const [AccountDialog, confirm] = useSelectAccount();
 
     const [variant, setVariant] = useState<VARIENTS>(VARIENTS.LIST);
@@ -145,6 +146,15 @@ const TransactionsPage = () => {
                         >
                             <ArrowLeftRight className="size-4 mr-2" />
                             Transfer
+                        </Button>
+                        <Button
+                            onClick={() => router.push("/share")}
+                            size="sm"
+                            variant="outline"
+                            className="w-full lg:w-auto border-primary/30 text-primary hover:bg-primary/10"
+                        >
+                            <Sparkles className="size-4 mr-2" />
+                            Scan Receipt
                         </Button>
                         <UploadButton onUpload={onUpload} />
                     </div>

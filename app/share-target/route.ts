@@ -104,8 +104,8 @@ export async function POST(req: NextRequest) {
         console.log(`[share-target] Received share payload: textLen=${fullText.length}, files=${candidateFiles.length}`);
 
         if (!fullText && candidateFiles.length === 0) {
-            console.warn("[share-target] Empty share payload received");
-            return NextResponse.redirect(getPublicUrl(req, "/share?error=no_content_received"), 303);
+            console.warn("[share-target] Empty share payload received (likely Android WebAPK dropped files). Redirecting to /share with prompt_picker.");
+            return NextResponse.redirect(getPublicUrl(req, "/share?prompt_picker=true&from=share_target"), 303);
         }
 
         // Process images into data URLs.

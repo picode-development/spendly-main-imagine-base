@@ -43,6 +43,7 @@ const CACHEABLE_API_PATHS = [
 ];
 
 self.addEventListener("install", (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches
       .open(CACHE_SHELL)
@@ -133,6 +134,11 @@ self.addEventListener("fetch", (event) => {
               "X-File-Name": file.name || "receipt.jpg",
             },
           }));
+        }
+
+        const hasText = Boolean(title || text || sharedUrl);
+        if (!hasImage && !hasText) {
+          return Response.redirect("/share?prompt_picker=true&source=sw", 303);
         }
 
         const meta = {
