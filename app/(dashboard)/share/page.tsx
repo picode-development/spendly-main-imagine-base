@@ -112,6 +112,29 @@ const ShareHandler = () => {
         }
     }, [handleFileSelected]);
 
+    const handleSmartCapture = useCallback(async () => {
+        if (typeof navigator !== "undefined" && navigator.clipboard?.read) {
+            try {
+                const items = await navigator.clipboard.read();
+                for (const item of items) {
+                    for (const type of item.types) {
+                        if (type.startsWith("image/")) {
+                            const blob = await item.getType(type);
+                            if (blob && blob.size > 0) {
+                                const file = new File([blob], "clipboard_receipt.png", { type });
+                                toast.success("Loaded screenshot from clipboard!");
+                                return handleFileSelected(file);
+                            }
+                        }
+                    }
+                }
+            } catch {
+                // Clipboard read denied or unavailable — smoothly fall through
+            }
+        }
+        fileInputRef.current?.click();
+    }, [handleFileSelected]);
+
     // Handle global paste event
     useEffect(() => {
         const handlePasteEvent = (e: ClipboardEvent) => {
@@ -338,7 +361,7 @@ const ShareHandler = () => {
 
                             {/* Clickable Drop Zone */}
                             <div
-                                onClick={() => fileInputRef.current?.click()}
+                                onClick={handleSmartCapture}
                                 onDragOver={(e) => {
                                     e.preventDefault();
                                     setIsDragging(true);
